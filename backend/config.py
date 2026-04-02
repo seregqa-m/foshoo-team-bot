@@ -24,6 +24,9 @@ SYNC_INTERVAL_MINUTES = int(os.getenv("SYNC_INTERVAL_MINUTES", 15))
 # Security
 SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-key-change-in-production")
 
+# Mini App
+MINI_APP_URL = os.getenv("MINI_APP_URL", "https://your-ngrok-url.ngrok.io")
+
 # Admin
 ADMIN_ID = int(os.getenv("ADMIN_ID", 0))
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")

@@ -11,7 +11,16 @@ function App() {
   useEffect(() => {
     // Получить user_id из Telegram WebApp
     if (window.Telegram?.WebApp) {
-      const user = window.Telegram.WebApp.initData?.user;
+      const tg = window.Telegram.WebApp;
+
+      // Сообщить Telegram что приложение готово
+      tg.ready();
+
+      // Развернуть приложение на весь экран
+      tg.expand();
+
+      // Получить данные пользователя
+      const user = tg.initDataUnsafe?.user;
       if (user) {
         setUserId(user.id);
       }

@@ -15,6 +15,7 @@ from modules.calendar.services import CalendarService
 from modules.calendar.google_client import GoogleCalendarClient
 from modules.polling.router import router as polling_router
 from modules.notifications.router import router as notifications_router
+from bot import bot, dp
 
 # Логирование
 logging.basicConfig(
@@ -74,7 +75,11 @@ async def startup():
     init_db()
     logger.info("✅ Database initialized")
 
-    # Запустить background sync task
+    # Запустить Telegram бота
+    asyncio.create_task(dp.start_polling(bot))
+    logger.info("🤖 Telegram bot started")
+
+    # Запустить background sync task для Google Calendar
     asyncio.create_task(sync_calendar_background())
 
 

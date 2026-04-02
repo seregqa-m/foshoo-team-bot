@@ -2,6 +2,8 @@
 
 ## Локально (рекомендуется для разработки)
 
+> **Важно:** Приложение теперь встроено в Telegram бота! Чтобы тестировать в Telegram, нужен **ngrok** для HTTPS туннеля (см. ниже).
+
 ### 1️⃣ Подготовка
 
 ```bash
@@ -37,12 +39,27 @@ npm start
 ✅ Backend: http://127.0.0.1:8000
 ✅ Frontend: http://127.0.0.1:3000
 
-### 4️⃣ Тестирование
+### 4️⃣ ngrok для HTTPS (обязательно для Telegram Mini App)
+
+**Новый терминал:**
+```bash
+ngrok http 3000
+```
+
+Скопируйте HTTPS URL (вроде `https://abc123xyz.ngrok.io`), вставьте в `.env`:
+```env
+MINI_APP_URL=https://abc123xyz.ngrok.io
+```
+
+Перезапустите backend (Ctrl+C и `python main.py` заново).
+
+### 5️⃣ Тестирование
 
 **В Telegram:**
-1. Найдите вашего бота
+1. Найдите вашего бота (username который создали у @BotFather)
 2. Отправьте `/start`
-3. Нажмите кнопку "Открыть приложение"
+3. Должна появиться кнопка "🎭 Открыть приложение"
+4. Нажмите кнопку → откроется ваше приложение **внутри Telegram**
 
 ## Docker (вся система в одной команде)
 
@@ -60,7 +77,18 @@ docker-compose up --build
 ✅ Backend: http://localhost:8000
 ✅ Frontend: http://localhost:3000
 
+## Важно знать
+
+**Telegram Mini App требует HTTPS!** 
+- Локально используйте ngrok
+- На production (Railway, VPS) — автоматический HTTPS
+- URL ngrok меняется каждый раз (платный план даёт постоянный URL)
+
 ## Что дальше?
+
+### Полная инструкция по Telegram Mini App
+
+Читайте `TELEGRAM_MINI_APP_SETUP.md` для деталей по ngrok и production deployment.
 
 ### Добавить Google Calendar
 
