@@ -17,7 +17,9 @@ API_URL = os.getenv("API_URL", f"http://{API_HOST}:{API_PORT}")
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./theater_bot.db")
 
 # Google Calendar API
-GOOGLE_CALENDAR_JSON = os.getenv("GOOGLE_CALENDAR_JSON", "credentials.json")
+GOOGLE_CALENDAR_JSON = os.getenv("GOOGLE_CALENDAR_JSON", "backend/credentials.json")
+GOOGLE_CALENDAR_ID = os.getenv("GOOGLE_CALENDAR_ID", "")
+SYNC_INTERVAL_MINUTES = int(os.getenv("SYNC_INTERVAL_MINUTES", 15))
 
 # Security
 SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-key-change-in-production")

@@ -5,12 +5,14 @@
 import asyncio
 import logging
 import sys
+import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
-from core.database import init_db
-from config import LOG_LEVEL, API_HOST, API_PORT
+from core.database import init_db, SessionLocal
+from config import LOG_LEVEL, API_HOST, API_PORT, GOOGLE_CALENDAR_JSON, GOOGLE_CALENDAR_ID, SYNC_INTERVAL_MINUTES
 from modules.calendar.router import router as calendar_router
+from modules.calendar.services import CalendarService
+from modules.calendar.google_client import GoogleCalendarClient
 from modules.polling.router import router as polling_router
 from modules.notifications.router import router as notifications_router
 
@@ -38,12 +40,42 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+# Background sync task для Google Calendar
+async def sync_calendar_background():
+    """Периодическая синхронизация с Google Calendar"""
+    await asyncio.sleep(10)  # Подождать чтобы приложение запустилось
+
+    while True:
+        try:
+            if os.path.exists(GOOGLE_CALENDAR_JSON) and GOOGLE_CALENDAR_ID:
+                google_client = GoogleCalendarClient(GOOGLE_CALENDAR_JSON)
+                events = google_client.get_events(GOOGLE_CALENDAR_ID)
+
+                db = SessionLocal()
+                try:
+                    service = CalendarService(db, google_client)
+                    service.sync_from_google(events)
+                    logger.info(f"✅ Calendar sync completed: {len(events)} events")
+                finally:
+                    db.close()
+            else:
+                logger.debug("Google Calendar not configured, skipping sync")
+        except Exception as e:
+            logger.error(f"❌ Calendar sync failed: {e}")
+
+        await asyncio.sleep(SYNC_INTERVAL_MINUTES * 60)
+
+
 # Инициализировать БД
 @app.on_event("startup")
 async def startup():
     logger.info("🚀 Starting application")
     init_db()
     logger.info("✅ Database initialized")
+
+    # Запустить background sync task
+    asyncio.create_task(sync_calendar_background())
 
 
 @app.on_event("shutdown")
