@@ -3,6 +3,8 @@ venv/
 env/
 ENV/
 .venv
+backend/venv/
+frontend/node_modules/
 
 # IDE
 .vscode/
@@ -10,6 +12,7 @@ ENV/
 *.swp
 *.swo
 *.swn
+.DS_Store
 
 # Python
 __pycache__/
@@ -32,17 +35,43 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+.pytest_cache/
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.next/
 
 # Environment variables
 .env
 .env.local
+.env.*.local
 
 # Logs
 *.log
+logs/
 
 # OS
 .DS_Store
 Thumbs.db
+*.swp
 
-# SQLite
+# Database
 *.db
+*.sqlite
+*.sqlite3
+
+# Google credentials
+credentials.json
+
+# Frontend build
+frontend/build/
+frontend/dist/
+
+# Docker
+.dockerignore
+
+# IDE settings
+.claude/settings.local.json

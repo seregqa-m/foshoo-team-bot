@@ -1,0 +1,44 @@
+version: '3.9'
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - BOT_TOKEN=${BOT_TOKEN}
+      - API_HOST=0.0.0.0
+      - API_PORT=8000
+      - DATABASE_URL=sqlite:///./theater_bot.db
+      - ADMIN_ID=${ADMIN_ID}
+    volumes:
+      - ./backend:/app
+      - backend_data:/app
+    command: python main.py
+    networks:
+      - theater_network
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      - REACT_APP_API_URL=http://localhost:8000
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    networks:
+      - theater_network
+    depends_on:
+      - backend
+
+volumes:
+  backend_data:
+
+networks:
+  theater_network:
+    driver: bridge
