@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
 from .models import CalendarEvent
 from .google_client import GoogleCalendarClient
+from config import TIMEZONE
 
 logger = logging.getLogger(__name__)
 
@@ -42,10 +43,25 @@ class CalendarService:
             CalendarEvent.is_cancelled == False
         ).order_by(CalendarEvent.start_time).first()
 
+    @staticmethod
+    def _parse_dt(dt_obj: dict) -> datetime:
+        """Парсит start/end объект Google Calendar, поддерживая dateTime и всесуточные date"""
+        s = dt_obj.get("dateTime") or dt_obj.get("date", "")
+        if not s:
+            raise ValueError(f"Empty start/end time in Google Calendar event: {dt_obj}")
+        return datetime.fromisoformat(s.replace("Z", "+00:00"))
+
     def sync_from_google(self, events_data: list[dict]) -> None:
         """Синхронизировать события из Google Calendar"""
         for event_data in events_data:
             google_event_id = event_data.get("id")
+            try:
+                start_time = self._parse_dt(event_data.get("start", {}))
+                end_time = self._parse_dt(event_data.get("end", {}))
+            except ValueError as e:
+                logger.warning(f"Skipping event {google_event_id}: {e}")
+                continue
+
             existing = self.db.query(CalendarEvent).filter(
                 CalendarEvent.google_event_id == google_event_id
             ).first()
@@ -54,12 +70,8 @@ class CalendarService:
                 existing.title = event_data.get("summary", "")
                 existing.description = event_data.get("description", "")
                 existing.location = event_data.get("location", "")
-                existing.start_time = datetime.fromisoformat(
-                    event_data.get("start", {}).get("dateTime", "").replace("Z", "+00:00")
-                )
-                existing.end_time = datetime.fromisoformat(
-                    event_data.get("end", {}).get("dateTime", "").replace("Z", "+00:00")
-                )
+                existing.start_time = start_time
+                existing.end_time = end_time
                 existing.last_synced = datetime.utcnow()
             else:
                 new_event = CalendarEvent(
@@ -67,12 +79,8 @@ class CalendarService:
                     title=event_data.get("summary", ""),
                     description=event_data.get("description", ""),
                     location=event_data.get("location", ""),
-                    start_time=datetime.fromisoformat(
-                        event_data.get("start", {}).get("dateTime", "").replace("Z", "+00:00")
-                    ),
-                    end_time=datetime.fromisoformat(
-                        event_data.get("end", {}).get("dateTime", "").replace("Z", "+00:00")
-                    ),
+                    start_time=start_time,
+                    end_time=end_time,
                     last_synced=datetime.utcnow()
                 )
                 self.db.add(new_event)
@@ -95,8 +103,8 @@ class CalendarService:
 
         event_data = {
             "summary": title,
-            "start": {"dateTime": start_time.isoformat()},
-            "end": {"dateTime": end_time.isoformat()},
+            "start": {"dateTime": start_time.isoformat(), "timeZone": TIMEZONE},
+            "end": {"dateTime": end_time.isoformat(), "timeZone": TIMEZONE},
         }
         if location:
             event_data["location"] = location
@@ -148,8 +156,8 @@ class CalendarService:
         # Подготовить данные для Google
         event_data = {
             "summary": title or db_event.title,
-            "start": {"dateTime": (start_time or db_event.start_time).isoformat()},
-            "end": {"dateTime": (end_time or db_event.end_time).isoformat()},
+            "start": {"dateTime": (start_time or db_event.start_time).isoformat(), "timeZone": TIMEZONE},
+            "end": {"dateTime": (end_time or db_event.end_time).isoformat(), "timeZone": TIMEZONE},
         }
         if location is not None:
             event_data["location"] = location

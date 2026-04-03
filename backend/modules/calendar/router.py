@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from datetime import datetime
 from sqlalchemy.orm import Session
 from core.database import get_db
-from config import GOOGLE_CALENDAR_ID, GOOGLE_CALENDAR_JSON
+from config import GOOGLE_CALENDAR_ID, GOOGLE_CALENDAR_JSON, GROUP_CHAT_ID
 from .models import CalendarEvent
 from .services import CalendarService
 from .google_client import GoogleCalendarClient
@@ -181,6 +181,56 @@ async def update_event(
     except Exception as e:
         logger.error(f"Failed to update event: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/events/{event_id}/poll")
+async def launch_poll_for_event(
+    event_id: int,
+    user_id: int = None,
+    db: Session = Depends(get_db)
+):
+    """Создать опрос о посещаемости для события и отправить его в Telegram-группу"""
+    from bot import bot
+    from modules.polling.services import PollingService
+
+    if not user_id:
+        raise HTTPException(status_code=400, detail="user_id required")
+    if not GROUP_CHAT_ID:
+        raise HTTPException(
+            status_code=400,
+            detail="GROUP_CHAT_ID не настроен. Добавьте бота в группу и укажите GROUP_CHAT_ID в .env"
+        )
+
+    cal_service = CalendarService(db)
+    event = cal_service.get_event_by_id(event_id)
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+
+    poll_service = PollingService(db)
+    poll = poll_service.create_poll(
+        title=f"кто будет на занятии: {event.title}",
+        created_by=user_id,
+        expires_in_hours=48,
+        calendar_event_id=event_id,
+    )
+
+    try:
+        message = await bot.send_poll(
+            chat_id=GROUP_CHAT_ID,
+            question=f"кто будет на занятии?\n{event.title} — {event.start_time.strftime('%d.%m %H:%M')}",
+            options=["Буду ✅", "Не буду ❌", "Опоздаю ⏰"],
+            is_anonymous=False,
+            allows_multiple_answers=False,
+        )
+        poll_service.save_telegram_ids(poll.id, message.poll.id, message.message_id)
+    except Exception as e:
+        logger.error(f"Failed to send Telegram poll: {e}")
+        raise HTTPException(
+            status_code=502,
+            detail=f"Опрос сохранён в БД (id={poll.id}), но отправка в Telegram не удалась: {e}"
+        )
+
+    return {"poll_id": poll.id, "telegram_message_id": message.message_id, "status": "sent"}
 
 
 @router.delete("/events/{event_id}")

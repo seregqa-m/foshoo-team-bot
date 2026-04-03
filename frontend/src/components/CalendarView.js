@@ -1,12 +1,27 @@
 import React, { useState, useEffect } from 'react';
+import { Calendar, dateFnsLocalizer } from 'react-big-calendar';
+import { format, parse, startOfWeek, getDay } from 'date-fns';
+import ru from 'date-fns/locale/ru';
+import 'react-big-calendar/lib/css/react-big-calendar.css';
 import * as calendarApi from '../api/calendar';
+
+const locales = { ru };
+const localizer = dateFnsLocalizer({
+  format,
+  parse,
+  startOfWeek: (date) => startOfWeek(date, { weekStartsOn: 1 }),
+  getDay,
+  locales,
+});
 
 function CalendarView({ userId }) {
   const [events, setEvents] = useState([]);
-  const [nextEvent, setNextEvent] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [syncing, setSyncing] = useState(false);
+  const [selectedEvent, setSelectedEvent] = useState(null);
+  const [launchingPoll, setLaunchingPoll] = useState(false);
+  const [pollSuccess, setPollSuccess] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [formData, setFormData] = useState({
@@ -24,13 +39,8 @@ function CalendarView({ userId }) {
   const fetchEvents = async () => {
     try {
       setLoading(true);
-      const [eventsRes, nextRes] = await Promise.all([
-        calendarApi.getEvents(),
-        calendarApi.getNextEvent(),
-      ]);
-
-      setEvents(eventsRes.data.events || []);
-      setNextEvent(nextRes.data.event);
+      const res = await calendarApi.getEvents(90);
+      setEvents(res.data.events || []);
       setError(null);
     } catch (err) {
       console.error('Failed to fetch events:', err);
@@ -56,13 +66,7 @@ function CalendarView({ userId }) {
 
   const handleAddClick = () => {
     setEditingId(null);
-    setFormData({
-      title: '',
-      start_time: '',
-      end_time: '',
-      location: '',
-      description: '',
-    });
+    setFormData({ title: '', start_time: '', end_time: '', location: '', description: '' });
     setShowForm(true);
   };
 
@@ -90,13 +94,11 @@ function CalendarView({ userId }) {
         setError('Заполните обязательные поля');
         return;
       }
-
       if (editingId) {
         await calendarApi.updateEvent(editingId, formData);
       } else {
         await calendarApi.createEvent(formData);
       }
-
       setShowForm(false);
       await fetchEvents();
       setError(null);
@@ -107,12 +109,10 @@ function CalendarView({ userId }) {
   };
 
   const handleDelete = async (eventId) => {
-    if (!window.confirm('Вы уверены, что хотите удалить это событие?')) {
-      return;
-    }
-
+    if (!window.confirm('Вы уверены, что хотите удалить это событие?')) return;
     try {
       await calendarApi.deleteEvent(eventId);
+      setSelectedEvent(null);
       await fetchEvents();
       setError(null);
     } catch (err) {
@@ -121,23 +121,38 @@ function CalendarView({ userId }) {
     }
   };
 
+  const handleLaunchPoll = async (eventId) => {
+    if (!userId) {
+      setError('Требуется авторизация через Telegram');
+      return;
+    }
+    try {
+      setLaunchingPoll(true);
+      setPollSuccess(false);
+      await calendarApi.launchPoll(eventId, userId);
+      setPollSuccess(true);
+      setError(null);
+    } catch (err) {
+      console.error('Failed to launch poll:', err);
+      setError(err.response?.data?.detail || 'Ошибка при запуске опроса');
+    } finally {
+      setLaunchingPoll(false);
+    }
+  };
+
   const formatDate = (dateString) => {
     const date = new Date(dateString);
     return date.toLocaleString('ru-RU', {
-      weekday: 'short',
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
+      weekday: 'short', month: 'short', day: 'numeric',
+      hour: '2-digit', minute: '2-digit',
     });
   };
 
-  const getGoogleCalendarLink = (event) => {
-    if (event.google_event_id) {
-      return `https://calendar.google.com/calendar/u/0/r/eventedit/${event.google_event_id}`;
-    }
-    return null;
-  };
+  const calendarEvents = events.map((e) => ({
+    ...e,
+    start: new Date(e.start_time),
+    end: new Date(e.end_time),
+  }));
 
   if (loading) {
     return <div className="text-center mt-12">⏳ Загрузка...</div>;
@@ -146,17 +161,14 @@ function CalendarView({ userId }) {
   return (
     <div>
       {error && (
-        <div className="card" style={{ backgroundColor: '#f8d7da', borderColor: '#dc3545' }}>
+        <div className="card" style={{ backgroundColor: '#f8d7da', borderColor: '#dc3545', marginBottom: '8px' }}>
           <div style={{ color: '#721c24' }}>{error}</div>
         </div>
       )}
 
+      {/* Toolbar */}
       <div style={{ display: 'flex', gap: '8px', marginBottom: '12px', padding: '0 8px' }}>
-        <button
-          className="btn btn-primary"
-          onClick={handleAddClick}
-          style={{ flex: 1 }}
-        >
+        <button className="btn btn-primary" onClick={handleAddClick} style={{ flex: 1 }}>
           ➕ Добавить
         </button>
         <button
@@ -169,30 +181,112 @@ function CalendarView({ userId }) {
         </button>
       </div>
 
+      {/* Weekly calendar */}
+      <div style={{ padding: '0 4px' }}>
+        <Calendar
+          localizer={localizer}
+          events={calendarEvents}
+          defaultView="week"
+          views={['week', 'day']}
+          defaultDate={new Date()}
+          style={{ height: 520 }}
+          culture="ru"
+          onSelectEvent={(event) => {
+            setSelectedEvent(event);
+            setPollSuccess(false);
+          }}
+          messages={{
+            week: 'Неделя',
+            day: 'День',
+            today: 'Сегодня',
+            previous: '←',
+            next: '→',
+            noEventsInRange: 'Нет событий',
+          }}
+        />
+      </div>
+
+      {/* Event detail popup */}
+      {selectedEvent && (
+        <div
+          style={{
+            position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+            backgroundColor: 'rgba(0,0,0,0.5)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            zIndex: 1000,
+          }}
+          onClick={() => { setSelectedEvent(null); setPollSuccess(false); }}
+        >
+          <div
+            className="card"
+            style={{ width: '90%', maxWidth: '400px' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ fontWeight: 'bold', fontSize: '16px', marginBottom: '6px' }}>
+              {selectedEvent.title}
+            </div>
+            <div style={{ fontSize: '13px', color: '#666', marginBottom: '4px' }}>
+              {formatDate(selectedEvent.start_time)}
+            </div>
+            {selectedEvent.location && (
+              <div style={{ fontSize: '12px', color: '#999', marginBottom: '8px' }}>
+                📍 {selectedEvent.location}
+              </div>
+            )}
+            {selectedEvent.description && (
+              <div style={{ fontSize: '12px', marginBottom: '12px' }}>
+                {selectedEvent.description}
+              </div>
+            )}
+
+            {pollSuccess && (
+              <div style={{ color: '#28a745', fontSize: '13px', marginBottom: '10px' }}>
+                ✅ Опрос отправлен в группу
+              </div>
+            )}
+
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+              <button
+                className="btn btn-primary"
+                style={{ flex: 1 }}
+                onClick={() => { handleEditClick(selectedEvent); setSelectedEvent(null); }}
+              >
+                ✏️ Изменить
+              </button>
+              <button
+                className="btn btn-danger"
+                style={{ flex: 1 }}
+                onClick={() => handleDelete(selectedEvent.id)}
+              >
+                🗑️ Удалить
+              </button>
+              <button
+                className="btn btn-secondary"
+                style={{ flex: '0 0 100%' }}
+                disabled={launchingPoll || pollSuccess}
+                onClick={() => handleLaunchPoll(selectedEvent.id)}
+              >
+                {launchingPoll ? '⌛ Отправка...' : pollSuccess ? '✅ Отправлен' : '🗳️ Запустить опрос'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Create/Edit form modal */}
       {showForm && (
         <div
           style={{
-            position: 'fixed',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            backgroundColor: 'rgba(0, 0, 0, 0.5)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
+            position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+            backgroundColor: 'rgba(0,0,0,0.5)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
             zIndex: 1000,
           }}
           onClick={() => setShowForm(false)}
         >
           <div
             className="card"
-            style={{
-              width: '90%',
-              maxWidth: '500px',
-              maxHeight: '80vh',
-              overflow: 'auto',
-            }}
+            style={{ width: '90%', maxWidth: '500px', maxHeight: '80vh', overflow: 'auto' }}
             onClick={(e) => e.stopPropagation()}
           >
             <div style={{ fontWeight: 'bold', fontSize: '16px', marginBottom: '12px' }}>
@@ -201,136 +295,71 @@ function CalendarView({ userId }) {
 
             <form onSubmit={handleFormSubmit}>
               <div style={{ marginBottom: '12px' }}>
-                <label style={{ fontSize: '12px', color: '#666' }}>
-                  Название*
-                </label>
+                <label style={{ fontSize: '12px', color: '#666' }}>Название*</label>
                 <input
                   type="text"
                   name="title"
                   value={formData.title}
                   onChange={handleFormChange}
                   placeholder="Название события"
-                  style={{
-                    width: '100%',
-                    padding: '8px',
-                    borderRadius: '4px',
-                    border: '1px solid #ccc',
-                    marginTop: '4px',
-                    fontSize: '14px',
-                  }}
+                  style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ccc', marginTop: '4px', fontSize: '14px' }}
                   required
                 />
               </div>
 
               <div style={{ marginBottom: '12px' }}>
-                <label style={{ fontSize: '12px', color: '#666' }}>
-                  Начало*
-                </label>
+                <label style={{ fontSize: '12px', color: '#666' }}>Начало*</label>
                 <input
                   type="datetime-local"
                   name="start_time"
                   value={formData.start_time.slice(0, 16)}
-                  onChange={(e) =>
-                    setFormData((prev) => ({
-                      ...prev,
-                      start_time: e.target.value + ':00',
-                    }))
-                  }
-                  style={{
-                    width: '100%',
-                    padding: '8px',
-                    borderRadius: '4px',
-                    border: '1px solid #ccc',
-                    marginTop: '4px',
-                    fontSize: '14px',
-                  }}
+                  onChange={(e) => setFormData((prev) => ({ ...prev, start_time: e.target.value + ':00' }))}
+                  style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ccc', marginTop: '4px', fontSize: '14px' }}
                   required
                 />
               </div>
 
               <div style={{ marginBottom: '12px' }}>
-                <label style={{ fontSize: '12px', color: '#666' }}>
-                  Конец*
-                </label>
+                <label style={{ fontSize: '12px', color: '#666' }}>Конец*</label>
                 <input
                   type="datetime-local"
                   name="end_time"
                   value={formData.end_time.slice(0, 16)}
-                  onChange={(e) =>
-                    setFormData((prev) => ({
-                      ...prev,
-                      end_time: e.target.value + ':00',
-                    }))
-                  }
-                  style={{
-                    width: '100%',
-                    padding: '8px',
-                    borderRadius: '4px',
-                    border: '1px solid #ccc',
-                    marginTop: '4px',
-                    fontSize: '14px',
-                  }}
+                  onChange={(e) => setFormData((prev) => ({ ...prev, end_time: e.target.value + ':00' }))}
+                  style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ccc', marginTop: '4px', fontSize: '14px' }}
                   required
                 />
               </div>
 
               <div style={{ marginBottom: '12px' }}>
-                <label style={{ fontSize: '12px', color: '#666' }}>
-                  Место
-                </label>
+                <label style={{ fontSize: '12px', color: '#666' }}>Место</label>
                 <input
                   type="text"
                   name="location"
                   value={formData.location}
                   onChange={handleFormChange}
                   placeholder="Место проведения"
-                  style={{
-                    width: '100%',
-                    padding: '8px',
-                    borderRadius: '4px',
-                    border: '1px solid #ccc',
-                    marginTop: '4px',
-                    fontSize: '14px',
-                  }}
+                  style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ccc', marginTop: '4px', fontSize: '14px' }}
                 />
               </div>
 
               <div style={{ marginBottom: '12px' }}>
-                <label style={{ fontSize: '12px', color: '#666' }}>
-                  Описание
-                </label>
+                <label style={{ fontSize: '12px', color: '#666' }}>Описание</label>
                 <textarea
                   name="description"
                   value={formData.description}
                   onChange={handleFormChange}
                   placeholder="Описание события"
-                  style={{
-                    width: '100%',
-                    padding: '8px',
-                    borderRadius: '4px',
-                    border: '1px solid #ccc',
-                    marginTop: '4px',
-                    fontSize: '14px',
-                    resize: 'vertical',
-                  }}
+                  style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ccc', marginTop: '4px', fontSize: '14px', resize: 'vertical' }}
                   rows="3"
                 />
               </div>
 
               <div style={{ display: 'flex', gap: '8px' }}>
-                <button
-                  type="submit"
-                  className="btn btn-primary"
-                  style={{ flex: 1 }}
-                >
+                <button type="submit" className="btn btn-primary" style={{ flex: 1 }}>
                   {editingId ? '💾 Сохранить' : '✅ Создать'}
                 </button>
-                <button
-                  type="button"
-                  className="btn btn-secondary"
-                  onClick={() => setShowForm(false)}
-                  style={{ flex: 1 }}
-                >
+                <button type="button" className="btn btn-secondary" onClick={() => setShowForm(false)} style={{ flex: 1 }}>
                   ✕ Отмена
                 </button>
               </div>
@@ -338,91 +367,6 @@ function CalendarView({ userId }) {
           </div>
         </div>
       )}
-
-      {nextEvent && (
-        <div className="card" style={{ borderLeft: '4px solid #0088cc' }}>
-          <div style={{ fontWeight: 'bold', fontSize: '14px' }}>
-            📌 Следующее занятие
-          </div>
-          <div style={{ fontSize: '16px', fontWeight: 'bold', marginTop: '8px' }}>
-            {nextEvent.title}
-          </div>
-          <div style={{ fontSize: '14px', color: '#666', marginTop: '4px' }}>
-            {formatDate(nextEvent.start_time)}
-          </div>
-          {nextEvent.location && (
-            <div style={{ fontSize: '12px', color: '#999', marginTop: '4px' }}>
-              📍 {nextEvent.location}
-            </div>
-          )}
-          {nextEvent.description && (
-            <div style={{ fontSize: '12px', color: '#666', marginTop: '8px' }}>
-              {nextEvent.description}
-            </div>
-          )}
-        </div>
-      )}
-
-      <div style={{ marginTop: '16px' }}>
-        <div style={{ fontWeight: 'bold', fontSize: '14px', marginBottom: '8px' }}>
-          📅 Расписание
-        </div>
-
-        {events.length === 0 ? (
-          <div className="text-center text-secondary mt-12">
-            Нет предстоящих событий
-          </div>
-        ) : (
-          events.map((event) => (
-            <div key={event.id} className="card">
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontWeight: 'bold', fontSize: '14px' }}>
-                    {event.title}
-                  </div>
-                  <div style={{ fontSize: '12px', color: '#666', marginTop: '4px' }}>
-                    {formatDate(event.start_time)}
-                  </div>
-                  {event.location && (
-                    <div style={{ fontSize: '12px', color: '#999', marginTop: '4px' }}>
-                      📍 {event.location}
-                    </div>
-                  )}
-                  {event.description && (
-                    <div style={{ fontSize: '12px', marginTop: '8px' }}>
-                      {event.description}
-                    </div>
-                  )}
-                </div>
-                <div style={{ display: 'flex', gap: '4px', marginLeft: '8px' }}>
-                  <button
-                    onClick={() => handleEditClick(event)}
-                    style={{
-                      backgroundColor: 'transparent',
-                      border: 'none',
-                      cursor: 'pointer',
-                      fontSize: '16px',
-                    }}
-                  >
-                    ✏️
-                  </button>
-                  <button
-                    onClick={() => handleDelete(event.id)}
-                    style={{
-                      backgroundColor: 'transparent',
-                      border: 'none',
-                      cursor: 'pointer',
-                      fontSize: '16px',
-                    }}
-                  >
-                    🗑️
-                  </button>
-                </div>
-              </div>
-            </div>
-          ))
-        )}
-      </div>
     </div>
   );
 }

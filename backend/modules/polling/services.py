@@ -69,6 +69,47 @@ class PollingService:
         self.db.commit()
         return existing_vote
 
+    def get_all_polls_with_results(self) -> list[dict]:
+        """Все опросы с результатами голосования, от новых к старым"""
+        from modules.calendar.models import CalendarEvent
+        polls = self.db.query(Poll).order_by(Poll.created_at.desc()).all()
+        result = []
+        for poll in polls:
+            votes = self.db.query(PollVote).filter(PollVote.poll_id == poll.id).all()
+            counts = {"yes": 0, "no": 0, "maybe": 0}
+            for v in votes:
+                if v.answer in counts:
+                    counts[v.answer] += 1
+            event_info = None
+            if poll.calendar_event_id:
+                event = self.db.query(CalendarEvent).filter(
+                    CalendarEvent.id == poll.calendar_event_id
+                ).first()
+                if event:
+                    event_info = {
+                        "title": event.title,
+                        "start_time": event.start_time.isoformat(),
+                    }
+            result.append({
+                "id": poll.id,
+                "title": poll.title,
+                "is_active": poll.is_active,
+                "created_at": poll.created_at.isoformat(),
+                "expires_at": poll.expires_at.isoformat(),
+                "calendar_event": event_info,
+                "votes": counts,
+                "total_votes": len(votes),
+            })
+        return result
+
+    def save_telegram_ids(self, poll_id: int, telegram_poll_id: str, telegram_message_id: int) -> None:
+        """Сохранить Telegram poll_id и message_id после отправки опроса"""
+        poll = self.get_poll(poll_id)
+        if poll:
+            poll.telegram_poll_id = telegram_poll_id
+            poll.telegram_message_id = telegram_message_id
+            self.db.commit()
+
     def get_poll_results(self, poll_id: int) -> dict:
         """Получить результаты опроса"""
         poll = self.get_poll(poll_id)

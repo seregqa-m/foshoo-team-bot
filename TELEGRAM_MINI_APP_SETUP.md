@@ -1,6 +1,6 @@
 # 🎭 Запуск Telegram Mini App
 
-Ваше приложение теперь встроено в Telegram бота. Вот как это работает:
+Ваше приложение встроено в Telegram бота. Вот как это работает:
 
 ## 🏗️ Архитектура
 
@@ -12,19 +12,26 @@ Telegram Бот
 │           └── Делает запросы на Backend API
 ```
 
-## 🚀 Для разработки (ngrok)
+## 🚀 Для разработки (Cloudflare Tunnel)
 
-ngrok создаёт HTTPS туннель из localhost на интернет. Telegram требует HTTPS для Mini App.
+Telegram требует HTTPS для Mini App. Cloudflare Tunnel создаёт публичный HTTPS туннель из localhost — без регистрации.
 
-### 1️⃣ Установите ngrok
+### 1️⃣ Установите cloudflared
 
 **macOS:**
 ```bash
-brew install ngrok
+brew install cloudflare/cloudflare/cloudflared
 ```
 
-**Linux/Windows:**
-Скачайте с https://ngrok.com/download и добавьте в PATH
+**Linux:**
+```bash
+# Debian/Ubuntu
+curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb -o cloudflared.deb
+sudo dpkg -i cloudflared.deb
+```
+
+**Windows:**
+Скачайте `cloudflared-windows-amd64.exe` с https://github.com/cloudflare/cloudflared/releases
 
 ### 2️⃣ Запустите приложение
 
@@ -42,26 +49,23 @@ source venv/bin/activate
 python main.py  # запустится на http://127.0.0.1:8000
 ```
 
-**Терминал 3 — ngrok:**
+**Терминал 3 — Cloudflare Tunnel:**
 ```bash
-ngrok http 3000  # экспонирует localhost:3000 на интернет
+cloudflared tunnel --url localhost:3000
 ```
 
 Увидите вывод вроде:
 ```
-Session Status                online
-Account                       ...
-Version                       3.1.0
-Region                        ...
-Forwarding                    https://abc123xyz.ngrok.io -> http://localhost:3000
+Your quick Tunnel has been created! Visit it at (it may take some time to be reachable):
+https://example-word-word.trycloudflare.com
 ```
 
 ### 3️⃣ Обновите .env
 
-Скопируйте HTTPS URL (например `https://abc123xyz.ngrok.io`) и поместите в `.env`:
+Скопируйте HTTPS URL и поместите в `.env`:
 
 ```env
-MINI_APP_URL=https://abc123xyz.ngrok.io
+MINI_APP_URL=https://example-word-word.trycloudflare.com
 ```
 
 ### 4️⃣ Перезапустите backend
@@ -72,8 +76,9 @@ MINI_APP_URL=https://abc123xyz.ngrok.io
 python main.py
 ```
 
-В логах должно увидеть:
+В логах должно появиться:
 ```
+Webhook deleted, starting polling
 🤖 Telegram bot started
 ```
 
@@ -91,7 +96,7 @@ python main.py
 
 1. Создайте аккаунт на https://railway.app
 2. Подключите ваш GitHub репо
-3. Railway автоматически создаст dockerfile и разверёт
+3. Railway автоматически создаст dockerfile и развернёт
 4. Получите URL вроде `https://your-app.railway.app`
 5. Обновите в `.env`: `MINI_APP_URL=https://your-app.railway.app`
 
@@ -130,15 +135,6 @@ if (tg) {
 }
 ```
 
-### API запросы
-
-Frontend делает обычные HTTP запросы на backend:
-```javascript
-client.get('/api/calendar/events?user_id=' + userId)
-```
-
-Backend проверяет `user_id` и возвращает данные.
-
 ## 🔐 Безопасность
 
 **Важно:** Telegram передаёт `initData` строку, которая подписана. Для production используйте её для проверки, что запрос действительно от Telegram:
@@ -159,26 +155,27 @@ def verify_initData(initData: str) -> bool:
 - Проверьте что `python main.py` работает
 
 **Q: "404 Not Found" при нажатии кнопки**
-- MINI_APP_URL неправильный
-- ngrok сессия закончилась (URL меняется каждый раз!)
-- Обновите .env и перезапустите backend
+- MINI_APP_URL неправильный или туннель перезапустился (URL меняется!)
+- Обновите `.env` и перезапустите backend
 
 **Q: Бот не отвечает на /start**
-- BOT_TOKEN неправильный
-- Бот не добавлен в .env
-- Проверьте логи: `python main.py`
+- Проверьте BOT_TOKEN в `.env`
+- Проверьте логи backend: `python main.py`
+- Возможен webhook конфликт — проверьте:
+  ```
+  curl https://api.telegram.org/bot<BOT_TOKEN>/getWebhookInfo
+  ```
+  Если `url` не пустой — удалите webhook вручную или просто перезапустите backend (он удаляет его автоматически при старте).
 
-**Q: MINI_APP_URL меняется каждый раз при перезапуске ngrok**
-- Это нормально для бесплатного ngrok
-- Платный plan даёт постоянный URL
-- Для production используйте реальный хостинг (Railway и т.д.)
+**Q: MINI_APP_URL меняется при перезапуске туннеля**
+- Это нормально для бесплатного quick tunnel (`trycloudflare.com`)
+- При каждом рестарте `cloudflared` нужно обновлять `.env` и перезапускать backend
+- Для постоянного URL: зарегистрируйтесь на Cloudflare и создайте именованный туннель (`cloudflared tunnel create`)
 
 ## 🎯 Чек-лист перед production
 
 - [ ] Google Calendar настроена и синхронизируется
-- [ ] Frontend собирается: `npm run build`
+- [ ] Frontend собран с правильным `REACT_APP_API_URL`: `REACT_APP_API_URL=https://your-backend npm run build`
 - [ ] Backend имеет HTTPS сертификат (Let's Encrypt)
-- [ ] Данные пользователя кэшируются/сессии работают
 - [ ] Все переменные окружения на production установлены
 - [ ] Логи пишутся в файл, а не только в консоль
-- [ ] Есть мониторинг/алерты при ошибках

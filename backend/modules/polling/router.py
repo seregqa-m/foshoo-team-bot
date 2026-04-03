@@ -22,10 +22,36 @@ class VoteRequest(BaseModel):
 router = APIRouter(prefix="/api/polls", tags=["polls"])
 
 
+@router.get("/all")
+async def get_all_polls(db: Session = Depends(get_db)):
+    """Все опросы с результатами голосования"""
+    service = PollingService(db)
+    return {"polls": service.get_all_polls_with_results()}
+
+
+@router.get("/")
+async def get_active_polls(db: Session = Depends(get_db)):
+    """Получить активные опросы"""
+    service = PollingService(db)
+    polls = service.get_active_polls()
+
+    return {
+        "polls": [
+            {
+                "id": p.id,
+                "title": p.title,
+                "description": p.description,
+                "expires_at": p.expires_at.isoformat()
+            }
+            for p in polls
+        ]
+    }
+
+
 @router.post("/create")
 async def create_poll(
     request: CreatePollRequest,
-    user_id: int = None,  # можно получить из JWT токена
+    user_id: int = None,
     db: Session = Depends(get_db)
 ):
     """Создать новый опрос"""
@@ -68,25 +94,6 @@ async def vote(
         raise HTTPException(status_code=400, detail="user_id required")
 
     service = PollingService(db)
-    vote = service.vote(poll_id, user_id, request.answer)
+    vote_result = service.vote(poll_id, user_id, request.answer)
 
-    return {"status": "voted", "answer": vote.answer}
-
-
-@router.get("/")
-async def get_active_polls(db: Session = Depends(get_db)):
-    """Получить активные опросы"""
-    service = PollingService(db)
-    polls = service.get_active_polls()
-
-    return {
-        "polls": [
-            {
-                "id": p.id,
-                "title": p.title,
-                "description": p.description,
-                "expires_at": p.expires_at.isoformat()
-            }
-            for p in polls
-        ]
-    }
+    return {"status": "voted", "answer": vote_result.answer}

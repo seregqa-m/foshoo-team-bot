@@ -4,7 +4,7 @@ Telegram bot для управления театральной студией
 """
 import logging
 from aiogram import Bot, Dispatcher, F
-from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
+from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo, PollAnswer
 from aiogram.filters import Command
 from config import BOT_TOKEN, MINI_APP_URL
 
@@ -43,6 +43,38 @@ async def cmd_help(message: Message):
         "/help — эта справка\n\n"
         "Нажми на кнопку 'Открыть приложение' чтобы начать работу!"
     )
+
+
+_POLL_ANSWER_MAP = {0: "yes", 1: "no", 2: "maybe"}
+
+
+@dp.poll_answer()
+async def handle_poll_answer(poll_answer: PollAnswer):
+    """Сохранить ответ на Telegram-опрос в БД"""
+    from core.database import SessionLocal
+    from modules.polling.services import PollingService
+    from modules.polling.models import Poll
+
+    if not poll_answer.option_ids:
+        return  # пользователь отозвал голос
+
+    answer = _POLL_ANSWER_MAP.get(poll_answer.option_ids[0])
+    if not answer:
+        logger.warning(f"Unknown poll option index: {poll_answer.option_ids[0]}")
+        return
+
+    db = SessionLocal()
+    try:
+        poll = db.query(Poll).filter(Poll.telegram_poll_id == poll_answer.poll_id).first()
+        if not poll:
+            logger.warning(f"No DB poll for telegram_poll_id={poll_answer.poll_id}")
+            return
+        PollingService(db).vote(poll.id, poll_answer.user.id, answer)
+        logger.info(f"Poll vote saved: poll={poll.id} user={poll_answer.user.id} answer={answer}")
+    except Exception as e:
+        logger.error(f"poll_answer handler error: {e}")
+    finally:
+        db.close()
 
 
 @dp.message()

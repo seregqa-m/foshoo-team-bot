@@ -132,3 +132,20 @@ body {
 .mb-12 {
   margin-bottom: 12px;
 }
+
+/* react-big-calendar mobile tweaks */
+.rbc-toolbar {
+  flex-wrap: wrap;
+  gap: 4px;
+  font-size: 13px;
+}
+.rbc-toolbar button {
+  padding: 4px 8px;
+  font-size: 13px;
+}
+.rbc-event {
+  font-size: 12px;
+}
+.rbc-time-slot {
+  font-size: 11px;
+}

@@ -16,6 +16,8 @@ class Poll(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     expires_at = Column(DateTime)
     is_active = Column(Boolean, default=True)
+    telegram_poll_id = Column(String, nullable=True)
+    telegram_message_id = Column(Integer, nullable=True)
 
     votes = relationship("PollVote", back_populates="poll", cascade="all, delete-orphan")
 

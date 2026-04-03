@@ -8,7 +8,7 @@ import sys
 import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from core.database import init_db, SessionLocal
+from core.database import init_db, SessionLocal, engine
 from config import LOG_LEVEL, API_HOST, API_PORT, GOOGLE_CALENDAR_JSON, GOOGLE_CALENDAR_ID, SYNC_INTERVAL_MINUTES
 from modules.calendar.router import router as calendar_router
 from modules.calendar.services import CalendarService
@@ -42,6 +42,31 @@ app.add_middleware(
 )
 
 
+def run_migrations():
+    """Добавить новые колонки если их нет (идемпотентно)"""
+    from sqlalchemy import text
+    with engine.connect() as conn:
+        for stmt in [
+            "ALTER TABLE polls ADD COLUMN telegram_poll_id TEXT",
+            "ALTER TABLE polls ADD COLUMN telegram_message_id INTEGER",
+        ]:
+            try:
+                conn.execute(text(stmt))
+                conn.commit()
+            except Exception:
+                pass  # колонка уже существует
+
+
+async def _run_bot():
+    """Запустить Telegram бота, удалив webhook перед polling"""
+    try:
+        await bot.delete_webhook(drop_pending_updates=True)
+        logger.info("Webhook deleted, starting polling")
+        await dp.start_polling(bot, handle_signals=False)
+    except Exception as e:
+        logger.error(f"❌ Bot polling stopped: {e}", exc_info=True)
+
+
 # Background sync task для Google Calendar
 async def sync_calendar_background():
     """Периодическая синхронизация с Google Calendar"""
@@ -72,11 +97,12 @@ async def sync_calendar_background():
 @app.on_event("startup")
 async def startup():
     logger.info("🚀 Starting application")
+    run_migrations()
     init_db()
     logger.info("✅ Database initialized")
 
     # Запустить Telegram бота
-    asyncio.create_task(dp.start_polling(bot))
+    asyncio.create_task(_run_bot())
     logger.info("🤖 Telegram bot started")
 
     # Запустить background sync task для Google Calendar

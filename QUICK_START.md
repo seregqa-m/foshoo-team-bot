@@ -39,19 +39,21 @@ npm start
 ✅ Backend: http://127.0.0.1:8000
 ✅ Frontend: http://127.0.0.1:3000
 
-### 4️⃣ ngrok для HTTPS (обязательно для Telegram Mini App)
+### 4️⃣ Cloudflare Tunnel для HTTPS (обязательно для Telegram Mini App)
 
 **Новый терминал:**
 ```bash
-ngrok http 3000
+cloudflared tunnel --url localhost:3000
 ```
 
-Скопируйте HTTPS URL (вроде `https://abc123xyz.ngrok.io`), вставьте в `.env`:
+Скопируйте HTTPS URL (вроде `https://example-word-word.trycloudflare.com`), вставьте в `.env`:
 ```env
-MINI_APP_URL=https://abc123xyz.ngrok.io
+MINI_APP_URL=https://example-word-word.trycloudflare.com
 ```
 
 Перезапустите backend (Ctrl+C и `python main.py` заново).
+
+Установка cloudflared: `brew install cloudflare/cloudflare/cloudflared` (macOS) или скачайте с https://github.com/cloudflare/cloudflared/releases
 
 ### 5️⃣ Тестирование
 
@@ -79,10 +81,24 @@ docker-compose up --build
 
 ## Важно знать
 
-**Telegram Mini App требует HTTPS!** 
-- Локально используйте ngrok
+**Telegram Mini App требует HTTPS!**
+- Локально используйте Cloudflare Tunnel (`cloudflared tunnel --url localhost:3000`)
 - На production (Railway, VPS) — автоматический HTTPS
-- URL ngrok меняется каждый раз (платный план даёт постоянный URL)
+- URL туннеля меняется при каждом перезапуске → нужно обновлять `MINI_APP_URL` в `.env` и перезапускать backend
+- Для постоянного URL: `cloudflared tunnel create <name>` (требует аккаунт на Cloudflare)
+
+**Frontend API URL запекается при сборке (`npm run build`)**
+- Если фронт собирался без `REACT_APP_API_URL`, он обращается к `http://127.0.0.1:8000`
+- Пользователи с телефонов не смогут достучаться до вашего localhost
+- Для production сборки задайте переменную перед `npm run build`:
+  ```bash
+  REACT_APP_API_URL=https://your-backend-url.com npm run build
+  ```
+- В dev режиме (`npm start`) это не нужно — браузер обращается к localhost напрямую
+
+**Уведомления хранятся, но не отправляются**
+- Модуль `notifications` сохраняет настройки пользователей, но фоновая задача рассылки ещё не реализована
+- Кнопка "Уведомления" в приложении работает только для сохранения настроек
 
 ## Что дальше?
 
@@ -142,9 +158,19 @@ frontend/          — React приложение
 
 ## FAQ
 
-**Q: Не работает бот**
+**Q: Не работает бот (не отвечает на /start)**
 - Проверьте BOT_TOKEN в .env
-- Убедитесь что backend работает: curl http://127.0.0.1:8000
+- Убедитесь что backend запущен: `curl http://127.0.0.1:8000`
+- Проверьте, нет ли активного webhook (он блокирует long polling):
+  ```
+  curl https://api.telegram.org/bot<BOT_TOKEN>/getWebhookInfo
+  ```
+  Если поле `url` не пустое — удалите webhook:
+  ```
+  curl -X POST https://api.telegram.org/bot<BOT_TOKEN>/deleteWebhook
+  ```
+  Затем перезапустите backend. При старте приложение теперь делает это автоматически.
+- Смотрите логи backend — ошибки бота выводятся туда
 
 **Q: Не работает frontend**
 - npm install прошла успешно? Есть node_modules/
