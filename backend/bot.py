@@ -4,7 +4,7 @@ Telegram bot для управления театральной студией
 """
 import logging
 from aiogram import Bot, Dispatcher, F
-from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo, PollAnswer, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
+from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo, PollAnswer
 from aiogram.filters import Command
 from config import BOT_TOKEN, MINI_APP_URL
 
@@ -32,12 +32,10 @@ async def cmd_start(message: Message):
             reply_markup=kb
         )
     else:
-        kb = ReplyKeyboardMarkup(
-            keyboard=[[KeyboardButton(text="🎭 Открыть приложение", web_app=WebAppInfo(url=MINI_APP_URL))]],
-            resize_keyboard=True,
-            one_time_keyboard=True,
+        await message.answer(
+            "🎭 Чтобы открыть приложение — нажми кнопку меню бота рядом с полем ввода, "
+            "или открой бота в личных сообщениях."
         )
-        await message.answer("🎭 Нажми кнопку чтобы открыть приложение:", reply_markup=kb)
 
 
 @dp.message(Command("help"))
