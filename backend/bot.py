@@ -19,18 +19,24 @@ async def cmd_start(message: Message):
     """Обработчик команды /start"""
     logger.info(f"User {message.from_user.id} started bot")
 
-    kb = InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(
-            text="🎭 Открыть приложение",
-            web_app=WebAppInfo(url=MINI_APP_URL)
+    if message.chat.type == "private":
+        kb = InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(
+                text="🎭 Открыть приложение",
+                web_app=WebAppInfo(url=MINI_APP_URL)
+            )
+        ]])
+        await message.answer(
+            "Привет! 👋\n\n"
+            "Нажми кнопку ниже, чтобы открыть приложение управления театральной студией.",
+            reply_markup=kb
         )
-    ]])
-
-    await message.answer(
-        "Привет! 👋\n\n"
-        "Нажми кнопку ниже, чтобы открыть приложение управления театральной студией.",
-        reply_markup=kb
-    )
+    else:
+        await message.answer(
+            "Привет! 👋\n\n"
+            "Чтобы открыть приложение, напиши мне в личные сообщения: @" +
+            (await message.bot.get_me()).username
+        )
 
 
 @dp.message(Command("help"))

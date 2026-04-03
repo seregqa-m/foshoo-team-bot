@@ -20,7 +20,6 @@ const EMPTY_FORM = { title: '', start_time: '', end_time: '', location: '', desc
 
 function EventCard({ event, userId, onEdit, onPollSent }) {
   const start = new Date(event.start_time);
-  const end   = new Date(event.end_time);
   const [polling, setPolling] = useState(false);
   const [pollDone, setPollDone] = useState(false);
   const [pollError, setPollError] = useState(null);
