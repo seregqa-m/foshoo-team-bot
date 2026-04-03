@@ -1,40 +1,182 @@
 import React, { useState, useEffect } from 'react';
-import { Calendar, dateFnsLocalizer } from 'react-big-calendar';
-import { format, parse, startOfWeek, getDay } from 'date-fns';
-import ru from 'date-fns/locale/ru';
-import 'react-big-calendar/lib/css/react-big-calendar.css';
 import * as calendarApi from '../api/calendar';
 
-const locales = { ru };
-const localizer = dateFnsLocalizer({
-  format,
-  parse,
-  startOfWeek: (date) => startOfWeek(date, { weekStartsOn: 1 }),
-  getDay,
-  locales,
-});
+const MONTHS = ['янв','фев','мар','апр','май','июн','июл','авг','сен','окт','ноя','дек'];
+const DAYS   = ['вс','пн','вт','ср','чт','пт','сб'];
 
-function CalendarView({ userId }) {
+function formatTime(iso) {
+  const d = new Date(iso);
+  return d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+}
+
+function toLocalInput(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  const pad = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+const EMPTY_FORM = { title: '', start_time: '', end_time: '', location: '', description: '' };
+
+function EventCard({ event, userId, onEdit, onPollSent }) {
+  const start = new Date(event.start_time);
+  const end   = new Date(event.end_time);
+  const [polling, setPolling] = useState(false);
+  const [pollDone, setPollDone] = useState(false);
+  const [pollError, setPollError] = useState(null);
+
+  const handlePoll = async () => {
+    if (!userId) { setPollError('Нет userId'); return; }
+    try {
+      setPolling(true);
+      setPollError(null);
+      await calendarApi.launchPoll(event.id, userId);
+      setPollDone(true);
+      onPollSent && onPollSent();
+    } catch (e) {
+      setPollError(e.response?.data?.detail || 'Ошибка');
+    } finally {
+      setPolling(false);
+    }
+  };
+
+  return (
+    <div className="event-card">
+      <div className="event-date-block">
+        <div className="event-date-day">{start.getDate()}</div>
+        <div className="event-date-month">{MONTHS[start.getMonth()]}</div>
+        <div className="event-date-dow">{DAYS[start.getDay()]}</div>
+      </div>
+      <div className="event-body">
+        <div className="event-title">{event.title}</div>
+        <div className="event-meta">
+          {formatTime(event.start_time)} – {formatTime(event.end_time)}
+          {event.location ? `  📍 ${event.location}` : ''}
+        </div>
+        {pollError && <div style={{ fontSize: 12, color: 'var(--danger)', marginBottom: 8 }}>{pollError}</div>}
+        <div className="event-actions">
+          <button className="btn btn-secondary" onClick={() => onEdit(event)}>✏️ Ред.</button>
+          <button
+            className={`btn ${pollDone ? 'btn-success' : 'btn-secondary'}`}
+            onClick={handlePoll}
+            disabled={polling || pollDone}
+          >
+            {polling ? '⌛' : pollDone ? '✅ Отправлен' : '🗳️ Опрос'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function EventModal({ event, onClose, onSaved, onDeleted }) {
+  const isEdit = !!event?.id;
+  const [form, setForm] = useState(
+    isEdit
+      ? { ...event, start_time: toLocalInput(event.start_time), end_time: toLocalInput(event.end_time) }
+      : { ...EMPTY_FORM }
+  );
+  const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [error, setError] = useState(null);
+
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+
+  const handleSave = async (e) => {
+    e.preventDefault();
+    if (!form.title || !form.start_time || !form.end_time) {
+      setError('Заполните обязательные поля');
+      return;
+    }
+    try {
+      setSaving(true);
+      setError(null);
+      const data = { ...form, start_time: form.start_time + ':00', end_time: form.end_time + ':00' };
+      if (isEdit) {
+        await calendarApi.updateEvent(event.id, data);
+      } else {
+        await calendarApi.createEvent(data);
+      }
+      onSaved();
+    } catch (e) {
+      setError(e.response?.data?.detail || 'Ошибка при сохранении');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!window.confirm('Удалить событие?')) return;
+    try {
+      setDeleting(true);
+      await calendarApi.deleteEvent(event.id);
+      onDeleted();
+    } catch (e) {
+      setError(e.response?.data?.detail || 'Ошибка при удалении');
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal" onClick={e => e.stopPropagation()}>
+        <div className="modal-handle" />
+        <div className="modal-title">{isEdit ? 'Редактировать' : 'Новое событие'}</div>
+
+        {error && <div className="alert alert-error">{error}</div>}
+
+        <form onSubmit={handleSave}>
+          <div className="form-group">
+            <label className="form-label">Название *</label>
+            <input className="form-input" value={form.title} onChange={e => set('title', e.target.value)} placeholder="Репетиция «Гамлет»" required />
+          </div>
+          <div className="form-group">
+            <label className="form-label">Начало *</label>
+            <input className="form-input" type="datetime-local" value={form.start_time} onChange={e => set('start_time', e.target.value)} required />
+          </div>
+          <div className="form-group">
+            <label className="form-label">Конец *</label>
+            <input className="form-input" type="datetime-local" value={form.end_time} onChange={e => set('end_time', e.target.value)} required />
+          </div>
+          <div className="form-group">
+            <label className="form-label">Место</label>
+            <input className="form-input" value={form.location} onChange={e => set('location', e.target.value)} placeholder="Зал 2" />
+          </div>
+          <div className="form-group">
+            <label className="form-label">Описание</label>
+            <textarea className="form-input" value={form.description} onChange={e => set('description', e.target.value)} rows={2} style={{ resize: 'none' }} />
+          </div>
+
+          <div className="modal-actions">
+            <button type="submit" className="btn btn-primary" disabled={saving}>
+              {saving ? 'Сохранение...' : isEdit ? 'Сохранить' : 'Создать'}
+            </button>
+            <button type="button" className="btn btn-secondary" onClick={onClose}>Отмена</button>
+          </div>
+
+          {isEdit && (
+            <button
+              type="button"
+              className="btn btn-danger"
+              style={{ width: '100%', marginTop: 10 }}
+              onClick={handleDelete}
+              disabled={deleting}
+            >
+              {deleting ? 'Удаление...' : '🗑 Удалить событие'}
+            </button>
+          )}
+        </form>
+      </div>
+    </div>
+  );
+}
+
+export default function CalendarView({ userId }) {
   const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [syncing, setSyncing] = useState(false);
-  const [selectedEvent, setSelectedEvent] = useState(null);
-  const [launchingPoll, setLaunchingPoll] = useState(false);
-  const [pollSuccess, setPollSuccess] = useState(false);
-  const [showForm, setShowForm] = useState(false);
-  const [editingId, setEditingId] = useState(null);
-  const [formData, setFormData] = useState({
-    title: '',
-    start_time: '',
-    end_time: '',
-    location: '',
-    description: '',
-  });
-
-  useEffect(() => {
-    fetchEvents();
-  }, []);
+  const [modal, setModal] = useState(null); // null | 'new' | event object
 
   const fetchEvents = async () => {
     try {
@@ -42,333 +184,51 @@ function CalendarView({ userId }) {
       const res = await calendarApi.getEvents(90);
       setEvents(res.data.events || []);
       setError(null);
-    } catch (err) {
-      console.error('Failed to fetch events:', err);
-      setError('Ошибка при загрузке событий');
+    } catch {
+      setError('Не удалось загрузить события');
     } finally {
       setLoading(false);
     }
   };
 
-  const handleSync = async () => {
-    try {
-      setSyncing(true);
-      await calendarApi.syncCalendar();
-      await fetchEvents();
-      setError(null);
-    } catch (err) {
-      console.error('Sync failed:', err);
-      setError('Ошибка при синхронизации');
-    } finally {
-      setSyncing(false);
-    }
-  };
+  useEffect(() => { fetchEvents(); }, []);
 
-  const handleAddClick = () => {
-    setEditingId(null);
-    setFormData({ title: '', start_time: '', end_time: '', location: '', description: '' });
-    setShowForm(true);
-  };
+  const handleSaved = () => { setModal(null); fetchEvents(); };
+  const handleDeleted = () => { setModal(null); fetchEvents(); };
 
-  const handleEditClick = (event) => {
-    setEditingId(event.id);
-    setFormData({
-      title: event.title,
-      start_time: event.start_time,
-      end_time: event.end_time,
-      location: event.location || '',
-      description: event.description || '',
-    });
-    setShowForm(true);
-  };
-
-  const handleFormChange = (e) => {
-    const { name, value } = e.target;
-    setFormData((prev) => ({ ...prev, [name]: value }));
-  };
-
-  const handleFormSubmit = async (e) => {
-    e.preventDefault();
-    try {
-      if (!formData.title || !formData.start_time || !formData.end_time) {
-        setError('Заполните обязательные поля');
-        return;
-      }
-      if (editingId) {
-        await calendarApi.updateEvent(editingId, formData);
-      } else {
-        await calendarApi.createEvent(formData);
-      }
-      setShowForm(false);
-      await fetchEvents();
-      setError(null);
-    } catch (err) {
-      console.error('Failed to save event:', err);
-      setError('Ошибка при сохранении события');
-    }
-  };
-
-  const handleDelete = async (eventId) => {
-    if (!window.confirm('Вы уверены, что хотите удалить это событие?')) return;
-    try {
-      await calendarApi.deleteEvent(eventId);
-      setSelectedEvent(null);
-      await fetchEvents();
-      setError(null);
-    } catch (err) {
-      console.error('Failed to delete event:', err);
-      setError('Ошибка при удалении события');
-    }
-  };
-
-  const handleLaunchPoll = async (eventId) => {
-    if (!userId) {
-      setError('Требуется авторизация через Telegram');
-      return;
-    }
-    try {
-      setLaunchingPoll(true);
-      setPollSuccess(false);
-      await calendarApi.launchPoll(eventId, userId);
-      setPollSuccess(true);
-      setError(null);
-    } catch (err) {
-      console.error('Failed to launch poll:', err);
-      setError(err.response?.data?.detail || 'Ошибка при запуске опроса');
-    } finally {
-      setLaunchingPoll(false);
-    }
-  };
-
-  const formatDate = (dateString) => {
-    const date = new Date(dateString);
-    return date.toLocaleString('ru-RU', {
-      weekday: 'short', month: 'short', day: 'numeric',
-      hour: '2-digit', minute: '2-digit',
-    });
-  };
-
-  const calendarEvents = events.map((e) => ({
-    ...e,
-    start: new Date(e.start_time),
-    end: new Date(e.end_time),
-  }));
-
-  if (loading) {
-    return <div className="text-center mt-12">⏳ Загрузка...</div>;
-  }
+  if (loading) return <div className="empty-state">Загрузка...</div>;
 
   return (
-    <div>
-      {error && (
-        <div className="card" style={{ backgroundColor: '#f8d7da', borderColor: '#dc3545', marginBottom: '8px' }}>
-          <div style={{ color: '#721c24' }}>{error}</div>
-        </div>
-      )}
-
-      {/* Toolbar */}
-      <div style={{ display: 'flex', gap: '8px', marginBottom: '12px', padding: '0 8px' }}>
-        <button className="btn btn-primary" onClick={handleAddClick} style={{ flex: 1 }}>
-          ➕ Добавить
-        </button>
-        <button
-          className="btn btn-secondary"
-          onClick={handleSync}
-          disabled={syncing}
-          style={{ flex: 1, opacity: syncing ? 0.5 : 1 }}
-        >
-          {syncing ? '⌛ Синхр...' : '🔄 Синхр'}
-        </button>
+    <>
+      <div className="page-header">
+        <div className="page-title">Расписание</div>
+        <button className="btn btn-primary" onClick={() => setModal('new')}>+ Добавить</button>
       </div>
 
-      {/* Weekly calendar */}
-      <div style={{ padding: '0 4px' }}>
-        <Calendar
-          localizer={localizer}
-          events={calendarEvents}
-          defaultView="week"
-          views={['week', 'day']}
-          defaultDate={new Date()}
-          style={{ height: 520 }}
-          culture="ru"
-          onSelectEvent={(event) => {
-            setSelectedEvent(event);
-            setPollSuccess(false);
-          }}
-          messages={{
-            week: 'Неделя',
-            day: 'День',
-            today: 'Сегодня',
-            previous: '←',
-            next: '→',
-            noEventsInRange: 'Нет событий',
-          }}
+      {error && <div className="alert alert-error">{error}</div>}
+
+      {events.length === 0 ? (
+        <div className="empty-state">Нет предстоящих событий</div>
+      ) : (
+        events.map(e => (
+          <EventCard
+            key={e.id}
+            event={e}
+            userId={userId}
+            onEdit={setModal}
+            onPollSent={fetchEvents}
+          />
+        ))
+      )}
+
+      {modal && (
+        <EventModal
+          event={modal === 'new' ? null : modal}
+          onClose={() => setModal(null)}
+          onSaved={handleSaved}
+          onDeleted={handleDeleted}
         />
-      </div>
-
-      {/* Event detail popup */}
-      {selectedEvent && (
-        <div
-          style={{
-            position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-            backgroundColor: 'rgba(0,0,0,0.5)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            zIndex: 1000,
-          }}
-          onClick={() => { setSelectedEvent(null); setPollSuccess(false); }}
-        >
-          <div
-            className="card"
-            style={{ width: '90%', maxWidth: '400px' }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div style={{ fontWeight: 'bold', fontSize: '16px', marginBottom: '6px' }}>
-              {selectedEvent.title}
-            </div>
-            <div style={{ fontSize: '13px', color: '#666', marginBottom: '4px' }}>
-              {formatDate(selectedEvent.start_time)}
-            </div>
-            {selectedEvent.location && (
-              <div style={{ fontSize: '12px', color: '#999', marginBottom: '8px' }}>
-                📍 {selectedEvent.location}
-              </div>
-            )}
-            {selectedEvent.description && (
-              <div style={{ fontSize: '12px', marginBottom: '12px' }}>
-                {selectedEvent.description}
-              </div>
-            )}
-
-            {pollSuccess && (
-              <div style={{ color: '#28a745', fontSize: '13px', marginBottom: '10px' }}>
-                ✅ Опрос отправлен в группу
-              </div>
-            )}
-
-            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-              <button
-                className="btn btn-primary"
-                style={{ flex: 1 }}
-                onClick={() => { handleEditClick(selectedEvent); setSelectedEvent(null); }}
-              >
-                ✏️ Изменить
-              </button>
-              <button
-                className="btn btn-danger"
-                style={{ flex: 1 }}
-                onClick={() => handleDelete(selectedEvent.id)}
-              >
-                🗑️ Удалить
-              </button>
-              <button
-                className="btn btn-secondary"
-                style={{ flex: '0 0 100%' }}
-                disabled={launchingPoll || pollSuccess}
-                onClick={() => handleLaunchPoll(selectedEvent.id)}
-              >
-                {launchingPoll ? '⌛ Отправка...' : pollSuccess ? '✅ Отправлен' : '🗳️ Запустить опрос'}
-              </button>
-            </div>
-          </div>
-        </div>
       )}
-
-      {/* Create/Edit form modal */}
-      {showForm && (
-        <div
-          style={{
-            position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-            backgroundColor: 'rgba(0,0,0,0.5)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            zIndex: 1000,
-          }}
-          onClick={() => setShowForm(false)}
-        >
-          <div
-            className="card"
-            style={{ width: '90%', maxWidth: '500px', maxHeight: '80vh', overflow: 'auto' }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div style={{ fontWeight: 'bold', fontSize: '16px', marginBottom: '12px' }}>
-              {editingId ? '✏️ Редактировать событие' : '➕ Новое событие'}
-            </div>
-
-            <form onSubmit={handleFormSubmit}>
-              <div style={{ marginBottom: '12px' }}>
-                <label style={{ fontSize: '12px', color: '#666' }}>Название*</label>
-                <input
-                  type="text"
-                  name="title"
-                  value={formData.title}
-                  onChange={handleFormChange}
-                  placeholder="Название события"
-                  style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ccc', marginTop: '4px', fontSize: '14px' }}
-                  required
-                />
-              </div>
-
-              <div style={{ marginBottom: '12px' }}>
-                <label style={{ fontSize: '12px', color: '#666' }}>Начало*</label>
-                <input
-                  type="datetime-local"
-                  name="start_time"
-                  value={formData.start_time.slice(0, 16)}
-                  onChange={(e) => setFormData((prev) => ({ ...prev, start_time: e.target.value + ':00' }))}
-                  style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ccc', marginTop: '4px', fontSize: '14px' }}
-                  required
-                />
-              </div>
-
-              <div style={{ marginBottom: '12px' }}>
-                <label style={{ fontSize: '12px', color: '#666' }}>Конец*</label>
-                <input
-                  type="datetime-local"
-                  name="end_time"
-                  value={formData.end_time.slice(0, 16)}
-                  onChange={(e) => setFormData((prev) => ({ ...prev, end_time: e.target.value + ':00' }))}
-                  style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ccc', marginTop: '4px', fontSize: '14px' }}
-                  required
-                />
-              </div>
-
-              <div style={{ marginBottom: '12px' }}>
-                <label style={{ fontSize: '12px', color: '#666' }}>Место</label>
-                <input
-                  type="text"
-                  name="location"
-                  value={formData.location}
-                  onChange={handleFormChange}
-                  placeholder="Место проведения"
-                  style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ccc', marginTop: '4px', fontSize: '14px' }}
-                />
-              </div>
-
-              <div style={{ marginBottom: '12px' }}>
-                <label style={{ fontSize: '12px', color: '#666' }}>Описание</label>
-                <textarea
-                  name="description"
-                  value={formData.description}
-                  onChange={handleFormChange}
-                  placeholder="Описание события"
-                  style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ccc', marginTop: '4px', fontSize: '14px', resize: 'vertical' }}
-                  rows="3"
-                />
-              </div>
-
-              <div style={{ display: 'flex', gap: '8px' }}>
-                <button type="submit" className="btn btn-primary" style={{ flex: 1 }}>
-                  {editingId ? '💾 Сохранить' : '✅ Создать'}
-                </button>
-                <button type="button" className="btn btn-secondary" onClick={() => setShowForm(false)} style={{ flex: 1 }}>
-                  ✕ Отмена
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-    </div>
+    </>
   );
 }
-
-export default CalendarView;
