@@ -75,3 +75,7 @@ frontend/dist/
 
 # IDE settings
 .claude/settings.local.json
+
+# CLAUDE
+CLAUDE.md
+.claude
