@@ -19,17 +19,32 @@ function toLocalInput(iso) {
 const EMPTY_FORM = { title: '', start_time: '', end_time: '', location: '', description: '' };
 
 const FILTERS = [
-  { key: 'all',      label: 'Все' },
-  { key: 'труппа 1', label: 'Труппа 1' },
-  { key: 'труппа 2', label: 'Труппа 2' },
-  { key: 'лаба',     label: 'Лаба' },
+  { key: 'all',      label: 'Все',       color: '#E5E7EB' },
+  { key: 'труппа 1', label: 'Труппа 1',  color: '#C4B5FD' },
+  { key: 'труппа 2', label: 'Труппа 2',  color: '#FDE68A' },
+  { key: 'лаба',     label: 'Лаба',      color: '#FCA5A5' },
 ];
 
 const MONTHS_FULL = ['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
 const DOW = ['пн','вт','ср','чт','пт','сб','вс'];
 
-function WeekStrip({ events }) {
+const HOUR_START = 9;
+const HOUR_END   = 24;
+const HOUR_H     = 22;
+const HEADER_H   = 42;
+const LABEL_W    = 28;
+
+function getEventColor(title, showNames) {
+  const t = title.toLowerCase();
+  if (t.includes('труппа 1') || showNames.some(s => t.includes(s))) return '#C4B5FD';
+  if (t.includes('труппа 2')) return '#FDE68A';
+  if (t.includes('лаба')) return '#FCA5A5';
+  return '#D1D5DB';
+}
+
+function WeekCalendar({ events, showNames }) {
   const [weekOffset, setWeekOffset] = useState(0);
+  const [tooltip, setTooltip] = useState(null);
 
   const weekStart = (() => {
     const d = new Date();
@@ -45,55 +60,118 @@ function WeekStrip({ events }) {
     return d;
   });
 
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const totalW = window.innerWidth - 32;
+  const colW = (totalW - LABEL_W) / 7;
+  const chartH = (HOUR_END - HOUR_START) * HOUR_H;
+  const svgH = HEADER_H + chartH;
 
-  const eventsByDay = {};
-  events.forEach(e => {
-    const key = new Date(e.start_time).toDateString();
-    if (!eventsByDay[key]) eventsByDay[key] = [];
-    eventsByDay[key].push(e);
-  });
+  const timeToY = dt => {
+    const h = Math.max(HOUR_START, Math.min(HOUR_END, dt.getHours() + dt.getMinutes() / 60));
+    return HEADER_H + (h - HOUR_START) * HOUR_H;
+  };
 
   const monthLabel = (() => {
-    const first = MONTHS_FULL[days[0].getMonth()];
-    const last  = MONTHS_FULL[days[6].getMonth()];
-    const year  = days[6].getFullYear();
-    return first === last ? `${first} ${year}` : `${first} — ${last} ${year}`;
+    const f = MONTHS_FULL[days[0].getMonth()], l = MONTHS_FULL[days[6].getMonth()], y = days[6].getFullYear();
+    return f === l ? `${f} ${y}` : `${f} — ${l} ${y}`;
+  })();
+
+  const fmt = dt => `${String(dt.getHours()).padStart(2,'0')}:${String(dt.getMinutes()).padStart(2,'0')}`;
+
+  const weekEvents = events.filter(e => {
+    const d = new Date(e.start_time); d.setHours(0,0,0,0);
+    return d >= days[0] && d <= days[6];
+  });
+
+  const nowY = (() => {
+    const now = new Date();
+    const todayIdx = days.findIndex(d => d.getTime() === today.getTime());
+    if (todayIdx < 0) return null;
+    const h = now.getHours() + now.getMinutes() / 60;
+    if (h < HOUR_START || h > HOUR_END) return null;
+    return { y: HEADER_H + (h - HOUR_START) * HOUR_H, x: LABEL_W + todayIdx * colW };
   })();
 
   return (
-    <div className="card-white" style={{ padding: '10px 12px', marginBottom: 16 }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+    <div className="card-white" style={{ padding: '10px 8px', marginBottom: 16 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6, padding: '0 4px' }}>
         <button onClick={() => setWeekOffset(o => o - 1)} style={{ background: 'none', border: 'none', fontSize: 18, cursor: 'pointer', color: '#555', padding: '0 4px' }}>‹</button>
         <span style={{ fontSize: 13, fontWeight: 600, color: '#333' }}>{monthLabel}</span>
         <button onClick={() => setWeekOffset(o => o + 1)} style={{ background: 'none', border: 'none', fontSize: 18, cursor: 'pointer', color: '#555', padding: '0 4px' }}>›</button>
       </div>
-      <div style={{ display: 'flex', justifyContent: 'space-around' }}>
-        {days.map((d, i) => {
-          const isToday = d.getTime() === today.getTime();
-          const dayEvents = eventsByDay[d.toDateString()] || [];
-          return (
-            <div key={i} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3, minWidth: 0, flex: 1 }}>
-              <span style={{ fontSize: 10, color: '#aaa' }}>{DOW[i]}</span>
-              <div style={{
-                width: 28, height: 28, borderRadius: '50%',
-                background: isToday ? '#111' : 'transparent',
-                color: isToday ? '#fff' : '#222',
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                fontSize: 13, fontWeight: isToday ? 700 : 400,
-              }}>
-                {d.getDate()}
-              </div>
-              <div style={{ display: 'flex', gap: 2, height: 8, alignItems: 'center' }}>
-                {dayEvents.slice(0, 3).map((_, j) => (
-                  <div key={j} style={{ width: 5, height: 5, borderRadius: '50%', background: '#111' }} />
-                ))}
-                {dayEvents.length > 3 && <span style={{ fontSize: 8, color: '#999', lineHeight: 1 }}>+</span>}
-              </div>
-            </div>
-          );
-        })}
+      <div style={{ position: 'relative' }}>
+        {tooltip && (
+          <div style={{
+            position: 'absolute', zIndex: 20, pointerEvents: 'none',
+            left: Math.max(0, Math.min(tooltip.x - 60, totalW - 130)),
+            top: Math.max(0, tooltip.y - 44),
+            background: '#111', color: '#fff', borderRadius: 6,
+            padding: '4px 8px', fontSize: 11, whiteSpace: 'nowrap',
+          }}>
+            <div style={{ fontWeight: 600 }}>{tooltip.title}</div>
+            <div style={{ color: '#ccc' }}>{tooltip.time}</div>
+          </div>
+        )}
+        <div style={{ overflowY: 'auto', maxHeight: 360 }}>
+          <svg width={totalW} height={svgH} style={{ display: 'block' }}>
+            {/* Column backgrounds + day headers */}
+            {days.map((d, i) => {
+              const isToday = d.getTime() === today.getTime();
+              const cx = LABEL_W + i * colW + colW / 2;
+              return (
+                <g key={i}>
+                  {isToday && <rect x={LABEL_W + i * colW} y={0} width={colW} height={svgH} fill="#f8f6ff" />}
+                  <line x1={LABEL_W + i * colW} x2={LABEL_W + i * colW} y1={HEADER_H} y2={svgH} stroke="#f0f0f0" strokeWidth={1} />
+                  <text x={cx} y={13} textAnchor="middle" fontSize={9} fill={isToday ? '#7C3AED' : '#aaa'} fontWeight={isToday ? 700 : 400}>{DOW[i]}</text>
+                  {isToday
+                    ? <><circle cx={cx} cy={29} r={11} fill="#7C3AED" /><text x={cx} y={33} textAnchor="middle" fontSize={12} fill="#fff" fontWeight={700}>{d.getDate()}</text></>
+                    : <text x={cx} y={33} textAnchor="middle" fontSize={12} fill="#444">{d.getDate()}</text>
+                  }
+                </g>
+              );
+            })}
+            {/* Hour grid */}
+            {Array.from({ length: HOUR_END - HOUR_START + 1 }, (_, i) => {
+              const hour = HOUR_START + i;
+              const y = HEADER_H + i * HOUR_H;
+              return (
+                <g key={hour}>
+                  <line x1={LABEL_W} x2={totalW} y1={y} y2={y} stroke="#f0f0f0" strokeWidth={1} />
+                  {hour % 3 === 0 && hour < HOUR_END && (
+                    <text x={LABEL_W - 3} y={y + 4} textAnchor="end" fontSize={8} fill="#bbb">{hour}</text>
+                  )}
+                </g>
+              );
+            })}
+            {/* Events */}
+            {weekEvents.map((e, idx) => {
+              const startDt = new Date(e.start_time);
+              const endDt   = new Date(e.end_time);
+              const dayStr  = new Date(startDt).setHours(0,0,0,0);
+              const dayIdx  = days.findIndex(d => d.getTime() === dayStr);
+              if (dayIdx < 0) return null;
+              const y1 = timeToY(startDt);
+              const y2 = timeToY(endDt);
+              const h  = Math.max(6, y2 - y1);
+              const x  = LABEL_W + dayIdx * colW + 2;
+              const w  = colW - 4;
+              const color = getEventColor(e.title, showNames);
+              return (
+                <rect key={idx} x={x} y={y1} width={w} height={h} rx={3}
+                  fill={color} fillOpacity={0.9} style={{ cursor: 'pointer' }}
+                  onMouseEnter={() => setTooltip({ title: e.title, time: `${fmt(startDt)}–${fmt(endDt)}`, x: x + w/2, y: y1 })}
+                  onMouseLeave={() => setTooltip(null)}
+                  onTouchStart={() => setTooltip({ title: e.title, time: `${fmt(startDt)}–${fmt(endDt)}`, x: x + w/2, y: y1 })}
+                  onTouchEnd={() => setTimeout(() => setTooltip(null), 2000)}
+                />
+              );
+            })}
+            {/* Current time line */}
+            {nowY && (
+              <line x1={nowY.x} x2={nowY.x + colW} y1={nowY.y} y2={nowY.y} stroke="#EF4444" strokeWidth={1.5} />
+            )}
+          </svg>
+        </div>
       </div>
     </div>
   );
@@ -312,13 +390,10 @@ export default function CalendarView({ userId, isAdmin }) {
             key={f.key}
             onClick={() => setFilter(f.key)}
             style={{
-              padding: '4px 12px',
-              borderRadius: 16,
-              border: '1px solid #ccc',
-              background: filter === f.key ? '#111' : '#fff',
-              color: filter === f.key ? '#fff' : '#111',
-              fontSize: 13,
-              cursor: 'pointer',
+              padding: '4px 12px', borderRadius: 16, fontSize: 13, cursor: 'pointer',
+              border: filter === f.key ? '2px solid #555' : '1.5px solid transparent',
+              background: f.color,
+              color: '#333', fontWeight: filter === f.key ? 700 : 400,
             }}
           >
             {f.label}
@@ -326,7 +401,7 @@ export default function CalendarView({ userId, isAdmin }) {
         ))}
       </div>
 
-      <WeekStrip events={visibleEvents} />
+      <WeekCalendar events={visibleEvents} showNames={showNames} />
 
       {error && <div className="alert alert-error">{error}</div>}
 
