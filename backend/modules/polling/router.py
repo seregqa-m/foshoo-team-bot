@@ -82,6 +82,55 @@ async def get_poll_results(poll_id: int, db: Session = Depends(get_db)):
     return results
 
 
+@router.post("/{poll_id}/stop")
+async def stop_poll(poll_id: int, db: Session = Depends(get_db)):
+    """Остановить опрос: закрыть в Telegram и пометить неактивным в БД."""
+    from bot import bot
+    from config import GROUP_CHAT_ID
+    service = PollingService(db)
+    poll = service.get_poll(poll_id)
+    if not poll:
+        raise HTTPException(status_code=404, detail="Poll not found")
+    if poll.telegram_message_id and GROUP_CHAT_ID:
+        try:
+            await bot.stop_poll(chat_id=GROUP_CHAT_ID, message_id=poll.telegram_message_id)
+        except Exception as e:
+            logger.warning(f"stop_poll telegram failed: {e}")
+    poll.is_active = False
+    db.commit()
+    return {"status": "stopped"}
+
+
+@router.post("/{poll_id}/pin")
+async def pin_poll(poll_id: int, db: Session = Depends(get_db)):
+    """Закрепить сообщение с опросом в группе."""
+    from bot import bot
+    from config import GROUP_CHAT_ID
+    service = PollingService(db)
+    poll = service.get_poll(poll_id)
+    if not poll:
+        raise HTTPException(status_code=404, detail="Poll not found")
+    if not poll.telegram_message_id or not GROUP_CHAT_ID:
+        raise HTTPException(status_code=400, detail="Нет Telegram message_id или GROUP_CHAT_ID")
+    try:
+        await bot.pin_chat_message(chat_id=GROUP_CHAT_ID, message_id=poll.telegram_message_id, disable_notification=True)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    return {"status": "pinned"}
+
+
+@router.delete("/{poll_id}")
+async def delete_poll(poll_id: int, db: Session = Depends(get_db)):
+    """Удалить опрос и все голоса из БД."""
+    service = PollingService(db)
+    poll = service.get_poll(poll_id)
+    if not poll:
+        raise HTTPException(status_code=404, detail="Poll not found")
+    db.delete(poll)
+    db.commit()
+    return {"status": "deleted"}
+
+
 @router.post("/{poll_id}/vote")
 async def vote(
     poll_id: int,

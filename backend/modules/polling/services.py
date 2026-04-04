@@ -102,6 +102,7 @@ class PollingService:
                 "calendar_event": event_info,
                 "votes": counts,
                 "total_votes": len(votes),
+                "telegram_message_id": poll.telegram_message_id,
             })
         return result
 

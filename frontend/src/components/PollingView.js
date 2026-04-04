@@ -1,6 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import client from '../api/client';
 
+const btnStyle = {
+  background: 'none', border: '1px solid #e0e0e0', borderRadius: 8,
+  padding: '3px 8px', fontSize: 12, cursor: 'pointer', color: '#444',
+};
+
 function formatDate(iso) {
   const d = new Date(iso);
   return d.toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
@@ -10,13 +15,34 @@ export default function PollingView() {
   const [polls, setPolls] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [actionMsg, setActionMsg] = useState(null);
 
-  useEffect(() => {
+  const loadPolls = () => {
     client.get('/api/polls/all')
       .then(r => setPolls(r.data.polls || []))
       .catch(() => setError('Не удалось загрузить опросы'))
       .finally(() => setLoading(false));
-  }, []);
+  };
+
+  useEffect(() => { loadPolls(); }, []);
+
+  const notify = (msg) => { setActionMsg(msg); setTimeout(() => setActionMsg(null), 3000); };
+
+  const stopPoll = async (id) => {
+    try { await client.post(`/api/polls/${id}/stop`); loadPolls(); notify('Опрос остановлен'); }
+    catch (e) { notify('Ошибка при остановке'); }
+  };
+
+  const pinPoll = async (id) => {
+    try { await client.post(`/api/polls/${id}/pin`); notify('Сообщение закреплено'); }
+    catch (e) { notify(e.response?.data?.detail || 'Ошибка при закреплении'); }
+  };
+
+  const deletePoll = async (id) => {
+    if (!window.confirm('Удалить опрос из БД?')) return;
+    try { await client.delete(`/api/polls/${id}`); loadPolls(); notify('Опрос удалён'); }
+    catch (e) { notify('Ошибка при удалении'); }
+  };
 
   if (loading) return <div className="empty-state">Загрузка...</div>;
 
@@ -27,6 +53,7 @@ export default function PollingView() {
       </div>
 
       {error && <div className="alert alert-error">{error}</div>}
+      {actionMsg && <div className="alert alert-success">{actionMsg}</div>}
 
       {polls.length === 0 ? (
         <div className="empty-state">Нет опросов. Запустите опрос из карточки события.</div>
@@ -68,8 +95,25 @@ export default function PollingView() {
               </div>
             </div>
 
-            <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 10 }}>
-              Всего: {poll.total_votes} · {formatDate(poll.created_at)}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 10 }}>
+              <div style={{ fontSize: 11, color: 'var(--muted)' }}>
+                Всего: {poll.total_votes} · {formatDate(poll.created_at)}
+              </div>
+              <div style={{ display: 'flex', gap: 6 }}>
+                {poll.telegram_message_id && (
+                  <button onClick={() => pinPoll(poll.id)} style={btnStyle}>
+                    📌
+                  </button>
+                )}
+                {poll.is_active && (
+                  <button onClick={() => stopPoll(poll.id)} style={btnStyle}>
+                    Стоп
+                  </button>
+                )}
+                <button onClick={() => deletePoll(poll.id)} style={{ ...btnStyle, color: '#bbb' }}>
+                  ✕
+                </button>
+              </div>
             </div>
           </div>
         ))
