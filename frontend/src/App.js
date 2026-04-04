@@ -22,7 +22,7 @@ function App() {
         setUserId(user.id);
         const username = user.username || '';
         setUsername(username);
-        fetch(`${process.env.REACT_APP_API_URL || 'http://127.0.0.1:8000'}/api/auth/check?username=${username}`)
+        fetch(`${process.env.REACT_APP_API_URL || 'http://127.0.0.1:8000'}/api/auth/check?username=${username}&user_id=${user.id}`)
           .then(r => r.json())
           .then(data => { setAllowed(data.allowed); setIsAdmin(!!data.is_admin); })
           .catch(() => setAllowed(true)); // при ошибке — пускаем
