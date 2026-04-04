@@ -133,14 +133,33 @@ class SheetsClient:
                 return sheet["properties"]["sheetId"]
         raise ValueError(f"Sheet '{sheet_name}' not found")
 
-    def _find_header_row(self, col_range: str) -> int:
-        """Найти 1-based номер строки с заголовком 'Проект' в указанном диапазоне."""
+    def _find_table_header_row(self, sheet_name: str, table_name: str) -> int | None:
+        """Найти 1-based строку заголовка именованной таблицы через метаданные Sheets API."""
+        result = self.api.get(
+            spreadsheetId=self.spreadsheet_id,
+            fields="sheets(properties(title),tables(name,range))"
+        ).execute()
+        for sheet in result.get("sheets", []):
+            if sheet["properties"]["title"] != sheet_name:
+                continue
+            for table in sheet.get("tables", []):
+                if table.get("name") == table_name:
+                    # range вида "Финансы!A10:G100"
+                    rng = table.get("range", "")
+                    cell = rng.split("!")[1].split(":")[0] if "!" in rng else rng
+                    # извлечь номер строки из ячейки типа "A10"
+                    row_num = int("".join(c for c in cell if c.isdigit()))
+                    return row_num
+        return None
+
+    def _find_header_row(self, col_range: str, search_value: str = "Проект") -> int:
+        """Найти 1-based номер строки с заданным значением в указанном диапазоне (fallback)."""
         result = self.api.values().get(
             spreadsheetId=self.spreadsheet_id,
             range=col_range,
         ).execute()
         for i, row in enumerate(result.get("values", [])):
-            if row and row[0].strip() == "Проект":
+            if row and row[0].strip() == search_value:
                 return i + 1
         return 1
 
@@ -174,7 +193,8 @@ class SheetsClient:
                     amount: str, what: str, expense_type: str, comment: str = "") -> None:
         """Добавить строку в начало таблицы Расходы (столбцы A–G)."""
         sheet_id = self._get_sheet_id(self.FINANCE_SHEET)
-        header_row = self._find_header_row(f"{self.FINANCE_SHEET}!A:A")
+        header_row = (self._find_table_header_row(self.FINANCE_SHEET, "Расходы")
+                      or self._find_header_row(f"{self.FINANCE_SHEET}!C:C", "Кто?"))
         self._insert_row_after_header(sheet_id, header_row)
         new_row = header_row + 1
         self.api.values().update(
@@ -189,7 +209,8 @@ class SheetsClient:
                    comment: str = "", income_col_start: str = "O") -> None:
         """Добавить строку в начало таблицы Доходы (Проект, Сумма, За что?, Дата, Комментарий)."""
         sheet_id = self._get_sheet_id(self.FINANCE_SHEET)
-        header_row = self._find_header_row(f"{self.FINANCE_SHEET}!O:O")
+        header_row = (self._find_table_header_row(self.FINANCE_SHEET, "Доходы")
+                      or self._find_header_row(f"{self.FINANCE_SHEET}!Q:Q", "За что?"))
         self._insert_row_after_header(sheet_id, header_row)
         new_row = header_row + 1
         end_col = chr(ord(income_col_start) + 4)
