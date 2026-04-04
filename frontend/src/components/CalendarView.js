@@ -353,7 +353,7 @@ export default function CalendarView({ userId, isAdmin }) {
   }, []);
 
   const fetchEvents = async (currentFilter) => {
-    const days = currentFilter === 'all' ? 30 : 60;
+    const days = 60;
     try {
       setLoading(true);
       const res = await calendarApi.getEvents(days);
