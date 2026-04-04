@@ -260,6 +260,56 @@ class SheetsClient:
                                   income_start_idx + 3)
         logger.info(f"Sheets: added income {project} {amount}")
 
+    def delete_expense_row(self, date_str: str, what: str) -> bool:
+        """Найти строку расхода по дате и описанию и удалить её."""
+        header_row = (self._find_table_header_row(self.FINANCE_SHEET, "Расходы")
+                      or self._find_header_row(f"{self.FINANCE_SHEET}!C:C", "Кто?"))
+        result = self.api.values().get(
+            spreadsheetId=self.spreadsheet_id,
+            range=f"{self.FINANCE_SHEET}!A{header_row + 1}:G1000",
+        ).execute()
+        for i, row in enumerate(result.get("values", [])):
+            row_date = row[1].strip() if len(row) > 1 else ""
+            row_what = row[4].strip() if len(row) > 4 else ""
+            if row_date == date_str and row_what == what:
+                sheet_id = self._get_sheet_id(self.FINANCE_SHEET)
+                actual_idx = header_row + i  # 0-based
+                self.api.batchUpdate(
+                    spreadsheetId=self.spreadsheet_id,
+                    body={"requests": [{"deleteDimension": {"range": {
+                        "sheetId": sheet_id, "dimension": "ROWS",
+                        "startIndex": actual_idx, "endIndex": actual_idx + 1,
+                    }}}]}
+                ).execute()
+                logger.info(f"Sheets: deleted expense row {actual_idx + 1}")
+                return True
+        return False
+
+    def delete_income_row(self, date_str: str, what: str) -> bool:
+        """Найти строку дохода по дате и описанию и удалить её."""
+        header_row = (self._find_table_header_row(self.FINANCE_SHEET, "Доходы")
+                      or self._find_header_row(f"{self.FINANCE_SHEET}!Q:Q", "За что?"))
+        result = self.api.values().get(
+            spreadsheetId=self.spreadsheet_id,
+            range=f"{self.FINANCE_SHEET}!O{header_row + 1}:S1000",
+        ).execute()
+        for i, row in enumerate(result.get("values", [])):
+            row_what = row[2].strip() if len(row) > 2 else ""
+            row_date = row[3].strip() if len(row) > 3 else ""
+            if row_date == date_str and row_what == what:
+                sheet_id = self._get_sheet_id(self.FINANCE_SHEET)
+                actual_idx = header_row + i  # 0-based
+                self.api.batchUpdate(
+                    spreadsheetId=self.spreadsheet_id,
+                    body={"requests": [{"deleteDimension": {"range": {
+                        "sheetId": sheet_id, "dimension": "ROWS",
+                        "startIndex": actual_idx, "endIndex": actual_idx + 1,
+                    }}}]}
+                ).execute()
+                logger.info(f"Sheets: deleted income row {actual_idx + 1}")
+                return True
+        return False
+
     def get_show_names(self) -> list[str]:
         """Уникальные названия спектаклей из вкладки 'Составы спектаклей', столбец A."""
         result = self.api.values().get(

@@ -197,10 +197,16 @@ export default function FinanceView({ username }) {
     d.setFullYear(d.getFullYear() - 1);
     return d.toISOString().slice(0, 10);
   });
+  const [transactions, setTransactions] = useState([]);
+
+  const loadTransactions = () => {
+    client.get('/api/finance/transactions').then(r => setTransactions(r.data.transactions)).catch(() => {});
+  };
 
   useEffect(() => {
     client.get('/api/finance/balance').then(r => setBalance(r.data.balance)).catch(() => {});
     client.get('/api/finance/meta').then(r => setMeta(r.data)).catch(() => {});
+    loadTransactions();
   }, []);
 
   useEffect(() => {
@@ -210,6 +216,17 @@ export default function FinanceView({ username }) {
       .then(r => setChartData(r.data.data))
       .catch(() => {});
   }, [chartPeriod, fromDate]);
+
+  const deleteTransaction = async (type, id) => {
+    if (!window.confirm('Удалить операцию из БД и таблицы?')) return;
+    try {
+      await client.delete(`/api/finance/transactions/${type}/${id}`);
+      loadTransactions();
+      client.get('/api/finance/balance').then(r => setBalance(r.data.balance)).catch(() => {});
+    } catch (e) {
+      alert('Ошибка при удалении');
+    }
+  };
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
@@ -247,8 +264,8 @@ export default function FinanceView({ username }) {
       setModal(null);
       setSuccess(modal === 'expense' ? 'Расход добавлен' : 'Доход добавлен');
       setTimeout(() => setSuccess(null), 3000);
-      // Обновить баланс
       client.get('/api/finance/balance').then(r => setBalance(r.data.balance)).catch(() => {});
+      loadTransactions();
     } catch (e) {
       setError(e.response?.data?.detail || 'Ошибка при сохранении');
     } finally {
@@ -309,6 +326,42 @@ export default function FinanceView({ username }) {
           <SimpleBarChart data={chartData} />
         )}
       </div>
+
+      {/* Последние операции */}
+      {transactions.length > 0 && (
+        <div className="card-white" style={{ padding: '12px 0', marginBottom: 16 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, padding: '0 16px', marginBottom: 8 }}>Последние операции</div>
+          {transactions.map(tx => (
+            <div key={`${tx.type}-${tx.id}`} style={{
+              display: 'flex', alignItems: 'center', gap: 10,
+              padding: '8px 16px', borderBottom: '1px solid #f0f0f0',
+            }}>
+              <div style={{
+                width: 28, height: 28, borderRadius: '50%', flexShrink: 0,
+                background: tx.type === 'income' ? '#111' : '#eee',
+                color: tx.type === 'income' ? '#fff' : '#444',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: 15, fontWeight: 700,
+              }}>
+                {tx.type === 'income' ? '+' : '−'}
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  {tx.what}
+                </div>
+                <div style={{ fontSize: 11, color: '#999' }}>{tx.date} · {tx.project}</div>
+              </div>
+              <div style={{ fontSize: 13, fontWeight: 600, flexShrink: 0 }}>
+                {tx.type === 'income' ? '+' : '−'}{String(tx.amount).replace('р.', '').trim()}
+              </div>
+              <button
+                onClick={() => deleteTransaction(tx.type, tx.id)}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ccc', fontSize: 18, padding: '0 0 0 4px', flexShrink: 0 }}
+              >×</button>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Модалка */}
       {modal && (

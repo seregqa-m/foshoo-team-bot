@@ -196,6 +196,55 @@ async def get_chart(period: str = "month", from_date: str = None, db: Session = 
     return {"data": data}
 
 
+@router.get("/transactions")
+async def get_transactions(limit: int = 10, db: Session = Depends(get_db)):
+    """Последние N операций (доходы + расходы) из БД, отсортированные по дате добавления."""
+    from modules.finance.models import ExpenseLog, IncomeLog
+    expenses = db.query(ExpenseLog).order_by(ExpenseLog.created_at.desc()).limit(limit).all()
+    incomes = db.query(IncomeLog).order_by(IncomeLog.created_at.desc()).limit(limit).all()
+    items = []
+    for e in expenses:
+        items.append({"id": e.id, "type": "expense", "date": e.date, "amount": e.amount,
+                      "what": e.what, "project": e.project, "who": e.who,
+                      "expense_type": e.expense_type, "comment": e.comment or "",
+                      "created_at": e.created_at.isoformat() if e.created_at else ""})
+    for i in incomes:
+        items.append({"id": i.id, "type": "income", "date": i.date, "amount": i.amount,
+                      "what": i.what, "project": i.project, "who": "",
+                      "expense_type": "", "comment": i.comment or "",
+                      "created_at": i.created_at.isoformat() if i.created_at else ""})
+    items.sort(key=lambda x: x["created_at"], reverse=True)
+    return {"transactions": items[:limit]}
+
+
+@router.delete("/transactions/{tx_type}/{tx_id}")
+async def delete_transaction(tx_type: str, tx_id: int, db: Session = Depends(get_db)):
+    """Удалить операцию из БД и Google Sheets."""
+    from modules.finance.models import ExpenseLog, IncomeLog
+    if tx_type == "expense":
+        row = db.query(ExpenseLog).filter(ExpenseLog.id == tx_id).first()
+        if not row:
+            raise HTTPException(status_code=404, detail="Not found")
+        try:
+            _get_client().delete_expense_row(row.date, row.what)
+        except Exception as e:
+            logger.warning(f"Sheets delete expense failed: {e}")
+        db.delete(row)
+    elif tx_type == "income":
+        row = db.query(IncomeLog).filter(IncomeLog.id == tx_id).first()
+        if not row:
+            raise HTTPException(status_code=404, detail="Not found")
+        try:
+            _get_client().delete_income_row(row.date, row.what)
+        except Exception as e:
+            logger.warning(f"Sheets delete income failed: {e}")
+        db.delete(row)
+    else:
+        raise HTTPException(status_code=400, detail="Invalid type")
+    db.commit()
+    return {"status": "deleted"}
+
+
 @router.post("/income")
 async def add_income(req: IncomeRequest, db: Session = Depends(get_db)):
     if req.project not in PROJECTS:
