@@ -230,21 +230,34 @@ class SheetsClient:
     def add_income(self, project: str, amount: str, what: str, date: str,
                    comment: str = "", income_col_start: str = "O") -> None:
         """Добавить строку в начало таблицы Доходы (Проект, Сумма, За что?, Дата, Комментарий)."""
+        sheet_id = self._get_sheet_id(self.FINANCE_SHEET)
+        try:
+            self.api.batchUpdate(
+                spreadsheetId=self.spreadsheet_id,
+                body={"requests": [{
+                    "insertTableRow": {
+                        "tableRange": {"sheetId": sheet_id, "name": "Доходы"},
+                        "rowIndex": 0,
+                        "numberOfRows": 1,
+                    }
+                }]}
+            ).execute()
+        except Exception as e:
+            logger.warning(f"insertTableRow (Доходы) failed, fallback to append: {e}")
+        header_row = (self._find_table_header_row(self.FINANCE_SHEET, "Доходы")
+                      or self._find_header_row(f"{self.FINANCE_SHEET}!Q:Q", "За что?"))
+        new_row = header_row + 1
+        income_start_idx = ord(income_col_start) - ord("A")  # O=14
         end_col = chr(ord(income_col_start) + 4)
-        self.api.values().append(
+        self.api.values().update(
             spreadsheetId=self.spreadsheet_id,
-            range=f"{self.FINANCE_SHEET}!{income_col_start}:{end_col}",
+            range=f"{self.FINANCE_SHEET}!{income_col_start}{new_row}:{end_col}{new_row}",
             valueInputOption="USER_ENTERED",
             body={"values": [[project, amount, what, date, comment]]},
         ).execute()
-        # Сортируем по дате (колонка R = индекс 17) по убыванию
-        sheet_id = self._get_sheet_id(self.FINANCE_SHEET)
-        header_row = (self._find_table_header_row(self.FINANCE_SHEET, "Доходы")
-                      or self._find_header_row(f"{self.FINANCE_SHEET}!Q:Q", "За что?"))
-        income_start_idx = ord(income_col_start) - ord("A")  # O=14
         self._sort_table_by_date(sheet_id, header_row,
                                   income_start_idx, income_start_idx + 5,
-                                  income_start_idx + 3)  # дата = 4-я колонка (O+3=R=17)
+                                  income_start_idx + 3)
         logger.info(f"Sheets: added income {project} {amount}")
 
     def get_show_names(self) -> list[str]:
