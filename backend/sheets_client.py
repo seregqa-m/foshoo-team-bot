@@ -93,8 +93,23 @@ class SheetsClient:
 
         return None
 
+    def read_cell(self, row: int, col: str) -> str:
+        """Прочитать текущее значение ячейки."""
+        cell = f"{SCHEDULE_SHEET}!{col}{row}"
+        result = self.api.values().get(
+            spreadsheetId=self.spreadsheet_id,
+            range=cell,
+        ).execute()
+        rows = result.get("values", [])
+        return rows[0][0].strip() if rows and rows[0] else ""
+
     def write_attendance(self, row: int, col: str, value: str) -> None:
-        """Записать 'да' или 'нет' в ячейку."""
+        """Записать 'да' или 'нет' в ячейку.
+        Пропускает запись если в ячейке уже стоит название роли."""
+        current = self.read_cell(row, col)
+        if current.lower() not in ("да", "нет", ""):
+            logger.info(f"Sheets: skip {col}{row} — has role value '{current}'")
+            return
         cell = f"{SCHEDULE_SHEET}!{col}{row}"
         self.api.values().update(
             spreadsheetId=self.spreadsheet_id,
@@ -103,6 +118,46 @@ class SheetsClient:
             body={"values": [[value]]},
         ).execute()
         logger.info(f"Sheets: wrote '{value}' to {col}{row}")
+
+    # ── Финансы ──────────────────────────────────────────────────────────
+
+    FINANCE_SHEET = "Финансы"
+    EXPENSE_TYPES = ["Личные траты", "Трата со счета ФоШу", "Пожертвование"]
+    PROJECTS = ["Театр", "ЛГ", "Урод", "Слепые"]
+
+    def get_balance(self) -> str:
+        """Прочитать остаток копилки из ячейки G4."""
+        result = self.api.values().get(
+            spreadsheetId=self.spreadsheet_id,
+            range=f"{self.FINANCE_SHEET}!G4",
+        ).execute()
+        rows = result.get("values", [])
+        return rows[0][0].strip() if rows and rows[0] else "—"
+
+    def add_expense(self, project: str, date: str, who: str,
+                    amount: str, what: str, expense_type: str, comment: str = "") -> None:
+        """Добавить строку в таблицу Расходы (столбцы A–G)."""
+        self.api.values().append(
+            spreadsheetId=self.spreadsheet_id,
+            range=f"{self.FINANCE_SHEET}!A:G",
+            valueInputOption="USER_ENTERED",
+            insertDataOption="INSERT_ROWS",
+            body={"values": [[project, date, who, amount, what, expense_type, comment]]},
+        ).execute()
+        logger.info(f"Sheets: added expense {project} {amount} by {who}")
+
+    def add_income(self, project: str, amount: str, what: str, date: str,
+                   comment: str = "", income_col_start: str = "O") -> None:
+        """Добавить строку в таблицу Доходы (Проект, Сумма, За что?, Дата, Комментарий)."""
+        end_col = chr(ord(income_col_start) + 4)  # 5 колонок
+        self.api.values().append(
+            spreadsheetId=self.spreadsheet_id,
+            range=f"{self.FINANCE_SHEET}!{income_col_start}:{end_col}",
+            valueInputOption="USER_ENTERED",
+            insertDataOption="INSERT_ROWS",
+            body={"values": [[project, amount, what, date, comment]]},
+        ).execute()
+        logger.info(f"Sheets: added income {project} {amount}")
 
     def get_show_names(self) -> list[str]:
         """Уникальные названия спектаклей из вкладки 'Составы спектаклей', столбец A."""

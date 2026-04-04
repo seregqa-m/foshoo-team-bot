@@ -17,6 +17,7 @@ from modules.polling.router import router as polling_router
 from modules.notifications.router import router as notifications_router
 from auth_router import router as auth_router
 from sheets_router import router as sheets_router
+from finance_router import router as finance_router
 from bot import bot, dp
 
 # Логирование
@@ -233,6 +234,7 @@ async def shutdown():
 # Регистрировать маршруты
 app.include_router(auth_router)
 app.include_router(sheets_router)
+app.include_router(finance_router)
 app.include_router(calendar_router)
 app.include_router(polling_router)
 app.include_router(notifications_router)

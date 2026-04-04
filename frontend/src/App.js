@@ -3,10 +3,12 @@ import './index.css';
 import CalendarView from './components/CalendarView';
 import PollingView from './components/PollingView';
 import NotificationsView from './components/NotificationsView';
+import FinanceView from './components/FinanceView';
 
 function App() {
   const [activeTab, setActiveTab] = useState('calendar');
   const [userId, setUserId] = useState(null);
+  const [username, setUsername] = useState('');
   const [allowed, setAllowed] = useState(null); // null = проверяем
 
   useEffect(() => {
@@ -18,6 +20,7 @@ function App() {
       if (user) {
         setUserId(user.id);
         const username = user.username || '';
+        setUsername(username);
         fetch(`${process.env.REACT_APP_API_URL || 'http://127.0.0.1:8000'}/api/auth/check?username=${username}`)
           .then(r => r.json())
           .then(data => setAllowed(data.allowed))
@@ -49,6 +52,7 @@ function App() {
       <main className="content">
         {activeTab === 'calendar' && <CalendarView userId={userId} />}
         {activeTab === 'polling' && <PollingView userId={userId} />}
+        {activeTab === 'finance' && <FinanceView username={username} />}
         {activeTab === 'notifications' && <NotificationsView userId={userId} />}
       </main>
 
@@ -64,6 +68,12 @@ function App() {
           onClick={() => setActiveTab('polling')}
         >
           🗳️<span>Опросы</span>
+        </button>
+        <button
+          className={activeTab === 'finance' ? 'active' : ''}
+          onClick={() => setActiveTab('finance')}
+        >
+          💰<span>Финансы</span>
         </button>
         <button
           className={activeTab === 'notifications' ? 'active' : ''}
