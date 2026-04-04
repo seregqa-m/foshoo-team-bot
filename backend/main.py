@@ -179,9 +179,21 @@ async def _check_and_send_reminders():
             Poll.reminder_sent_at == None,
         ).all()
 
+        # Список названий спектаклей для фильтрации
+        show_names_lower = []
+        if GOOGLE_SHEETS_ID and os.path.exists(GOOGLE_CALENDAR_JSON):
+            try:
+                from sheets_client import SheetsClient as _SC
+                show_names_lower = [s.lower() for s in _SC(GOOGLE_CALENDAR_JSON, GOOGLE_SHEETS_ID).get_show_names()]
+            except Exception:
+                pass
+
         for poll in polls:
             event = db.query(CalendarEvent).filter(CalendarEvent.id == poll.calendar_event_id).first()
             if not event or event.start_time.date() != target_date:
+                continue
+            # Пропускаем спектакли — посещаемость на них заранее определена
+            if show_names_lower and any(s in event.title.lower() for s in show_names_lower):
                 continue
 
             # Кто уже проголосовал (yes/no)

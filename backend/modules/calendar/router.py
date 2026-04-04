@@ -214,10 +214,14 @@ async def launch_poll_for_event(
         calendar_event_id=event_id,
     )
 
+    MONTHS_RU = ['янв','фев','мар','апр','май','июн','июл','авг','сен','окт','ноя','дек']
+    dt = event.start_time
+    date_str = f"{dt.day} {MONTHS_RU[dt.month - 1]} в {dt.strftime('%H:%M')}"
+
     try:
         message = await bot.send_poll(
             chat_id=GROUP_CHAT_ID,
-            question=f"кто будет на занятии?\n{event.title} — {event.start_time.strftime('%d.%m %H:%M')}",
+            question=f"Кто будет {date_str}?\n{event.title}",
             options=["Буду ✅", "Не буду ❌", "Опоздаю ⏰", "Не знаю 🤷"],
             is_anonymous=False,
             allows_multiple_answers=False,

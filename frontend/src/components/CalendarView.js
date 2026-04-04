@@ -25,7 +25,7 @@ const FILTERS = [
   { key: 'лаба',     label: 'Лаба' },
 ];
 
-function EventCard({ event, userId, onEdit, onPollSent }) {
+function EventCard({ event, userId, onEdit, onPollSent, isAdmin, isPollable }) {
   const start = new Date(event.start_time);
   const [polling, setPolling] = useState(false);
   const [pollDone, setPollDone] = useState(false);
@@ -61,14 +61,16 @@ function EventCard({ event, userId, onEdit, onPollSent }) {
         </div>
         {pollError && <div style={{ fontSize: 12, color: 'var(--danger)', marginBottom: 8 }}>{pollError}</div>}
         <div className="event-actions">
-          <button className="btn btn-secondary" onClick={() => onEdit(event)}>✏️ Ред.</button>
-          <button
-            className={`btn ${pollDone ? 'btn-success' : 'btn-secondary'}`}
-            onClick={handlePoll}
-            disabled={polling || pollDone}
-          >
-            {polling ? '⌛' : pollDone ? '✅ Отправлен' : '🗳️ Опрос'}
-          </button>
+          {isAdmin && <button className="btn btn-secondary" onClick={() => onEdit(event)}>✏️ Ред.</button>}
+          {isPollable && (
+            <button
+              className={`btn ${pollDone ? 'btn-success' : 'btn-secondary'}`}
+              onClick={handlePoll}
+              disabled={polling || pollDone}
+            >
+              {polling ? '⌛' : pollDone ? '✅ Отправлен' : '🗳️ Опрос'}
+            </button>
+          )}
         </div>
       </div>
     </div>
@@ -178,7 +180,7 @@ function EventModal({ event, onClose, onSaved, onDeleted }) {
   );
 }
 
-export default function CalendarView({ userId }) {
+export default function CalendarView({ userId, isAdmin }) {
   const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -227,7 +229,7 @@ export default function CalendarView({ userId }) {
     <>
       <div className="page-header">
         <div className="page-title">Расписание</div>
-        <button className="btn btn-primary" onClick={() => setModal('new')}>+ Добавить</button>
+        {isAdmin && <button className="btn btn-primary" onClick={() => setModal('new')}>+ Добавить</button>}
       </div>
 
       <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
@@ -255,15 +257,22 @@ export default function CalendarView({ userId }) {
       {visibleEvents.length === 0 ? (
         <div className="empty-state">Нет предстоящих событий</div>
       ) : (
-        visibleEvents.map(e => (
-          <EventCard
-            key={e.id}
-            event={e}
-            userId={userId}
-            onEdit={setModal}
-            onPollSent={fetchEvents}
-          />
-        ))
+        visibleEvents.map(e => {
+          const t = e.title.toLowerCase();
+          const isT1 = t.includes('труппа 1') || showNames.some(s => t.includes(s));
+          const isPerformance = showNames.some(s => t.includes(s));
+          return (
+            <EventCard
+              key={e.id}
+              event={e}
+              userId={userId}
+              onEdit={setModal}
+              onPollSent={fetchEvents}
+              isAdmin={isAdmin}
+              isPollable={isT1 && !isPerformance}
+            />
+          );
+        })
       )}
 
       {modal && (

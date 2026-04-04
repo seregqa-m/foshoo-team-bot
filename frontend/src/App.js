@@ -10,6 +10,7 @@ function App() {
   const [userId, setUserId] = useState(null);
   const [username, setUsername] = useState('');
   const [allowed, setAllowed] = useState(null); // null = проверяем
+  const [isAdmin, setIsAdmin] = useState(false);
 
   useEffect(() => {
     if (window.Telegram?.WebApp) {
@@ -23,7 +24,7 @@ function App() {
         setUsername(username);
         fetch(`${process.env.REACT_APP_API_URL || 'http://127.0.0.1:8000'}/api/auth/check?username=${username}`)
           .then(r => r.json())
-          .then(data => setAllowed(data.allowed))
+          .then(data => { setAllowed(data.allowed); setIsAdmin(!!data.is_admin); })
           .catch(() => setAllowed(true)); // при ошибке — пускаем
       } else {
         setAllowed(false);
@@ -50,7 +51,7 @@ function App() {
   return (
     <div className="app">
       <main className="content">
-        {activeTab === 'calendar' && <CalendarView userId={userId} />}
+        {activeTab === 'calendar' && <CalendarView userId={userId} isAdmin={isAdmin} />}
         {activeTab === 'polling' && <PollingView userId={userId} />}
         {activeTab === 'finance' && <FinanceView username={username} />}
         {activeTab === 'notifications' && <NotificationsView userId={userId} />}
