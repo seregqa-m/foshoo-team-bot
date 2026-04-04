@@ -112,7 +112,7 @@ function WeekCalendar({ events, showNames }) {
             <div style={{ color: '#ccc' }}>{tooltip.time}</div>
           </div>
         )}
-        <div style={{ overflowY: 'auto', maxHeight: 360 }}>
+        <div style={{ overflowY: 'auto', overflowX: 'hidden', maxHeight: 360 }}>
           <svg width={totalW} height={svgH} style={{ display: 'block' }}>
             {/* Column backgrounds + day headers */}
             {days.map((d, i) => {
