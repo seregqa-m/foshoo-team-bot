@@ -108,11 +108,3 @@ async def handle_poll_answer(poll_answer: PollAnswer):
     finally:
         db.close()
 
-
-@dp.message()
-async def echo_handler(message: Message):
-    """Обработчик остальных сообщений"""
-    await message.answer(
-        "Я не понимаю эту команду 😅\n\n"
-        "Нажми /start чтобы открыть приложение или /help для справки"
-    )
