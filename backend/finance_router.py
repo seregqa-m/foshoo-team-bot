@@ -106,7 +106,7 @@ async def add_expense(req: ExpenseRequest, db: Session = Depends(get_db)):
 
 
 @router.get("/chart")
-async def get_chart(period: str = "month", db: Session = Depends(get_db)):
+async def get_chart(period: str = "month", from_date: str = None, db: Session = Depends(get_db)):
     """
     Агрегация доходов/расходов по месяцам (period=month) или дням (period=day, последние 60 дней).
     Даты хранятся в формате dd.mm.yyyy.
@@ -140,11 +140,22 @@ async def get_chart(period: str = "month", db: Session = Depends(get_db)):
     expense_agg: dict[str, float] = defaultdict(float)
     income_agg: dict[str, float] = defaultdict(float)
 
+    def date_tuple(s: str) -> tuple:
+        try:
+            d, m, y = s.strip().split(".")
+            return (int(y), int(m), int(d))
+        except Exception:
+            return (0, 0, 0)
+
+    from_tuple = date_tuple(from_date) if from_date else None
+
     def parse_amount(raw) -> float:
         s = str(raw).replace("р.", "").replace("₽", "").replace("\xa0", "").replace(" ", "").replace(",", ".")
         return float(s)
 
     for row in db.query(ExpenseLog).all():
+        if from_tuple and date_tuple(row.date) < from_tuple:
+            continue
         key = parse_key(row.date)
         if key:
             try:
@@ -153,6 +164,8 @@ async def get_chart(period: str = "month", db: Session = Depends(get_db)):
                 pass
 
     for row in db.query(IncomeLog).all():
+        if from_tuple and date_tuple(row.date) < from_tuple:
+            continue
         key = parse_key(row.date)
         if key:
             try:

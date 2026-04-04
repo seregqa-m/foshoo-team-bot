@@ -1,18 +1,98 @@
 import React, { useState, useEffect } from 'react';
 import client from '../api/client';
-import {
-  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend
-} from 'recharts';
 
-class ChartErrorBoundary extends React.Component {
-  constructor(props) { super(props); this.state = { error: null }; }
-  static getDerivedStateFromError(e) { return { error: e?.message || String(e) }; }
-  render() {
-    if (this.state.error) {
-      return <div style={{ fontSize: 11, color: 'red', padding: 8, wordBreak: 'break-all' }}>Chart error: {this.state.error}</div>;
-    }
-    return this.props.children;
+function smoothPath(points) {
+  if (points.length === 0) return '';
+  if (points.length === 1) return `M ${points[0].x} ${points[0].y}`;
+  let d = `M ${points[0].x} ${points[0].y}`;
+  for (let i = 0; i < points.length - 1; i++) {
+    const p0 = points[Math.max(0, i - 1)];
+    const p1 = points[i];
+    const p2 = points[i + 1];
+    const p3 = points[Math.min(points.length - 1, i + 2)];
+    const cp1x = p1.x + (p2.x - p0.x) / 6;
+    const cp1y = p1.y + (p2.y - p0.y) / 6;
+    const cp2x = p2.x - (p3.x - p1.x) / 6;
+    const cp2y = p2.y - (p3.y - p1.y) / 6;
+    d += ` C ${cp1x.toFixed(1)} ${cp1y.toFixed(1)}, ${cp2x.toFixed(1)} ${cp2y.toFixed(1)}, ${p2.x} ${p2.y}`;
   }
+  return d;
+}
+
+function SplineChart({ data }) {
+  const [tooltip, setTooltip] = useState(null);
+  const h = 160, padL = 36, padB = 28, padT = 16, padR = 8;
+  const spacing = Math.max(24, Math.min(48, Math.floor((window.innerWidth - padL - padR - 32) / Math.max(data.length - 1, 1))));
+  const totalW = padL + (data.length - 1) * spacing + padR;
+  const chartH = h - padT - padB;
+  const max = Math.max(...data.flatMap(d => [d.income, d.expense]), 1);
+  const pts = key => data.map((d, i) => ({
+    x: padL + i * spacing,
+    y: padT + chartH - (d[key] / max) * chartH,
+    val: d[key],
+  }));
+  const incPts = pts('income');
+  const expPts = pts('expense');
+  const labelStep = Math.ceil(data.length / 6);
+
+  return (
+    <div style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
+      <div style={{ position: 'relative', display: 'inline-block' }}>
+        {tooltip && (
+          <div style={{
+            position: 'absolute', top: 0, left: tooltip.x, transform: 'translateX(-50%)',
+            background: '#111', color: '#fff', borderRadius: 6, padding: '4px 8px',
+            fontSize: 11, pointerEvents: 'none', whiteSpace: 'nowrap', zIndex: 10,
+          }}>
+            <div style={{ fontWeight: 600, marginBottom: 2 }}>{tooltip.period}</div>
+            <div>Доход: {tooltip.income.toLocaleString('ru')} ₽</div>
+            <div>Расход: {tooltip.expense.toLocaleString('ru')} ₽</div>
+          </div>
+        )}
+        <svg width={totalW} height={h}>
+          {[0, 0.5, 1].map(t => {
+            const y = padT + chartH * (1 - t);
+            return (
+              <g key={t}>
+                <line x1={padL} x2={totalW - padR} y1={y} y2={y} stroke="#eee" strokeWidth={1} />
+                <text x={padL - 4} y={y + 4} textAnchor="end" fontSize={9} fill="#999">
+                  {(max * t) >= 1000 ? `${((max * t) / 1000).toFixed(0)}к` : (max * t).toFixed(0)}
+                </text>
+              </g>
+            );
+          })}
+          <path d={smoothPath(incPts)} fill="none" stroke="#111" strokeWidth={2} />
+          <path d={smoothPath(expPts)} fill="none" stroke="#bbb" strokeWidth={2} />
+          {data.map((d, i) => (
+            <g key={d.period}
+              onMouseEnter={() => setTooltip({ ...d, x: incPts[i].x })}
+              onMouseLeave={() => setTooltip(null)}
+              onTouchStart={() => setTooltip({ ...d, x: incPts[i].x })}
+              onTouchEnd={() => setTimeout(() => setTooltip(null), 1500)}
+              style={{ cursor: 'pointer' }}
+            >
+              <rect x={incPts[i].x - 15} y={padT} width={30} height={chartH} fill="transparent" />
+              <circle cx={incPts[i].x} cy={incPts[i].y} r={3} fill="#111" />
+              <circle cx={expPts[i].x} cy={expPts[i].y} r={3} fill="#bbb" stroke="#fff" strokeWidth={1} />
+              {i % labelStep === 0 && (
+                <text x={incPts[i].x} y={h - 6} textAnchor="middle" fontSize={9} fill="#999">
+                  {d.period.slice(0, 5)}
+                </text>
+              )}
+            </g>
+          ))}
+        </svg>
+      </div>
+      <div style={{ display: 'flex', gap: 12, paddingLeft: padL, marginTop: 4 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: '#666' }}>
+          <div style={{ width: 20, height: 2, background: '#111', borderRadius: 1 }} /> Доход
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: '#666' }}>
+          <div style={{ width: 20, height: 2, background: '#bbb', borderRadius: 1 }} /> Расход
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function SimpleBarChart({ data }) {
@@ -104,6 +184,11 @@ export default function FinanceView({ username }) {
   const [success, setSuccess] = useState(null);
   const [chartPeriod, setChartPeriod] = useState('month');
   const [chartData, setChartData] = useState([]);
+  const [fromMonth, setFromMonth] = useState(() => {
+    const d = new Date();
+    d.setFullYear(d.getFullYear() - 1);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  });
 
   useEffect(() => {
     client.get('/api/finance/balance').then(r => setBalance(r.data.balance)).catch(() => {});
@@ -111,10 +196,15 @@ export default function FinanceView({ username }) {
   }, []);
 
   useEffect(() => {
-    client.get('/api/finance/chart', { params: { period: chartPeriod } })
+    const params = { period: chartPeriod };
+    if (chartPeriod === 'month') {
+      const [y, m] = fromMonth.split('-');
+      params.from_date = `01.${m}.${y}`;
+    }
+    client.get('/api/finance/chart', { params })
       .then(r => setChartData(r.data.data))
       .catch(() => {});
-  }, [chartPeriod]);
+  }, [chartPeriod, fromMonth]);
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
@@ -187,44 +277,37 @@ export default function FinanceView({ username }) {
 
       {/* График */}
       <div className="card-white" style={{ padding: '16px 8px', marginBottom: 16 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, paddingRight: 8 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, paddingRight: 8 }}>
           <div style={{ fontSize: 13, fontWeight: 600, paddingLeft: 8 }}>Статистика</div>
           <div style={{ display: 'flex', gap: 6 }}>
             {['month', 'day'].map(p => (
-              <button
-                key={p}
-                onClick={() => setChartPeriod(p)}
-                style={{
-                  padding: '4px 10px', fontSize: 12, borderRadius: 8, border: '1px solid #ccc',
-                  background: chartPeriod === p ? '#111' : '#fff',
-                  color: chartPeriod === p ? '#fff' : '#444',
-                  cursor: 'pointer',
-                }}
-              >
+              <button key={p} onClick={() => setChartPeriod(p)} style={{
+                padding: '4px 10px', fontSize: 12, borderRadius: 8, border: '1px solid #ccc',
+                background: chartPeriod === p ? '#111' : '#fff',
+                color: chartPeriod === p ? '#fff' : '#444', cursor: 'pointer',
+              }}>
                 {p === 'month' ? 'Месяцы' : 'Дни'}
               </button>
             ))}
           </div>
         </div>
+        {chartPeriod === 'month' && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, paddingLeft: 8, marginBottom: 10 }}>
+            <span style={{ fontSize: 12, color: '#888' }}>С:</span>
+            <input
+              type="month"
+              value={fromMonth}
+              onChange={e => setFromMonth(e.target.value)}
+              style={{ fontSize: 12, border: '1px solid #ddd', borderRadius: 6, padding: '3px 6px', outline: 'none' }}
+            />
+          </div>
+        )}
         {chartData.length === 0 ? (
           <div style={{ textAlign: 'center', color: '#999', fontSize: 13, padding: '20px 0' }}>Нет данных</div>
+        ) : chartPeriod === 'day' ? (
+          <SplineChart data={chartData} />
         ) : (
-          <ChartErrorBoundary>
-            <ResponsiveContainer width="100%" height={200}>
-              <BarChart data={chartData} margin={{ top: 0, right: 8, left: -16, bottom: 0 }}>
-                <XAxis dataKey="period" tick={{ fontSize: 10 }} interval="preserveStartEnd" />
-                <YAxis tick={{ fontSize: 10 }} tickFormatter={v => v >= 1000 ? `${v/1000}к` : v} />
-                <Tooltip
-                  formatter={(value, name) => [`${value.toLocaleString('ru')} ₽`, name === 'income' ? 'Доход' : 'Расход']}
-                  labelStyle={{ fontSize: 12 }}
-                  contentStyle={{ fontSize: 12 }}
-                />
-                <Legend formatter={name => name === 'income' ? 'Доход' : 'Расход'} wrapperStyle={{ fontSize: 12 }} />
-                <Bar dataKey="income" fill="#111" radius={[3, 3, 0, 0]} />
-                <Bar dataKey="expense" fill="#ccc" radius={[3, 3, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </ChartErrorBoundary>
+          <SimpleBarChart data={chartData} />
         )}
       </div>
 
