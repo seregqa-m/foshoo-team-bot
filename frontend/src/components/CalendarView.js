@@ -389,7 +389,9 @@ export default function CalendarView({ userId, isAdmin }) {
         {isAdmin && <button className="btn btn-primary" onClick={() => setModal('new')}>+ Добавить</button>}
       </div>
 
-      <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
+      <WeekCalendar events={events} showNames={showNames} />
+
+      <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
         {FILTERS.map(f => (
           <button
             key={f.key}
@@ -405,8 +407,6 @@ export default function CalendarView({ userId, isAdmin }) {
           </button>
         ))}
       </div>
-
-      <WeekCalendar events={visibleEvents} showNames={showNames} />
 
       {error && <div className="alert alert-error">{error}</div>}
 
