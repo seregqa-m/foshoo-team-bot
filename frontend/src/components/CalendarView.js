@@ -30,7 +30,7 @@ const DOW = ['пн','вт','ср','чт','пт','сб','вс'];
 
 const HOUR_START = 9;
 const HOUR_END   = 24;
-const HOUR_H     = 22;
+const HOUR_H     = 18;
 const HEADER_H   = 42;
 const LABEL_W    = 28;
 
@@ -117,15 +117,18 @@ function WeekCalendar({ events, showNames }) {
             {/* Column backgrounds + day headers */}
             {days.map((d, i) => {
               const isToday = d.getTime() === today.getTime();
+              const isWeekend = i >= 5;
               const cx = LABEL_W + i * colW + colW / 2;
+              const dowColor = isToday ? '#7C3AED' : isWeekend ? '#EF4444' : '#aaa';
+              const dateColor = isToday ? '#fff' : isWeekend ? '#EF4444' : '#444';
               return (
                 <g key={i}>
                   {isToday && <rect x={LABEL_W + i * colW} y={0} width={colW} height={svgH} fill="#f8f6ff" />}
                   <line x1={LABEL_W + i * colW} x2={LABEL_W + i * colW} y1={HEADER_H} y2={svgH} stroke="#f0f0f0" strokeWidth={1} />
-                  <text x={cx} y={13} textAnchor="middle" fontSize={9} fill={isToday ? '#7C3AED' : '#aaa'} fontWeight={isToday ? 700 : 400}>{DOW[i]}</text>
+                  <text x={cx} y={13} textAnchor="middle" fontSize={9} fill={dowColor} fontWeight={isToday ? 700 : 400}>{DOW[i]}</text>
                   {isToday
                     ? <><circle cx={cx} cy={29} r={11} fill="#7C3AED" /><text x={cx} y={33} textAnchor="middle" fontSize={12} fill="#fff" fontWeight={700}>{d.getDate()}</text></>
-                    : <text x={cx} y={33} textAnchor="middle" fontSize={12} fill="#444">{d.getDate()}</text>
+                    : <text x={cx} y={33} textAnchor="middle" fontSize={12} fill={dateColor}>{d.getDate()}</text>
                   }
                 </g>
               );
@@ -153,8 +156,8 @@ function WeekCalendar({ events, showNames }) {
               const y1 = timeToY(startDt);
               const y2 = timeToY(endDt);
               const h  = Math.max(6, y2 - y1);
-              const x  = LABEL_W + dayIdx * colW + 2;
-              const w  = colW - 4;
+              const x  = LABEL_W + dayIdx * colW + 3;
+              const w  = colW - 6;
               const color = getEventColor(e.title, showNames);
               return (
                 <rect key={idx} x={x} y={y1} width={w} height={h} rx={3}
