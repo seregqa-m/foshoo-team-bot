@@ -106,10 +106,37 @@ async def poll_reminder_background():
 
     while True:
         try:
+            await _cleanup_old_polls()
+        except Exception as e:
+            logger.error(f"❌ Poll cleanup failed: {e}")
+        try:
             await _check_and_send_reminders()
         except Exception as e:
             logger.error(f"❌ Reminder check failed: {e}")
         await asyncio.sleep(60)
+
+
+async def _cleanup_old_polls():
+    """Удалить опросы у которых событие закончилось вчера или раньше."""
+    from datetime import datetime, timedelta
+    from modules.polling.models import Poll, PollVote
+    from modules.calendar.models import CalendarEvent
+
+    cutoff = datetime.utcnow() - timedelta(days=1)
+    db = SessionLocal()
+    try:
+        old_polls = db.query(Poll).join(
+            CalendarEvent, Poll.calendar_event_id == CalendarEvent.id
+        ).filter(CalendarEvent.start_time < cutoff).all()
+
+        for poll in old_polls:
+            db.query(PollVote).filter(PollVote.poll_id == poll.id).delete()
+            db.delete(poll)
+        if old_polls:
+            db.commit()
+            logger.info(f"🗑 Cleaned up {len(old_polls)} old poll(s)")
+    finally:
+        db.close()
 
 
 async def _check_and_send_reminders():
