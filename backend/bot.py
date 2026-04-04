@@ -59,7 +59,7 @@ async def handle_poll_answer(poll_answer: PollAnswer):
     """Сохранить ответ на Telegram-опрос в БД и записать явку в Google Sheets"""
     from core.database import SessionLocal
     from modules.polling.services import PollingService
-    from modules.polling.models import Poll
+    from modules.polling.models import Poll, PollVote
     from modules.calendar.models import CalendarEvent
 
     answer = "retracted" if not poll_answer.option_ids else _POLL_ANSWER_MAP.get(poll_answer.option_ids[0])
