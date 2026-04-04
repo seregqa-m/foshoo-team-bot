@@ -70,6 +70,7 @@ class ExpenseRequest(BaseModel):
     comment: str = ""
     username: str = ""  # Telegram username для резолва имени
     who: str = ""       # если передан явно — используется как есть
+    date: str = ""      # DD.MM.YYYY; если пусто — сегодня
 
 
 class IncomeRequest(BaseModel):
@@ -77,6 +78,7 @@ class IncomeRequest(BaseModel):
     amount: str
     what: str
     comment: str = ""
+    date: str = ""      # DD.MM.YYYY; если пусто — сегодня
 
 
 @router.post("/expense")
@@ -87,7 +89,7 @@ async def add_expense(req: ExpenseRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="Неверный тип траты")
 
     who = req.who.strip() if req.who.strip() else (_resolve_name(req.username) if req.username else "—")
-    today = date.today().strftime("%d.%m.%Y")
+    today = req.date.strip() if req.date.strip() else date.today().strftime("%d.%m.%Y")
 
     try:
         client = _get_client()
@@ -257,7 +259,7 @@ async def add_income(req: IncomeRequest, db: Session = Depends(get_db)):
     if req.project not in PROJECTS:
         raise HTTPException(status_code=400, detail="Неверный проект")
 
-    today = date.today().strftime("%d.%m.%Y")
+    today = req.date.strip() if req.date.strip() else date.today().strftime("%d.%m.%Y")
 
     try:
         client = _get_client()

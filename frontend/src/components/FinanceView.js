@@ -205,8 +205,11 @@ function SimpleBarChart({ data }) {
   );
 }
 
-const EMPTY_EXPENSE = { project: '', amount: '', what: '', expense_type: '', comment: '', who: '' };
-const EMPTY_INCOME  = { project: '', amount: '', what: '', comment: '' };
+const todayISO = () => new Date().toISOString().slice(0, 10);
+const isoToDMY = iso => { const [y, m, d] = iso.split('-'); return `${d}.${m}.${y}`; };
+
+const EMPTY_EXPENSE = { project: '', amount: '', what: '', expense_type: '', comment: '', who: '', date: todayISO() };
+const EMPTY_INCOME  = { project: '', amount: '', what: '', comment: '', date: todayISO() };
 
 export default function FinanceView({ username }) {
   const [balance, setBalance] = useState(null);
@@ -282,10 +285,11 @@ export default function FinanceView({ username }) {
     try {
       setSaving(true);
       setError(null);
+      const payload = { ...form, date: isoToDMY(form.date) };
       if (modal === 'expense') {
-        await client.post('/api/finance/expense', { ...form, username });
+        await client.post('/api/finance/expense', { ...payload, username });
       } else {
-        await client.post('/api/finance/income', form);
+        await client.post('/api/finance/income', payload);
       }
       setModal(null);
       setSuccess(modal === 'expense' ? 'Расход добавлен' : 'Доход добавлен');
@@ -450,7 +454,10 @@ export default function FinanceView({ username }) {
                 </div>
               )}
 
-              <div style={{ fontSize: 12, color: '#999', marginBottom: 12 }}>Дата: сегодня</div>
+              <div className="form-group">
+                <label className="form-label">Дата</label>
+                <input className="form-input" type="date" value={form.date} onChange={e => set('date', e.target.value)} required />
+              </div>
 
               <div className="modal-actions">
                 <button type="submit" className="btn btn-primary" disabled={saving}>
