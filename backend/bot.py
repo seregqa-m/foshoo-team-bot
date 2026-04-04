@@ -62,10 +62,7 @@ async def handle_poll_answer(poll_answer: PollAnswer):
     from modules.polling.models import Poll
     from modules.calendar.models import CalendarEvent
 
-    if not poll_answer.option_ids:
-        return  # пользователь отозвал голос
-
-    answer = _POLL_ANSWER_MAP.get(poll_answer.option_ids[0])
+    answer = "retracted" if not poll_answer.option_ids else _POLL_ANSWER_MAP.get(poll_answer.option_ids[0])
     if not answer:
         logger.warning(f"Unknown poll option index: {poll_answer.option_ids[0]}")
         return
@@ -77,12 +74,22 @@ async def handle_poll_answer(poll_answer: PollAnswer):
             logger.warning(f"No DB poll for telegram_poll_id={poll_answer.poll_id}")
             return
 
-        PollingService(db).vote(poll.id, poll_answer.user.id, answer)
-        logger.info(f"Poll vote saved: poll={poll.id} user={poll_answer.user.id} answer={answer}")
+        if answer != "retracted":
+            PollingService(db).vote(poll.id, poll_answer.user.id, answer)
+            logger.info(f"Poll vote saved: poll={poll.id} user={poll_answer.user.id} answer={answer}")
 
         # Записать явку в Google Sheets
         username = poll_answer.user.username
-        if username and poll.calendar_event_id and answer != "unknown":
+        if username and poll.calendar_event_id:
+            # Пропускаем если у пользователя есть ответ в более новом опросе на то же событие
+            has_newer_vote = db.query(PollVote).join(Poll).filter(
+                Poll.calendar_event_id == poll.calendar_event_id,
+                Poll.id > poll.id,
+                PollVote.user_id == poll_answer.user.id,
+            ).first()
+            if has_newer_vote:
+                logger.info(f"Sheets: skip older poll {poll.id}, user {poll_answer.user.id} has newer vote")
+                return
             try:
                 from config import GOOGLE_CALENDAR_JSON, GOOGLE_SHEETS_ID
                 from sheets_client import SheetsClient

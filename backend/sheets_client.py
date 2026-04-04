@@ -107,14 +107,15 @@ class SheetsClient:
     def record_poll_answer(self, telegram_username: str, event_dt: datetime, answer: str) -> bool:
         """
         Записать ответ актёра в таблицу.
-        answer: "yes" → "да", "no" → "нет", остальное → пропустить.
+        answer: "yes" → "да", "no" → "нет", "unknown"/"retracted" → очистить ячейку.
         Возвращает True если запись прошла успешно.
         """
-        if answer not in ("yes", "no"):
-            logger.debug(f"Sheets: skip answer='{answer}' for @{telegram_username}")
-            return False
-
-        sheet_value = "да" if answer == "yes" else "нет"
+        if answer == "yes":
+            sheet_value = "да"
+        elif answer == "no":
+            sheet_value = "нет"
+        else:
+            sheet_value = ""  # "не знаю" или отзыв голоса → пустая ячейка
 
         mapping = self.get_actor_mapping()
         actor_name = mapping.get(telegram_username.lower())
