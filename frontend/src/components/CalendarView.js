@@ -66,8 +66,10 @@ function WeekCalendar({ events, showNames }) {
   const chartH = (HOUR_END - HOUR_START) * HOUR_H;
   const svgH = HEADER_H + chartH;
 
-  const timeToY = dt => {
-    const h = Math.max(HOUR_START, Math.min(HOUR_END, dt.getHours() + dt.getMinutes() / 60));
+  const timeToY = (dt, isEnd = false) => {
+    let raw = dt.getHours() + dt.getMinutes() / 60;
+    if (isEnd && raw === 0) raw = 24;
+    const h = Math.max(HOUR_START, Math.min(HOUR_END, raw));
     return HEADER_H + (h - HOUR_START) * HOUR_H;
   };
 
@@ -154,7 +156,7 @@ function WeekCalendar({ events, showNames }) {
               const dayIdx  = days.findIndex(d => d.getTime() === dayStr);
               if (dayIdx < 0) return null;
               const y1 = timeToY(startDt);
-              const y2 = timeToY(endDt);
+              const y2 = timeToY(endDt, true);
               const h  = Math.max(6, y2 - y1);
               const x  = LABEL_W + dayIdx * colW + 3;
               const w  = colW - 6;
