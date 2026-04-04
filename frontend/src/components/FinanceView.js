@@ -352,7 +352,10 @@ export default function FinanceView({ username }) {
                 <div style={{ fontSize: 11, color: '#999' }}>{tx.date} · {tx.project}</div>
               </div>
               <div style={{ fontSize: 13, fontWeight: 600, flexShrink: 0 }}>
-                {tx.type === 'income' ? '+' : '−'}{String(tx.amount).replace('р.', '').trim()}
+                {tx.type === 'income' ? '+' : '−'}{(() => {
+                  const n = parseFloat(String(tx.amount).replace('р.', '').replace(/\s/g, '').replace(',', '.'));
+                  return isNaN(n) ? tx.amount : n.toLocaleString('ru', { maximumFractionDigits: 0 });
+                })()}
               </div>
               <button
                 onClick={() => deleteTransaction(tx.type, tx.id)}
