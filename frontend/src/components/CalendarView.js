@@ -61,7 +61,7 @@ function WeekCalendar({ events, showNames }) {
   });
 
   const today = new Date(); today.setHours(0, 0, 0, 0);
-  const totalW = window.innerWidth - 32;
+  const totalW = window.innerWidth - 48;
   const colW = (totalW - LABEL_W) / 7;
   const chartH = (HOUR_END - HOUR_START) * HOUR_H;
   const svgH = HEADER_H + chartH;
