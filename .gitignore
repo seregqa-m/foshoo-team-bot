@@ -80,3 +80,6 @@ frontend/dist/
 # CLAUDE
 CLAUDE.md
 .claude
+
+# Plan (local only)
+PLAN.md
