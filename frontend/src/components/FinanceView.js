@@ -22,8 +22,8 @@ function smoothPath(points) {
 function SplineChart({ data }) {
   const [tooltip, setTooltip] = useState(null);
   const h = 160, padL = 36, padB = 28, padT = 16, padR = 8;
-  const spacing = Math.max(24, Math.min(48, Math.floor((window.innerWidth - padL - padR - 32) / Math.max(data.length - 1, 1))));
-  const totalW = padL + (data.length - 1) * spacing + padR;
+  const totalW = window.innerWidth - 32;
+  const spacing = (totalW - padL - padR) / Math.max(data.length - 1, 1);
   const chartH = h - padT - padB;
   const max = Math.max(...data.flatMap(d => [d.income, d.expense]), 1);
   const pts = key => data.map((d, i) => ({
@@ -98,11 +98,12 @@ function SplineChart({ data }) {
 function SimpleBarChart({ data }) {
   const [tooltip, setTooltip] = useState(null);
   const h = 160, padL = 36, padB = 28, padT = 8, padR = 8;
+  const totalW = window.innerWidth - 32;
   const max = Math.max(...data.flatMap(d => [d.income, d.expense]), 1);
-  const barW = Math.max(4, Math.min(16, (300 - padL - padR) / (data.length * 2 + data.length * 0.5) | 0));
-  const gap = Math.max(2, barW * 0.3 | 0);
-  const groupW = barW * 2 + gap;
-  const totalW = padL + data.length * groupW + (data.length - 1) * gap + padR;
+  const innerW = totalW - padL - padR;
+  const groupW = innerW / data.length;
+  const barW = Math.max(3, Math.floor(groupW * 0.38));
+  const gap = Math.max(1, Math.floor(groupW * 0.08));
   const chartH = h - padT - padB;
   const fy = v => padT + chartH - (v / max) * chartH;
 
@@ -136,7 +137,7 @@ function SimpleBarChart({ data }) {
           })}
           {/* Bars */}
           {data.map((d, i) => {
-            const x = padL + i * (groupW + gap);
+            const x = padL + i * groupW;
             const ih = Math.max(2, (d.income / max) * chartH);
             const eh = Math.max(2, (d.expense / max) * chartH);
             return (
