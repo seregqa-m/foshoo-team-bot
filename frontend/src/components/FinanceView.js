@@ -1,5 +1,19 @@
 import React, { useState, useEffect } from 'react';
 import client from '../api/client';
+import {
+  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend
+} from 'recharts';
+
+class ChartErrorBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { error: null }; }
+  static getDerivedStateFromError(e) { return { error: e?.message || String(e) }; }
+  render() {
+    if (this.state.error) {
+      return <div style={{ fontSize: 11, color: 'red', padding: 8, wordBreak: 'break-all' }}>Chart error: {this.state.error}</div>;
+    }
+    return this.props.children;
+  }
+}
 
 function SimpleBarChart({ data }) {
   const [tooltip, setTooltip] = useState(null);
@@ -195,7 +209,22 @@ export default function FinanceView({ username }) {
         {chartData.length === 0 ? (
           <div style={{ textAlign: 'center', color: '#999', fontSize: 13, padding: '20px 0' }}>Нет данных</div>
         ) : (
-          <SimpleBarChart data={chartData} />
+          <ChartErrorBoundary>
+            <ResponsiveContainer width="100%" height={200}>
+              <BarChart data={chartData} margin={{ top: 0, right: 8, left: -16, bottom: 0 }}>
+                <XAxis dataKey="period" tick={{ fontSize: 10 }} interval="preserveStartEnd" />
+                <YAxis tick={{ fontSize: 10 }} tickFormatter={v => v >= 1000 ? `${v/1000}к` : v} />
+                <Tooltip
+                  formatter={(value, name) => [`${value.toLocaleString('ru')} ₽`, name === 'income' ? 'Доход' : 'Расход']}
+                  labelStyle={{ fontSize: 12 }}
+                  contentStyle={{ fontSize: 12 }}
+                />
+                <Legend formatter={name => name === 'income' ? 'Доход' : 'Расход'} wrapperStyle={{ fontSize: 12 }} />
+                <Bar dataKey="income" fill="#111" radius={[3, 3, 0, 0]} />
+                <Bar dataKey="expense" fill="#ccc" radius={[3, 3, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </ChartErrorBoundary>
         )}
       </div>
 
