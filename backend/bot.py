@@ -75,7 +75,7 @@ async def handle_poll_answer(poll_answer: PollAnswer):
             return
 
         if answer != "retracted":
-            PollingService(db).vote(poll.id, poll_answer.user.id, answer)
+            PollingService(db).vote(poll.id, poll_answer.user.id, answer, username=poll_answer.user.username)
             logger.info(f"Poll vote saved: poll={poll.id} user={poll_answer.user.id} answer={answer}")
 
         # Записать явку в Google Sheets

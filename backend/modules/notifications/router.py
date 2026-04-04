@@ -12,7 +12,8 @@ class UpdateSettingsRequest(BaseModel):
     poll_reminders_enabled: bool = None
     payment_reminders_enabled: bool = None
     event_reminders_enabled: bool = None
-    reminder_hours_before: int = None
+    reminder_days_before: int = None
+    reminder_time: str = None
 
 
 router = APIRouter(prefix="/api/notifications", tags=["notifications"])
@@ -34,7 +35,8 @@ async def get_notification_settings(
         "poll_reminders_enabled": settings.poll_reminders_enabled,
         "payment_reminders_enabled": settings.payment_reminders_enabled,
         "event_reminders_enabled": settings.event_reminders_enabled,
-        "reminder_hours_before": settings.reminder_hours_before
+        "reminder_days_before": settings.reminder_days_before,
+        "reminder_time": settings.reminder_time,
     }
 
 
@@ -54,7 +56,8 @@ async def update_notification_settings(
         poll_reminders_enabled=request.poll_reminders_enabled,
         payment_reminders_enabled=request.payment_reminders_enabled,
         event_reminders_enabled=request.event_reminders_enabled,
-        reminder_hours_before=request.reminder_hours_before
+        reminder_days_before=request.reminder_days_before,
+        reminder_time=request.reminder_time,
     )
 
     return {"status": "updated"}

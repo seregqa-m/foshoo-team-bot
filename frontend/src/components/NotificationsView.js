@@ -73,19 +73,28 @@ export default function NotificationsView({ userId }) {
         </div>
       </div>
 
-      <div className="section-label">За сколько часов предупреждать</div>
-      <div className="card-white" style={{ padding: '14px 16px' }}>
+      <div className="section-label">Напомнить за N дней до события</div>
+      <div className="card-white" style={{ padding: '14px 16px', display: 'flex', gap: 12, alignItems: 'center' }}>
         <select
           className="select-input"
-          value={settings.reminder_hours_before}
-          onChange={e => { setSettings(s => ({ ...s, reminder_hours_before: parseInt(e.target.value) })); setSaved(false); }}
+          style={{ flex: 1 }}
+          value={settings.reminder_days_before ?? 3}
+          onChange={e => { setSettings(s => ({ ...s, reminder_days_before: parseInt(e.target.value) })); setSaved(false); }}
         >
-          <option value="1">1 час</option>
-          <option value="6">6 часов</option>
-          <option value="12">12 часов</option>
-          <option value="24">1 день</option>
-          <option value="48">2 дня</option>
+          <option value="1">1 день</option>
+          <option value="2">2 дня</option>
+          <option value="3">3 дня</option>
+          <option value="5">5 дней</option>
+          <option value="7">7 дней</option>
         </select>
+        <span style={{ fontSize: 13, color: '#666' }}>в</span>
+        <input
+          type="time"
+          className="form-input"
+          style={{ width: 100 }}
+          value={settings.reminder_time ?? '18:00'}
+          onChange={e => { setSettings(s => ({ ...s, reminder_time: e.target.value })); setSaved(false); }}
+        />
       </div>
 
       <button className="btn btn-primary" style={{ width: '100%', padding: 14, fontSize: 15, marginTop: 8 }} onClick={handleSave}>

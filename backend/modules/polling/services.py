@@ -49,7 +49,7 @@ class PollingService:
             Poll.expires_at > now
         ).all()
 
-    def vote(self, poll_id: int, user_id: int, answer: str) -> PollVote:
+    def vote(self, poll_id: int, user_id: int, answer: str, username: str = None) -> PollVote:
         """Добавить голос в опрос"""
         existing_vote = self.db.query(PollVote).filter(
             PollVote.poll_id == poll_id,
@@ -58,10 +58,13 @@ class PollingService:
 
         if existing_vote:
             existing_vote.answer = answer
+            if username:
+                existing_vote.username = username
         else:
             existing_vote = PollVote(
                 poll_id=poll_id,
                 user_id=user_id,
+                username=username,
                 answer=answer
             )
             self.db.add(existing_vote)

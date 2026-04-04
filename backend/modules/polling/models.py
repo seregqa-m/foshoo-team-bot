@@ -18,6 +18,7 @@ class Poll(Base):
     is_active = Column(Boolean, default=True)
     telegram_poll_id = Column(String, nullable=True)
     telegram_message_id = Column(Integer, nullable=True)
+    reminder_sent_at = Column(DateTime, nullable=True)
 
     votes = relationship("PollVote", back_populates="poll", cascade="all, delete-orphan")
 
@@ -29,6 +30,7 @@ class PollVote(Base):
     id = Column(Integer, primary_key=True, index=True)
     poll_id = Column(Integer, ForeignKey("polls.id"), index=True)
     user_id = Column(Integer)  # Telegram user ID
+    username = Column(String, nullable=True)  # Telegram username (без @)
     answer = Column(String)  # "yes", "no", "maybe"
     voted_at = Column(DateTime, default=datetime.utcnow)
 

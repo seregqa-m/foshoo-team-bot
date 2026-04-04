@@ -73,7 +73,8 @@ class NotificationService:
         poll_reminders_enabled: bool = None,
         payment_reminders_enabled: bool = None,
         event_reminders_enabled: bool = None,
-        reminder_hours_before: int = None
+        reminder_days_before: int = None,
+        reminder_time: str = None,
     ) -> NotificationSetting:
         """Обновить настройки уведомлений"""
         settings = self.get_user_settings(user_id)
@@ -84,8 +85,10 @@ class NotificationService:
             settings.payment_reminders_enabled = payment_reminders_enabled
         if event_reminders_enabled is not None:
             settings.event_reminders_enabled = event_reminders_enabled
-        if reminder_hours_before is not None:
-            settings.reminder_hours_before = reminder_hours_before
+        if reminder_days_before is not None:
+            settings.reminder_days_before = reminder_days_before
+        if reminder_time is not None:
+            settings.reminder_time = reminder_time
 
         self.db.commit()
         return settings

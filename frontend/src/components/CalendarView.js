@@ -184,6 +184,14 @@ export default function CalendarView({ userId }) {
   const [error, setError] = useState(null);
   const [modal, setModal] = useState(null); // null | 'new' | event object
   const [filter, setFilter] = useState('труппа 1');
+  const [showNames, setShowNames] = useState([]);
+
+  useEffect(() => {
+    fetch(`${process.env.REACT_APP_API_URL || 'http://127.0.0.1:8000'}/api/sheets/shows`)
+      .then(r => r.json())
+      .then(data => setShowNames((data.shows || []).map(s => s.toLowerCase())))
+      .catch(() => {});
+  }, []);
 
   const fetchEvents = async (currentFilter) => {
     const days = currentFilter === 'all' ? 30 : 60;
@@ -206,7 +214,12 @@ export default function CalendarView({ userId }) {
 
   const visibleEvents = filter === 'all'
     ? events
-    : events.filter(e => e.title.toLowerCase().includes(filter));
+    : filter === 'труппа 1'
+      ? events.filter(e => {
+          const t = e.title.toLowerCase();
+          return t.includes('труппа 1') || showNames.some(s => t.includes(s));
+        })
+      : events.filter(e => e.title.toLowerCase().includes(filter));
 
   if (loading) return <div className="empty-state">Загрузка...</div>;
 

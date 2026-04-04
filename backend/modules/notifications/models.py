@@ -36,6 +36,8 @@ class NotificationSetting(Base):
     poll_reminders_enabled = Column(Boolean, default=True)
     payment_reminders_enabled = Column(Boolean, default=True)
     event_reminders_enabled = Column(Boolean, default=True)
-    reminder_hours_before = Column(Integer, default=24)  # за сколько часов до события
+    reminder_hours_before = Column(Integer, default=24)  # устарело, оставлено для совместимости
+    reminder_days_before = Column(Integer, default=3)
+    reminder_time = Column(String, default="18:00")
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

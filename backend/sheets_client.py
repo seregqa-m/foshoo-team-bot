@@ -104,6 +104,20 @@ class SheetsClient:
         ).execute()
         logger.info(f"Sheets: wrote '{value}' to {col}{row}")
 
+    def get_show_names(self) -> list[str]:
+        """Уникальные названия спектаклей из вкладки 'Составы спектаклей', столбец A."""
+        result = self.api.values().get(
+            spreadsheetId=self.spreadsheet_id,
+            range="Составы спектаклей!A:A",
+        ).execute()
+        names = set()
+        for i, row in enumerate(result.get("values", [])):
+            if i == 0:
+                continue  # заголовок
+            if row and row[0].strip():
+                names.add(row[0].strip())
+        return list(names)
+
     def record_poll_answer(self, telegram_username: str, event_dt: datetime, answer: str) -> bool:
         """
         Записать ответ актёра в таблицу.
