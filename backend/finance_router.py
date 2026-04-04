@@ -200,8 +200,8 @@ async def get_chart(period: str = "month", from_date: str = None, db: Session = 
 async def get_transactions(limit: int = 10, db: Session = Depends(get_db)):
     """Последние N операций (доходы + расходы) из БД, отсортированные по дате добавления."""
     from modules.finance.models import ExpenseLog, IncomeLog
-    expenses = db.query(ExpenseLog).order_by(ExpenseLog.created_at.desc()).limit(limit).all()
-    incomes = db.query(IncomeLog).order_by(IncomeLog.created_at.desc()).limit(limit).all()
+    expenses = db.query(ExpenseLog).all()
+    incomes = db.query(IncomeLog).all()
     items = []
     for e in expenses:
         items.append({"id": e.id, "type": "expense", "date": e.date, "amount": e.amount,
