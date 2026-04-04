@@ -50,15 +50,17 @@ async def cmd_help(message: Message):
     )
 
 
-_POLL_ANSWER_MAP = {0: "yes", 1: "no", 2: "maybe"}
+# 0=Буду, 1=Не буду, 2=Опоздаю (→ да), 3=Не знаю (→ не писать в таблицу)
+_POLL_ANSWER_MAP = {0: "yes", 1: "no", 2: "yes", 3: "unknown"}
 
 
 @dp.poll_answer()
 async def handle_poll_answer(poll_answer: PollAnswer):
-    """Сохранить ответ на Telegram-опрос в БД"""
+    """Сохранить ответ на Telegram-опрос в БД и записать явку в Google Sheets"""
     from core.database import SessionLocal
     from modules.polling.services import PollingService
     from modules.polling.models import Poll
+    from modules.calendar.models import CalendarEvent
 
     if not poll_answer.option_ids:
         return  # пользователь отозвал голос
@@ -74,8 +76,26 @@ async def handle_poll_answer(poll_answer: PollAnswer):
         if not poll:
             logger.warning(f"No DB poll for telegram_poll_id={poll_answer.poll_id}")
             return
+
         PollingService(db).vote(poll.id, poll_answer.user.id, answer)
         logger.info(f"Poll vote saved: poll={poll.id} user={poll_answer.user.id} answer={answer}")
+
+        # Записать явку в Google Sheets
+        username = poll_answer.user.username
+        if username and poll.calendar_event_id and answer != "unknown":
+            try:
+                from config import GOOGLE_CALENDAR_JSON, GOOGLE_SHEETS_ID
+                from sheets_client import SheetsClient
+                import os
+                if GOOGLE_SHEETS_ID and os.path.exists(GOOGLE_CALENDAR_JSON):
+                    event = db.query(CalendarEvent).filter(
+                        CalendarEvent.id == poll.calendar_event_id
+                    ).first()
+                    if event:
+                        client = SheetsClient(GOOGLE_CALENDAR_JSON, GOOGLE_SHEETS_ID)
+                        client.record_poll_answer(username, event.start_time, answer)
+            except Exception as e:
+                logger.error(f"Sheets write error: {e}")
     except Exception as e:
         logger.error(f"poll_answer handler error: {e}")
     finally:

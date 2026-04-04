@@ -20,6 +20,9 @@ DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./theater_bot.db")
 GOOGLE_CALENDAR_JSON = os.getenv("GOOGLE_CALENDAR_JSON", "backend/credentials.json")
 GOOGLE_CALENDAR_ID = os.getenv("GOOGLE_CALENDAR_ID", "")
 SYNC_INTERVAL_MINUTES = int(os.getenv("SYNC_INTERVAL_MINUTES", 15))
+
+# Google Sheets
+GOOGLE_SHEETS_ID = os.getenv("GOOGLE_SHEETS_ID", "")
 TIMEZONE = os.getenv("TIMEZONE", "Europe/Moscow")
 
 # Security

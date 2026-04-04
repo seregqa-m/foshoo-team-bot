@@ -218,7 +218,7 @@ async def launch_poll_for_event(
         message = await bot.send_poll(
             chat_id=GROUP_CHAT_ID,
             question=f"кто будет на занятии?\n{event.title} — {event.start_time.strftime('%d.%m %H:%M')}",
-            options=["Буду ✅", "Не буду ❌", "Опоздаю ⏰"],
+            options=["Буду ✅", "Не буду ❌", "Опоздаю ⏰", "Не знаю 🤷"],
             is_anonymous=False,
             allows_multiple_answers=False,
         )
