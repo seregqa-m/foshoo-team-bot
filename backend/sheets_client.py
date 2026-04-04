@@ -199,16 +199,31 @@ class SheetsClient:
     def add_expense(self, project: str, date: str, who: str,
                     amount: str, what: str, expense_type: str, comment: str = "") -> None:
         """Добавить строку в начало таблицы Расходы (столбцы A–G)."""
-        self.api.values().append(
+        sheet_id = self._get_sheet_id(self.FINANCE_SHEET)
+        # Вставить строку внутри именованной таблицы через Tables API
+        try:
+            self.api.batchUpdate(
+                spreadsheetId=self.spreadsheet_id,
+                body={"requests": [{
+                    "insertTableRow": {
+                        "tableRange": {"sheetId": sheet_id, "name": "Расходы"},
+                        "rowIndex": 0,
+                        "numberOfRows": 1,
+                    }
+                }]}
+            ).execute()
+        except Exception as e:
+            logger.warning(f"insertTableRow failed, fallback to append: {e}")
+        # Записать данные в первую строку данных (после заголовка)
+        header_row = (self._find_table_header_row(self.FINANCE_SHEET, "Расходы")
+                      or self._find_header_row(f"{self.FINANCE_SHEET}!C:C", "Кто?"))
+        new_row = header_row + 1
+        self.api.values().update(
             spreadsheetId=self.spreadsheet_id,
-            range=f"{self.FINANCE_SHEET}!A:G",
+            range=f"{self.FINANCE_SHEET}!A{new_row}:G{new_row}",
             valueInputOption="USER_ENTERED",
             body={"values": [[project, date, who, amount, what, expense_type, comment]]},
         ).execute()
-        # Сортируем по дате (колонка B = индекс 1) по убыванию
-        sheet_id = self._get_sheet_id(self.FINANCE_SHEET)
-        header_row = (self._find_table_header_row(self.FINANCE_SHEET, "Расходы")
-                      or self._find_header_row(f"{self.FINANCE_SHEET}!C:C", "Кто?"))
         self._sort_table_by_date(sheet_id, header_row, 0, 7, 1)
         logger.info(f"Sheets: added expense {project} {amount} by {who}")
 
