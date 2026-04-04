@@ -104,7 +104,7 @@ function SimpleBarChart({ data }) {
   const max = Math.max(...data.flatMap(d => [d.income, d.expense]), 1);
   const innerW = totalW - padL - padR;
   const groupW = innerW / data.length;
-  const barW = Math.max(3, Math.min(18, Math.floor(groupW * 0.38)));
+  const barW = Math.max(3, Math.min(12, Math.floor(groupW * 0.3)));
   const gap = Math.max(1, Math.floor(groupW * 0.08));
   const chartH = h - padT - padB;
   const fy = v => padT + chartH - (v / max) * chartH;
