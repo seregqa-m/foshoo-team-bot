@@ -49,13 +49,20 @@ async def get_meta():
     return {"projects": PROJECTS, "expense_types": EXPENSE_TYPES}
 
 
+@router.get("/whoami")
+async def whoami(username: str = ""):
+    """Вернуть полное имя актёра по Telegram username."""
+    return {"name": _resolve_name(username) if username else ""}
+
+
 class ExpenseRequest(BaseModel):
     project: str
     amount: str
     what: str
     expense_type: str
     comment: str = ""
-    username: str = ""  # Telegram username для автозаполнения Кто
+    username: str = ""  # Telegram username для резолва имени
+    who: str = ""       # если передан явно — используется как есть
 
 
 class IncomeRequest(BaseModel):
@@ -72,7 +79,7 @@ async def add_expense(req: ExpenseRequest, db: Session = Depends(get_db)):
     if req.expense_type not in EXPENSE_TYPES:
         raise HTTPException(status_code=400, detail="Неверный тип траты")
 
-    who = _resolve_name(req.username) if req.username else "—"
+    who = req.who.strip() if req.who.strip() else (_resolve_name(req.username) if req.username else "—")
     today = date.today().strftime("%d.%m.%Y")
 
     try:

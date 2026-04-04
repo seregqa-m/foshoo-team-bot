@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import client from '../api/client';
 
-const EMPTY_EXPENSE = { project: '', amount: '', what: '', expense_type: '', comment: '' };
+const EMPTY_EXPENSE = { project: '', amount: '', what: '', expense_type: '', comment: '', who: '' };
 const EMPTY_INCOME  = { project: '', amount: '', what: '', comment: '' };
 
 export default function FinanceView({ username }) {
@@ -20,7 +20,16 @@ export default function FinanceView({ username }) {
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
-  const openExpense = () => { setForm({ ...EMPTY_EXPENSE }); setModal('expense'); setError(null); };
+  const openExpense = () => {
+    setForm({ ...EMPTY_EXPENSE });
+    setModal('expense');
+    setError(null);
+    if (username) {
+      client.get('/api/finance/whoami', { params: { username } })
+        .then(r => setForm(f => ({ ...f, who: r.data.name || '' })))
+        .catch(() => {});
+    }
+  };
   const openIncome  = () => { setForm({ ...EMPTY_INCOME });  setModal('income');  setError(null); };
   const closeModal  = () => { setModal(null); setError(null); };
 
@@ -109,6 +118,10 @@ export default function FinanceView({ username }) {
               {modal === 'expense' && (
                 <>
                   <div className="form-group">
+                    <label className="form-label">Кто</label>
+                    <input className="form-input" value={form.who} onChange={e => set('who', e.target.value)} placeholder="Имя" />
+                  </div>
+                  <div className="form-group">
                     <label className="form-label">Тип траты *</label>
                     <select className="form-input" value={form.expense_type} onChange={e => set('expense_type', e.target.value)} required>
                       <option value="">Выберите тип</option>
@@ -129,11 +142,7 @@ export default function FinanceView({ username }) {
                 </div>
               )}
 
-              <div style={{ fontSize: 12, color: '#999', marginBottom: 12 }}>
-                {modal === 'expense'
-                  ? `Кто: ${username || '—'} · Дата: сегодня`
-                  : 'Дата: сегодня'}
-              </div>
+              <div style={{ fontSize: 12, color: '#999', marginBottom: 12 }}>Дата: сегодня</div>
 
               <div className="modal-actions">
                 <button type="submit" className="btn btn-primary" disabled={saving}>
