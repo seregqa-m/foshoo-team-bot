@@ -10,7 +10,7 @@ router = APIRouter(prefix="/api/finance", tags=["finance"])
 logger = logging.getLogger(__name__)
 
 EXPENSE_TYPES = ["Личные траты", "Трата со счета ФоШу", "Пожертвование"]
-PROJECTS = ["Театр", "ЛГ", "Урод", "Слепые"]
+PROJECTS = ["Театр", "Любовь Громова", "Урод", "Слепые"]
 
 
 def _get_client():
@@ -45,8 +45,15 @@ async def get_balance():
 
 @router.get("/meta")
 async def get_meta():
-    """Вернуть списки проектов и типов трат для форм."""
-    return {"projects": PROJECTS, "expense_types": EXPENSE_TYPES}
+    """Вернуть списки проектов, типов трат и актёров для форм."""
+    actors = []
+    try:
+        client = _get_client()
+        mapping = client.get_actor_mapping()
+        actors = sorted(mapping.values())
+    except Exception:
+        pass
+    return {"projects": PROJECTS, "expense_types": EXPENSE_TYPES, "actors": actors}
 
 
 @router.get("/whoami")

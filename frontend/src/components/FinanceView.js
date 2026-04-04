@@ -6,7 +6,7 @@ const EMPTY_INCOME  = { project: '', amount: '', what: '', comment: '' };
 
 export default function FinanceView({ username }) {
   const [balance, setBalance] = useState(null);
-  const [meta, setMeta] = useState({ projects: [], expense_types: [] });
+  const [meta, setMeta] = useState({ projects: [], expense_types: [], actors: [] });
   const [modal, setModal] = useState(null); // 'expense' | 'income' | null
   const [form, setForm] = useState({});
   const [saving, setSaving] = useState(false);
@@ -119,7 +119,10 @@ export default function FinanceView({ username }) {
                 <>
                   <div className="form-group">
                     <label className="form-label">Кто</label>
-                    <input className="form-input" value={form.who} onChange={e => set('who', e.target.value)} placeholder="Имя" />
+                    <select className="form-input" value={form.who} onChange={e => set('who', e.target.value)}>
+                      <option value="">— выберите —</option>
+                      {meta.actors.map(a => <option key={a} value={a}>{a}</option>)}
+                    </select>
                   </div>
                   <div className="form-group">
                     <label className="form-label">Тип траты *</label>
