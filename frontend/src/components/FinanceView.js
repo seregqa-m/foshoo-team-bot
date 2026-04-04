@@ -40,7 +40,9 @@ function SplineChart({ data }) {
       <div style={{ position: 'relative', display: 'inline-block' }}>
         {tooltip && (
           <div style={{
-            position: 'absolute', top: 0, left: tooltip.x, transform: 'translateX(-50%)',
+            position: 'absolute', top: 0,
+            left: tooltip.x > totalW * 0.7 ? 'auto' : Math.max(0, tooltip.x - 60),
+            right: tooltip.x > totalW * 0.7 ? (totalW - tooltip.x - 10) : 'auto',
             background: '#111', color: '#fff', borderRadius: 6, padding: '4px 8px',
             fontSize: 11, pointerEvents: 'none', whiteSpace: 'nowrap', zIndex: 10,
           }}>
@@ -102,7 +104,7 @@ function SimpleBarChart({ data }) {
   const max = Math.max(...data.flatMap(d => [d.income, d.expense]), 1);
   const innerW = totalW - padL - padR;
   const groupW = innerW / data.length;
-  const barW = Math.max(3, Math.floor(groupW * 0.38));
+  const barW = Math.max(3, Math.min(18, Math.floor(groupW * 0.38)));
   const gap = Math.max(1, Math.floor(groupW * 0.08));
   const chartH = h - padT - padB;
   const fy = v => padT + chartH - (v / max) * chartH;
@@ -112,7 +114,9 @@ function SimpleBarChart({ data }) {
       <div style={{ position: 'relative', display: 'inline-block' }}>
         {tooltip && (
           <div style={{
-            position: 'absolute', top: 0, left: tooltip.x, transform: 'translateX(-50%)',
+            position: 'absolute', top: 0,
+            left: tooltip.x > totalW * 0.7 ? 'auto' : Math.max(0, tooltip.x - 60),
+            right: tooltip.x > totalW * 0.7 ? (totalW - tooltip.x - 10) : 'auto',
             background: '#111', color: '#fff', borderRadius: 6, padding: '4px 8px',
             fontSize: 11, pointerEvents: 'none', whiteSpace: 'nowrap', zIndex: 10,
           }}>
