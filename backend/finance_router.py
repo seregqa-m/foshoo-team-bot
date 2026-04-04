@@ -213,7 +213,14 @@ async def get_transactions(limit: int = 10, db: Session = Depends(get_db)):
                       "what": i.what, "project": i.project, "who": "",
                       "expense_type": "", "comment": i.comment or "",
                       "created_at": i.created_at.isoformat() if i.created_at else ""})
-    items.sort(key=lambda x: x["created_at"], reverse=True)
+    def date_sort_key(x):
+        try:
+            d, m, y = x["date"].strip().split(".")
+            return (int(y), int(m), int(d))
+        except Exception:
+            return (0, 0, 0)
+
+    items.sort(key=date_sort_key, reverse=True)
     return {"transactions": items[:limit]}
 
 
