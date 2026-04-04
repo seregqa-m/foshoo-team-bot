@@ -1,5 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import client from '../api/client';
+import {
+  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend
+} from 'recharts';
 
 const EMPTY_EXPENSE = { project: '', amount: '', what: '', expense_type: '', comment: '', who: '' };
 const EMPTY_INCOME  = { project: '', amount: '', what: '', comment: '' };
@@ -12,11 +15,19 @@ export default function FinanceView({ username }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
+  const [chartPeriod, setChartPeriod] = useState('month');
+  const [chartData, setChartData] = useState([]);
 
   useEffect(() => {
     client.get('/api/finance/balance').then(r => setBalance(r.data.balance)).catch(() => {});
     client.get('/api/finance/meta').then(r => setMeta(r.data)).catch(() => {});
   }, []);
+
+  useEffect(() => {
+    client.get('/api/finance/chart', { params: { period: chartPeriod } })
+      .then(r => setChartData(r.data.data))
+      .catch(() => {});
+  }, [chartPeriod]);
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
@@ -85,6 +96,47 @@ export default function FinanceView({ username }) {
         <button className="btn btn-primary" style={{ flex: 1, padding: 14, fontSize: 15 }} onClick={openIncome}>
           + Доход
         </button>
+      </div>
+
+      {/* График */}
+      <div className="card-white" style={{ padding: '16px 8px', marginBottom: 16 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, paddingRight: 8 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, paddingLeft: 8 }}>Статистика</div>
+          <div style={{ display: 'flex', gap: 6 }}>
+            {['month', 'day'].map(p => (
+              <button
+                key={p}
+                onClick={() => setChartPeriod(p)}
+                style={{
+                  padding: '4px 10px', fontSize: 12, borderRadius: 8, border: '1px solid #ccc',
+                  background: chartPeriod === p ? '#111' : '#fff',
+                  color: chartPeriod === p ? '#fff' : '#444',
+                  cursor: 'pointer',
+                }}
+              >
+                {p === 'month' ? 'Месяцы' : 'Дни'}
+              </button>
+            ))}
+          </div>
+        </div>
+        {chartData.length === 0 ? (
+          <div style={{ textAlign: 'center', color: '#999', fontSize: 13, padding: '20px 0' }}>Нет данных</div>
+        ) : (
+          <ResponsiveContainer width="100%" height={200}>
+            <BarChart data={chartData} margin={{ top: 0, right: 8, left: -16, bottom: 0 }}>
+              <XAxis dataKey="period" tick={{ fontSize: 10 }} interval="preserveStartEnd" />
+              <YAxis tick={{ fontSize: 10 }} tickFormatter={v => v >= 1000 ? `${v/1000}к` : v} />
+              <Tooltip
+                formatter={(value, name) => [`${value.toLocaleString('ru')} ₽`, name === 'income' ? 'Доход' : 'Расход']}
+                labelStyle={{ fontSize: 12 }}
+                contentStyle={{ fontSize: 12 }}
+              />
+              <Legend formatter={name => name === 'income' ? 'Доход' : 'Расход'} wrapperStyle={{ fontSize: 12 }} />
+              <Bar dataKey="income" fill="#111" radius={[3, 3, 0, 0]} />
+              <Bar dataKey="expense" fill="#ccc" radius={[3, 3, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        )}
       </div>
 
       {/* Модалка */}

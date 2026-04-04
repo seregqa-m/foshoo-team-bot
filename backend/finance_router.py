@@ -105,6 +105,70 @@ async def add_expense(req: ExpenseRequest, db: Session = Depends(get_db)):
     return {"status": "added"}
 
 
+@router.get("/chart")
+async def get_chart(period: str = "month", db: Session = Depends(get_db)):
+    """
+    Агрегация доходов/расходов по месяцам (period=month) или дням (period=day, последние 60 дней).
+    Даты хранятся в формате dd.mm.yyyy.
+    """
+    from modules.finance.models import ExpenseLog, IncomeLog
+    from collections import defaultdict
+
+    def parse_key(date_str: str) -> str | None:
+        try:
+            parts = date_str.strip().split(".")
+            if len(parts) != 3:
+                return None
+            d, m, y = parts
+            if period == "month":
+                return f"{m}.{y}"
+            else:
+                return date_str
+        except Exception:
+            return None
+
+    def sort_key(label: str) -> tuple:
+        try:
+            parts = label.split(".")
+            if period == "month":
+                return (int(parts[1]), int(parts[0]))
+            else:
+                return (int(parts[2]), int(parts[1]), int(parts[0]))
+        except Exception:
+            return (0,)
+
+    expense_agg: dict[str, float] = defaultdict(float)
+    income_agg: dict[str, float] = defaultdict(float)
+
+    for row in db.query(ExpenseLog).all():
+        key = parse_key(row.date)
+        if key:
+            try:
+                expense_agg[key] += float(str(row.amount).replace(",", "."))
+            except (ValueError, TypeError):
+                pass
+
+    for row in db.query(IncomeLog).all():
+        key = parse_key(row.date)
+        if key:
+            try:
+                income_agg[key] += float(str(row.amount).replace(",", "."))
+            except (ValueError, TypeError):
+                pass
+
+    all_keys = sorted(set(expense_agg) | set(income_agg), key=sort_key)
+
+    # Для дневного режима — последние 60 дней
+    if period == "day":
+        all_keys = all_keys[-60:]
+
+    data = [
+        {"period": k, "income": round(income_agg[k]), "expense": round(expense_agg[k])}
+        for k in all_keys
+    ]
+    return {"data": data}
+
+
 @router.post("/income")
 async def add_income(req: IncomeRequest, db: Session = Depends(get_db)):
     if req.project not in PROJECTS:
