@@ -1,8 +1,10 @@
 import logging
 import os
 from datetime import date
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy.orm import Session
+from core.database import get_db
 
 router = APIRouter(prefix="/api/finance", tags=["finance"])
 logger = logging.getLogger(__name__)
@@ -64,7 +66,7 @@ class IncomeRequest(BaseModel):
 
 
 @router.post("/expense")
-async def add_expense(req: ExpenseRequest):
+async def add_expense(req: ExpenseRequest, db: Session = Depends(get_db)):
     if req.project not in PROJECTS:
         raise HTTPException(status_code=400, detail="Неверный проект")
     if req.expense_type not in EXPENSE_TYPES:
@@ -76,16 +78,21 @@ async def add_expense(req: ExpenseRequest):
     try:
         client = _get_client()
         client.add_expense(req.project, today, who, req.amount, req.what, req.expense_type, req.comment)
-        return {"status": "added"}
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"add_expense failed: {e}")
+        logger.error(f"add_expense sheets failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+    from modules.finance.models import ExpenseLog
+    db.add(ExpenseLog(project=req.project, date=today, who=who, amount=req.amount,
+                      what=req.what, expense_type=req.expense_type, comment=req.comment))
+    db.commit()
+    return {"status": "added"}
 
 
 @router.post("/income")
-async def add_income(req: IncomeRequest):
+async def add_income(req: IncomeRequest, db: Session = Depends(get_db)):
     if req.project not in PROJECTS:
         raise HTTPException(status_code=400, detail="Неверный проект")
 
@@ -94,9 +101,14 @@ async def add_income(req: IncomeRequest):
     try:
         client = _get_client()
         client.add_income(req.project, req.amount, req.what, today, req.comment)
-        return {"status": "added"}
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"add_income failed: {e}")
+        logger.error(f"add_income sheets failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+    from modules.finance.models import IncomeLog
+    db.add(IncomeLog(project=req.project, amount=req.amount, what=req.what,
+                     date=today, comment=req.comment))
+    db.commit()
+    return {"status": "added"}
