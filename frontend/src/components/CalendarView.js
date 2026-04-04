@@ -25,6 +25,80 @@ const FILTERS = [
   { key: 'лаба',     label: 'Лаба' },
 ];
 
+const MONTHS_FULL = ['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
+const DOW = ['пн','вт','ср','чт','пт','сб','вс'];
+
+function WeekStrip({ events }) {
+  const [weekOffset, setWeekOffset] = useState(0);
+
+  const weekStart = (() => {
+    const d = new Date();
+    const dow = d.getDay();
+    d.setDate(d.getDate() - (dow === 0 ? 6 : dow - 1) + weekOffset * 7);
+    d.setHours(0, 0, 0, 0);
+    return d;
+  })();
+
+  const days = Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(weekStart);
+    d.setDate(d.getDate() + i);
+    return d;
+  });
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const eventsByDay = {};
+  events.forEach(e => {
+    const key = new Date(e.start_time).toDateString();
+    if (!eventsByDay[key]) eventsByDay[key] = [];
+    eventsByDay[key].push(e);
+  });
+
+  const monthLabel = (() => {
+    const first = MONTHS_FULL[days[0].getMonth()];
+    const last  = MONTHS_FULL[days[6].getMonth()];
+    const year  = days[6].getFullYear();
+    return first === last ? `${first} ${year}` : `${first} — ${last} ${year}`;
+  })();
+
+  return (
+    <div className="card-white" style={{ padding: '10px 12px', marginBottom: 16 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+        <button onClick={() => setWeekOffset(o => o - 1)} style={{ background: 'none', border: 'none', fontSize: 18, cursor: 'pointer', color: '#555', padding: '0 4px' }}>‹</button>
+        <span style={{ fontSize: 13, fontWeight: 600, color: '#333' }}>{monthLabel}</span>
+        <button onClick={() => setWeekOffset(o => o + 1)} style={{ background: 'none', border: 'none', fontSize: 18, cursor: 'pointer', color: '#555', padding: '0 4px' }}>›</button>
+      </div>
+      <div style={{ display: 'flex', justifyContent: 'space-around' }}>
+        {days.map((d, i) => {
+          const isToday = d.getTime() === today.getTime();
+          const dayEvents = eventsByDay[d.toDateString()] || [];
+          return (
+            <div key={i} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3, minWidth: 0, flex: 1 }}>
+              <span style={{ fontSize: 10, color: '#aaa' }}>{DOW[i]}</span>
+              <div style={{
+                width: 28, height: 28, borderRadius: '50%',
+                background: isToday ? '#111' : 'transparent',
+                color: isToday ? '#fff' : '#222',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: 13, fontWeight: isToday ? 700 : 400,
+              }}>
+                {d.getDate()}
+              </div>
+              <div style={{ display: 'flex', gap: 2, height: 8, alignItems: 'center' }}>
+                {dayEvents.slice(0, 3).map((_, j) => (
+                  <div key={j} style={{ width: 5, height: 5, borderRadius: '50%', background: '#111' }} />
+                ))}
+                {dayEvents.length > 3 && <span style={{ fontSize: 8, color: '#999', lineHeight: 1 }}>+</span>}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function EventCard({ event, userId, onEdit, onPollSent, isAdmin, isPollable }) {
   const start = new Date(event.start_time);
   const [polling, setPolling] = useState(false);
@@ -251,6 +325,8 @@ export default function CalendarView({ userId, isAdmin }) {
           </button>
         ))}
       </div>
+
+      <WeekStrip events={visibleEvents} />
 
       {error && <div className="alert alert-error">{error}</div>}
 
