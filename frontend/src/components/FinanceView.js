@@ -63,8 +63,13 @@ function SplineChart({ data }) {
               </g>
             );
           })}
-          <path d={smoothPath(incPts)} fill="none" stroke="#111" strokeWidth={2} />
-          <path d={smoothPath(expPts)} fill="none" stroke="#bbb" strokeWidth={2} />
+          <path d={`${smoothPath(incPts)} L ${incPts[incPts.length-1].x} ${padT+chartH} L ${padL} ${padT+chartH} Z`} fill="#111" fillOpacity={0.08} stroke="none" />
+          <path d={`${smoothPath(expPts)} L ${expPts[expPts.length-1].x} ${padT+chartH} L ${padL} ${padT+chartH} Z`} fill="#bbb" fillOpacity={0.15} stroke="none" />
+          <path d={smoothPath(incPts)} fill="none" stroke="#111" strokeWidth={1.5} />
+          <path d={smoothPath(expPts)} fill="none" stroke="#bbb" strokeWidth={1.5} />
+          {tooltip && (
+            <line x1={tooltip.x} x2={tooltip.x} y1={padT} y2={padT + chartH} stroke="#ccc" strokeWidth={1} strokeDasharray="3,3" />
+          )}
           {data.map((d, i) => (
             <g key={d.period}
               onMouseEnter={() => setTooltip({ ...d, x: incPts[i].x })}
@@ -73,9 +78,7 @@ function SplineChart({ data }) {
               onTouchEnd={() => setTimeout(() => setTooltip(null), 1500)}
               style={{ cursor: 'pointer' }}
             >
-              <rect x={incPts[i].x - 15} y={padT} width={30} height={chartH} fill="transparent" />
-              <circle cx={incPts[i].x} cy={incPts[i].y} r={3} fill="#111" />
-              <circle cx={expPts[i].x} cy={expPts[i].y} r={3} fill="#bbb" stroke="#fff" strokeWidth={1} />
+              <rect x={incPts[i].x - spacing / 2} y={padT} width={spacing} height={chartH} fill="transparent" />
               {i % labelStep === 0 && (
                 <text x={incPts[i].x} y={h - 6} textAnchor="middle" fontSize={9} fill="#999">
                   {d.period.slice(0, 5)}
@@ -194,6 +197,11 @@ export default function FinanceView({ username }) {
     d.setFullYear(d.getFullYear() - 1);
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
   });
+  const [fromDay, setFromDay] = useState(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 60);
+    return d.toISOString().slice(0, 10);
+  });
 
   useEffect(() => {
     client.get('/api/finance/balance').then(r => setBalance(r.data.balance)).catch(() => {});
@@ -205,11 +213,14 @@ export default function FinanceView({ username }) {
     if (chartPeriod === 'month') {
       const [y, m] = fromMonth.split('-');
       params.from_date = `01.${m}.${y}`;
+    } else {
+      const [y, m, d] = fromDay.split('-');
+      params.from_date = `${d}.${m}.${y}`;
     }
     client.get('/api/finance/chart', { params })
       .then(r => setChartData(r.data.data))
       .catch(() => {});
-  }, [chartPeriod, fromMonth]);
+  }, [chartPeriod, fromMonth, fromDay]);
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
@@ -296,17 +307,16 @@ export default function FinanceView({ username }) {
             ))}
           </div>
         </div>
-        {chartPeriod === 'month' && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, paddingLeft: 8, marginBottom: 10 }}>
-            <span style={{ fontSize: 12, color: '#888' }}>С:</span>
-            <input
-              type="month"
-              value={fromMonth}
-              onChange={e => setFromMonth(e.target.value)}
-              style={{ fontSize: 12, border: '1px solid #ddd', borderRadius: 6, padding: '3px 6px', outline: 'none' }}
-            />
-          </div>
-        )}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, paddingLeft: 8, marginBottom: 10 }}>
+          <span style={{ fontSize: 12, color: '#888' }}>С:</span>
+          {chartPeriod === 'month' ? (
+            <input type="month" value={fromMonth} onChange={e => setFromMonth(e.target.value)}
+              style={{ fontSize: 12, border: '1px solid #ddd', borderRadius: 6, padding: '3px 6px', outline: 'none' }} />
+          ) : (
+            <input type="date" value={fromDay} onChange={e => setFromDay(e.target.value)}
+              style={{ fontSize: 12, border: '1px solid #ddd', borderRadius: 6, padding: '3px 6px', outline: 'none' }} />
+          )}
+        </div>
         {chartData.length === 0 ? (
           <div style={{ textAlign: 'center', color: '#999', fontSize: 13, padding: '20px 0' }}>Нет данных</div>
         ) : chartPeriod === 'day' ? (

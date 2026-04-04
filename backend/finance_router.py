@@ -1,6 +1,6 @@
 import logging
 import os
-from datetime import date
+from datetime import date, timedelta
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -173,11 +173,21 @@ async def get_chart(period: str = "month", from_date: str = None, db: Session = 
             except (ValueError, TypeError):
                 pass
 
-    all_keys = sorted(set(expense_agg) | set(income_agg), key=sort_key)
-
-    # Для дневного режима — последние 60 дней
     if period == "day":
-        all_keys = all_keys[-60:]
+        # Генерируем все дни от from_date (или 60 дней назад) до сегодня
+        if from_date:
+            d_parts = from_date.strip().split(".")
+            start = date(int(d_parts[2]), int(d_parts[1]), int(d_parts[0]))
+        else:
+            start = date.today() - timedelta(days=59)
+        today_date = date.today()
+        all_keys = []
+        cur = start
+        while cur <= today_date:
+            all_keys.append(cur.strftime("%d.%m.%Y"))
+            cur += timedelta(days=1)
+    else:
+        all_keys = sorted(set(expense_agg) | set(income_agg), key=sort_key)
 
     data = [
         {"period": k, "income": round(income_agg[k]), "expense": round(expense_agg[k])}
