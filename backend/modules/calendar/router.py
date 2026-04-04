@@ -43,6 +43,16 @@ def get_google_client():
     return None
 
 
+@router.get("/meta")
+async def get_calendar_meta():
+    """Вернуть ссылку на Google Calendar."""
+    url = None
+    if GOOGLE_CALENDAR_ID:
+        from urllib.parse import quote
+        url = f"https://calendar.google.com/calendar/r?cid={quote(GOOGLE_CALENDAR_ID)}"
+    return {"calendar_url": url}
+
+
 @router.get("/events")
 async def get_events(days: int = 30, db: Session = Depends(get_db)):
     """Получить предстоящие события"""

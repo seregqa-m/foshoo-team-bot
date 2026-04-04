@@ -344,11 +344,16 @@ export default function CalendarView({ userId, isAdmin }) {
   const [modal, setModal] = useState(null); // null | 'new' | event object
   const [filter, setFilter] = useState('труппа 1');
   const [showNames, setShowNames] = useState([]);
+  const [calendarUrl, setCalendarUrl] = useState(null);
 
   useEffect(() => {
     fetch(`${process.env.REACT_APP_API_URL || 'http://127.0.0.1:8000'}/api/sheets/shows`)
       .then(r => r.json())
       .then(data => setShowNames((data.shows || []).map(s => s.toLowerCase())))
+      .catch(() => {});
+    fetch(`${process.env.REACT_APP_API_URL || 'http://127.0.0.1:8000'}/api/calendar/meta`)
+      .then(r => r.json())
+      .then(data => setCalendarUrl(data.calendar_url || null))
       .catch(() => {});
   }, []);
 
@@ -386,7 +391,20 @@ export default function CalendarView({ userId, isAdmin }) {
     <>
       <div className="page-header">
         <div className="page-title">Расписание</div>
-        {isAdmin && <button className="btn btn-primary" onClick={() => setModal('new')}>+ Добавить</button>}
+        <div style={{ display: 'flex', gap: 8 }}>
+          {calendarUrl && (
+            <a
+              href={calendarUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="btn btn-secondary"
+              style={{ fontSize: 13, padding: '6px 10px', textDecoration: 'none' }}
+            >
+              📅 Google
+            </a>
+          )}
+          {isAdmin && <button className="btn btn-primary" onClick={() => setModal('new')}>+ Добавить</button>}
+        </div>
       </div>
 
       <WeekCalendar events={events} showNames={showNames} />
