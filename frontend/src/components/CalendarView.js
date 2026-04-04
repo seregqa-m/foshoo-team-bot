@@ -18,6 +18,13 @@ function toLocalInput(iso) {
 
 const EMPTY_FORM = { title: '', start_time: '', end_time: '', location: '', description: '' };
 
+const FILTERS = [
+  { key: 'all',      label: 'Все' },
+  { key: 'труппа 1', label: 'Труппа 1' },
+  { key: 'труппа 2', label: 'Труппа 2' },
+  { key: 'лаба',     label: 'Лаба' },
+];
+
 function EventCard({ event, userId, onEdit, onPollSent }) {
   const start = new Date(event.start_time);
   const [polling, setPolling] = useState(false);
@@ -176,6 +183,7 @@ export default function CalendarView({ userId }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [modal, setModal] = useState(null); // null | 'new' | event object
+  const [filter, setFilter] = useState('труппа 1');
 
   const fetchEvents = async () => {
     try {
@@ -195,6 +203,10 @@ export default function CalendarView({ userId }) {
   const handleSaved = () => { setModal(null); fetchEvents(); };
   const handleDeleted = () => { setModal(null); fetchEvents(); };
 
+  const visibleEvents = filter === 'all'
+    ? events
+    : events.filter(e => e.title.toLowerCase().includes(filter));
+
   if (loading) return <div className="empty-state">Загрузка...</div>;
 
   return (
@@ -204,12 +216,32 @@ export default function CalendarView({ userId }) {
         <button className="btn btn-primary" onClick={() => setModal('new')}>+ Добавить</button>
       </div>
 
+      <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
+        {FILTERS.map(f => (
+          <button
+            key={f.key}
+            onClick={() => setFilter(f.key)}
+            style={{
+              padding: '4px 12px',
+              borderRadius: 16,
+              border: '1px solid #ccc',
+              background: filter === f.key ? '#111' : '#fff',
+              color: filter === f.key ? '#fff' : '#111',
+              fontSize: 13,
+              cursor: 'pointer',
+            }}
+          >
+            {f.label}
+          </button>
+        ))}
+      </div>
+
       {error && <div className="alert alert-error">{error}</div>}
 
-      {events.length === 0 ? (
+      {visibleEvents.length === 0 ? (
         <div className="empty-state">Нет предстоящих событий</div>
       ) : (
-        events.map(e => (
+        visibleEvents.map(e => (
           <EventCard
             key={e.id}
             event={e}
