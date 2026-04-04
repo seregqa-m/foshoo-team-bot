@@ -192,14 +192,9 @@ export default function FinanceView({ username }) {
   const [success, setSuccess] = useState(null);
   const [chartPeriod, setChartPeriod] = useState('month');
   const [chartData, setChartData] = useState([]);
-  const [fromMonth, setFromMonth] = useState(() => {
+  const [fromDate, setFromDate] = useState(() => {
     const d = new Date();
     d.setFullYear(d.getFullYear() - 1);
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-  });
-  const [fromDay, setFromDay] = useState(() => {
-    const d = new Date();
-    d.setDate(d.getDate() - 60);
     return d.toISOString().slice(0, 10);
   });
 
@@ -209,18 +204,12 @@ export default function FinanceView({ username }) {
   }, []);
 
   useEffect(() => {
-    const params = { period: chartPeriod };
-    if (chartPeriod === 'month') {
-      const [y, m] = fromMonth.split('-');
-      params.from_date = `01.${m}.${y}`;
-    } else {
-      const [y, m, d] = fromDay.split('-');
-      params.from_date = `${d}.${m}.${y}`;
-    }
+    const [y, m, d] = fromDate.split('-');
+    const params = { period: chartPeriod, from_date: `${d}.${m}.${y}` };
     client.get('/api/finance/chart', { params })
       .then(r => setChartData(r.data.data))
       .catch(() => {});
-  }, [chartPeriod, fromMonth, fromDay]);
+  }, [chartPeriod, fromDate]);
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
@@ -309,13 +298,8 @@ export default function FinanceView({ username }) {
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, paddingLeft: 8, marginBottom: 10 }}>
           <span style={{ fontSize: 12, color: '#888' }}>С:</span>
-          {chartPeriod === 'month' ? (
-            <input type="month" value={fromMonth} onChange={e => setFromMonth(e.target.value)}
-              style={{ fontSize: 12, border: '1px solid #ddd', borderRadius: 6, padding: '3px 6px', outline: 'none' }} />
-          ) : (
-            <input type="date" value={fromDay} onChange={e => setFromDay(e.target.value)}
-              style={{ fontSize: 12, border: '1px solid #ddd', borderRadius: 6, padding: '3px 6px', outline: 'none' }} />
-          )}
+          <input type="date" value={fromDate} onChange={e => setFromDate(e.target.value)}
+            style={{ fontSize: 12, border: '1px solid #ddd', borderRadius: 6, padding: '3px 6px', outline: 'none' }} />
         </div>
         {chartData.length === 0 ? (
           <div style={{ textAlign: 'center', color: '#999', fontSize: 13, padding: '20px 0' }}>Нет данных</div>
