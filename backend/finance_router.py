@@ -140,11 +140,15 @@ async def get_chart(period: str = "month", db: Session = Depends(get_db)):
     expense_agg: dict[str, float] = defaultdict(float)
     income_agg: dict[str, float] = defaultdict(float)
 
+    def parse_amount(raw) -> float:
+        s = str(raw).replace("р.", "").replace("₽", "").replace("\xa0", "").replace(" ", "").replace(",", ".")
+        return float(s)
+
     for row in db.query(ExpenseLog).all():
         key = parse_key(row.date)
         if key:
             try:
-                expense_agg[key] += float(str(row.amount).replace(",", "."))
+                expense_agg[key] += parse_amount(row.amount)
             except (ValueError, TypeError):
                 pass
 
@@ -152,7 +156,7 @@ async def get_chart(period: str = "month", db: Session = Depends(get_db)):
         key = parse_key(row.date)
         if key:
             try:
-                income_agg[key] += float(str(row.amount).replace(",", "."))
+                income_agg[key] += parse_amount(row.amount)
             except (ValueError, TypeError):
                 pass
 
