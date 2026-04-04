@@ -135,21 +135,23 @@ class SheetsClient:
 
     def _find_table_header_row(self, sheet_name: str, table_name: str) -> int | None:
         """Найти 1-based строку заголовка именованной таблицы через метаданные Sheets API."""
-        result = self.api.get(
-            spreadsheetId=self.spreadsheet_id,
-            fields="sheets(properties(title),tables(name,range))"
-        ).execute()
-        for sheet in result.get("sheets", []):
-            if sheet["properties"]["title"] != sheet_name:
-                continue
-            for table in sheet.get("tables", []):
-                if table.get("name") == table_name:
-                    # range вида "Финансы!A10:G100"
-                    rng = table.get("range", "")
-                    cell = rng.split("!")[1].split(":")[0] if "!" in rng else rng
-                    # извлечь номер строки из ячейки типа "A10"
-                    row_num = int("".join(c for c in cell if c.isdigit()))
-                    return row_num
+        try:
+            result = self.api.get(
+                spreadsheetId=self.spreadsheet_id,
+                fields="sheets(properties(title),tables(name,range))"
+            ).execute()
+            for sheet in result.get("sheets", []):
+                if sheet["properties"]["title"] != sheet_name:
+                    continue
+                for table in sheet.get("tables", []):
+                    if table.get("name") == table_name:
+                        rng = table.get("range", "")
+                        cell = rng.split("!")[1].split(":")[0] if "!" in rng else rng
+                        digits = "".join(c for c in cell if c.isdigit())
+                        if digits:
+                            return int(digits)
+        except Exception as e:
+            logger.warning(f"Sheets table lookup failed: {e}")
         return None
 
     def _find_header_row(self, col_range: str, search_value: str = "Проект") -> int:
