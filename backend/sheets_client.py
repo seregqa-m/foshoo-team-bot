@@ -125,6 +125,42 @@ class SheetsClient:
     EXPENSE_TYPES = ["Личные траты", "Трата со счета ФоШу", "Пожертвование"]
     PROJECTS = ["Театр", "Любовь Громова", "Урод", "Слепые"]
 
+    def _get_sheet_id(self, sheet_name: str) -> int:
+        """Получить числовой ID листа по имени."""
+        result = self.api.get(spreadsheetId=self.spreadsheet_id).execute()
+        for sheet in result["sheets"]:
+            if sheet["properties"]["title"] == sheet_name:
+                return sheet["properties"]["sheetId"]
+        raise ValueError(f"Sheet '{sheet_name}' not found")
+
+    def _find_header_row(self, col_range: str) -> int:
+        """Найти 1-based номер строки с заголовком 'Проект' в указанном диапазоне."""
+        result = self.api.values().get(
+            spreadsheetId=self.spreadsheet_id,
+            range=col_range,
+        ).execute()
+        for i, row in enumerate(result.get("values", [])):
+            if row and row[0].strip() == "Проект":
+                return i + 1
+        return 1
+
+    def _insert_row_after_header(self, sheet_id: int, header_row_1based: int) -> None:
+        """Вставить пустую строку сразу после заголовка."""
+        self.api.batchUpdate(
+            spreadsheetId=self.spreadsheet_id,
+            body={"requests": [{
+                "insertDimension": {
+                    "range": {
+                        "sheetId": sheet_id,
+                        "dimension": "ROWS",
+                        "startIndex": header_row_1based,   # 0-based = сразу после header
+                        "endIndex": header_row_1based + 1,
+                    },
+                    "inheritFromBefore": False,
+                }
+            }]}
+        ).execute()
+
     def get_balance(self) -> str:
         """Прочитать остаток копилки из ячейки G4."""
         result = self.api.values().get(
@@ -136,25 +172,31 @@ class SheetsClient:
 
     def add_expense(self, project: str, date: str, who: str,
                     amount: str, what: str, expense_type: str, comment: str = "") -> None:
-        """Добавить строку в таблицу Расходы (столбцы A–G)."""
-        self.api.values().append(
+        """Добавить строку в начало таблицы Расходы (столбцы A–G)."""
+        sheet_id = self._get_sheet_id(self.FINANCE_SHEET)
+        header_row = self._find_header_row(f"{self.FINANCE_SHEET}!A:A")
+        self._insert_row_after_header(sheet_id, header_row)
+        new_row = header_row + 1
+        self.api.values().update(
             spreadsheetId=self.spreadsheet_id,
-            range=f"{self.FINANCE_SHEET}!A:G",
+            range=f"{self.FINANCE_SHEET}!A{new_row}:G{new_row}",
             valueInputOption="USER_ENTERED",
-            insertDataOption="INSERT_ROWS",
             body={"values": [[project, date, who, amount, what, expense_type, comment]]},
         ).execute()
         logger.info(f"Sheets: added expense {project} {amount} by {who}")
 
     def add_income(self, project: str, amount: str, what: str, date: str,
                    comment: str = "", income_col_start: str = "O") -> None:
-        """Добавить строку в таблицу Доходы (Проект, Сумма, За что?, Дата, Комментарий)."""
-        end_col = chr(ord(income_col_start) + 4)  # 5 колонок
-        self.api.values().append(
+        """Добавить строку в начало таблицы Доходы (Проект, Сумма, За что?, Дата, Комментарий)."""
+        sheet_id = self._get_sheet_id(self.FINANCE_SHEET)
+        header_row = self._find_header_row(f"{self.FINANCE_SHEET}!O:O")
+        self._insert_row_after_header(sheet_id, header_row)
+        new_row = header_row + 1
+        end_col = chr(ord(income_col_start) + 4)
+        self.api.values().update(
             spreadsheetId=self.spreadsheet_id,
-            range=f"{self.FINANCE_SHEET}!{income_col_start}:{end_col}",
+            range=f"{self.FINANCE_SHEET}!{income_col_start}{new_row}:{end_col}{new_row}",
             valueInputOption="USER_ENTERED",
-            insertDataOption="INSERT_ROWS",
             body={"values": [[project, amount, what, date, comment]]},
         ).execute()
         logger.info(f"Sheets: added income {project} {amount}")
