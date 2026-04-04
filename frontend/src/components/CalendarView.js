@@ -185,10 +185,11 @@ export default function CalendarView({ userId }) {
   const [modal, setModal] = useState(null); // null | 'new' | event object
   const [filter, setFilter] = useState('труппа 1');
 
-  const fetchEvents = async () => {
+  const fetchEvents = async (currentFilter) => {
+    const days = currentFilter === 'all' ? 30 : 60;
     try {
       setLoading(true);
-      const res = await calendarApi.getEvents(90);
+      const res = await calendarApi.getEvents(days);
       setEvents(res.data.events || []);
       setError(null);
     } catch {
@@ -198,10 +199,10 @@ export default function CalendarView({ userId }) {
     }
   };
 
-  useEffect(() => { fetchEvents(); }, []);
+  useEffect(() => { fetchEvents(filter); }, [filter]);
 
-  const handleSaved = () => { setModal(null); fetchEvents(); };
-  const handleDeleted = () => { setModal(null); fetchEvents(); };
+  const handleSaved = () => { setModal(null); fetchEvents(filter); };
+  const handleDeleted = () => { setModal(null); fetchEvents(filter); };
 
   const visibleEvents = filter === 'all'
     ? events
