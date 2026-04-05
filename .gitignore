@@ -48,7 +48,6 @@ yarn-error.log*
 .env
 .env.local
 .env.*.local
-**/.env.example
 
 # Logs
 *.log
