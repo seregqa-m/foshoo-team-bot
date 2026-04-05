@@ -22,6 +22,15 @@ def _parse_amount(s) -> int:
     return round(float(cleaned))
 
 
+def _amt(v) -> int:
+    """Безопасно привести значение из БД к int (защита от строк при смешанных типах)."""
+    if v is None:
+        return 0
+    if isinstance(v, int):
+        return v
+    return _parse_amount(v)
+
+
 def _dmy_to_iso(s: str) -> str:
     """'15.01.2024' → '2024-01-15'"""
     d, m, y = s.strip().split('.')
@@ -157,15 +166,15 @@ async def get_chart(period: str = "month", from_date: str = None, db: Session = 
 
         for row in db.query(IncomeLog).all():
             if row.date and row.amount is not None:
-                income_agg[row.date] += row.amount
+                income_agg[row.date] += _amt(row.amount)
 
         for row in db.query(ExpenseLog).filter(ExpenseLog.expense_type == "Трата со счета ФоШу").all():
             if row.date and row.amount is not None:
-                expense_agg[row.date] += row.amount
+                expense_agg[row.date] += _amt(row.amount)
 
         for row in db.query(ReturnsLog).all():
             if row.date and row.amount is not None:
-                expense_agg[row.date] += row.amount
+                expense_agg[row.date] += _amt(row.amount)
 
         all_dates = set(income_agg) | set(expense_agg)
         if not all_dates:
@@ -214,7 +223,7 @@ async def get_chart(period: str = "month", from_date: str = None, db: Session = 
             continue
         k = month_key(row.date)
         if k and row.amount is not None:
-            income_agg[k] += row.amount
+            income_agg[k] += _amt(row.amount)
 
     for row in db.query(ExpenseLog).all():
         if from_iso and row.date and row.date < from_iso:
@@ -222,21 +231,22 @@ async def get_chart(period: str = "month", from_date: str = None, db: Session = 
         k = month_key(row.date)
         if not k or row.amount is None:
             continue
+        amt = _amt(row.amount)
         if row.expense_type == "Трата со счета ФоШу":
-            exp_foshu[k] += row.amount
+            exp_foshu[k] += amt
         elif row.expense_type == "Личные траты":
-            exp_personal[k] += row.amount
+            exp_personal[k] += amt
         elif row.expense_type in ("Пожертвование", "Пожертвования"):
-            exp_donation[k] += row.amount
+            exp_donation[k] += amt
         else:
-            exp_foshu[k] += row.amount
+            exp_foshu[k] += amt
 
     for row in db.query(ReturnsLog).all():
         if from_iso and row.date and row.date < from_iso:
             continue
         k = month_key(row.date)
         if k and row.amount is not None:
-            exp_foshu[k] += row.amount
+            exp_foshu[k] += _amt(row.amount)
 
     all_keys = sorted(
         set(income_agg) | set(exp_foshu) | set(exp_personal) | set(exp_donation),
