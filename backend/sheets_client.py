@@ -202,38 +202,20 @@ class SheetsClient:
         sheet_id = self._get_sheet_id(self.FINANCE_SHEET)
         header_row = (self._find_table_header_row(self.FINANCE_SHEET, "Расходы")
                       or self._find_header_row(f"{self.FINANCE_SHEET}!C:C", "Кто?"))
+        # Найти первую пустую строку без вставки строк (INSERT_ROWS/insertDimension
+        # сдвигают смежные таблицы на том же листе)
+        existing = self.api.values().get(
+            spreadsheetId=self.spreadsheet_id,
+            range=f"{self.FINANCE_SHEET}!A{header_row + 1}:G1000",
+        ).execute().get("values", [])
+        new_row = header_row + 1 + len(existing)
         row_data = [project, date, who, amount, what, expense_type, comment]
-        inserted = False
-        try:
-            self.api.batchUpdate(
-                spreadsheetId=self.spreadsheet_id,
-                body={"requests": [{
-                    "insertTableRow": {
-                        "tableRange": {"sheetId": sheet_id, "name": "Расходы"},
-                        "rowIndex": 0,
-                        "numberOfRows": 1,
-                    }
-                }]}
-            ).execute()
-            inserted = True
-        except Exception as e:
-            logger.warning(f"insertTableRow (Расходы) failed, using append: {e}")
-        if inserted:
-            new_row = header_row + 1
-            self.api.values().update(
-                spreadsheetId=self.spreadsheet_id,
-                range=f"{self.FINANCE_SHEET}!A{new_row}:G{new_row}",
-                valueInputOption="USER_ENTERED",
-                body={"values": [row_data]},
-            ).execute()
-        else:
-            self.api.values().append(
-                spreadsheetId=self.spreadsheet_id,
-                range=f"{self.FINANCE_SHEET}!A{header_row}:G",
-                valueInputOption="USER_ENTERED",
-                insertDataOption="INSERT_ROWS",
-                body={"values": [row_data]},
-            ).execute()
+        self.api.values().update(
+            spreadsheetId=self.spreadsheet_id,
+            range=f"{self.FINANCE_SHEET}!A{new_row}:G{new_row}",
+            valueInputOption="USER_ENTERED",
+            body={"values": [row_data]},
+        ).execute()
         self._sort_table_by_date(sheet_id, header_row, 0, 7, 1)
         logger.info(f"Sheets: added expense {project} {amount} by {who}")
 
@@ -245,38 +227,19 @@ class SheetsClient:
                       or self._find_header_row(f"{self.FINANCE_SHEET}!Q:Q", "За что?"))
         income_start_idx = ord(income_col_start) - ord("A")  # O=14
         end_col = chr(ord(income_col_start) + 4)
+        # Найти первую пустую строку без вставки строк
+        existing = self.api.values().get(
+            spreadsheetId=self.spreadsheet_id,
+            range=f"{self.FINANCE_SHEET}!{income_col_start}{header_row + 1}:{end_col}1000",
+        ).execute().get("values", [])
+        new_row = header_row + 1 + len(existing)
         row_data = [project, amount, what, date, comment]
-        inserted = False
-        try:
-            self.api.batchUpdate(
-                spreadsheetId=self.spreadsheet_id,
-                body={"requests": [{
-                    "insertTableRow": {
-                        "tableRange": {"sheetId": sheet_id, "name": "Доходы"},
-                        "rowIndex": 0,
-                        "numberOfRows": 1,
-                    }
-                }]}
-            ).execute()
-            inserted = True
-        except Exception as e:
-            logger.warning(f"insertTableRow (Доходы) failed, using append: {e}")
-        if inserted:
-            new_row = header_row + 1
-            self.api.values().update(
-                spreadsheetId=self.spreadsheet_id,
-                range=f"{self.FINANCE_SHEET}!{income_col_start}{new_row}:{end_col}{new_row}",
-                valueInputOption="USER_ENTERED",
-                body={"values": [row_data]},
-            ).execute()
-        else:
-            self.api.values().append(
-                spreadsheetId=self.spreadsheet_id,
-                range=f"{self.FINANCE_SHEET}!{income_col_start}{header_row}:{end_col}",
-                valueInputOption="USER_ENTERED",
-                insertDataOption="INSERT_ROWS",
-                body={"values": [row_data]},
-            ).execute()
+        self.api.values().update(
+            spreadsheetId=self.spreadsheet_id,
+            range=f"{self.FINANCE_SHEET}!{income_col_start}{new_row}:{end_col}{new_row}",
+            valueInputOption="USER_ENTERED",
+            body={"values": [row_data]},
+        ).execute()
         self._sort_table_by_date(sheet_id, header_row,
                                   income_start_idx, income_start_idx + 5,
                                   income_start_idx + 3)
