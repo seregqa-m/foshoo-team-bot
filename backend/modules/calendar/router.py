@@ -216,10 +216,11 @@ async def launch_poll_for_event(
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
 
-    MONTHS_RU = ['янв','фев','мар','апр','май','июн','июл','авг','сен','окт','ноя','дек']
-    DAYS_RU = ['в понедельник','во вторник','в среду','в четверг','в пятницу','в субботу','в воскресенье']
+    from babel.dates import format_date
     dt = event.start_time
-    date_str = f"{DAYS_RU[dt.weekday()]} {dt.day} {MONTHS_RU[dt.month - 1]} в {dt.strftime('%H:%M')}"
+    day_name = format_date(dt, 'EEEE', locale='ru_RU')
+    month_day = format_date(dt, 'd MMM', locale='ru_RU')
+    date_str = f"в {day_name} {month_day} в {dt.strftime('%H:%M')}"
 
     poll_service = PollingService(db)
     poll = poll_service.create_poll(
