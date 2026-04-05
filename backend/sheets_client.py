@@ -198,9 +198,12 @@ class SheetsClient:
 
     def add_expense(self, project: str, date: str, who: str,
                     amount: str, what: str, expense_type: str, comment: str = "") -> None:
-        """Добавить строку в начало таблицы Расходы (столбцы A–G)."""
+        """Добавить строку в таблицу Расходы (столбцы A–G)."""
         sheet_id = self._get_sheet_id(self.FINANCE_SHEET)
-        # Вставить строку внутри именованной таблицы через Tables API
+        header_row = (self._find_table_header_row(self.FINANCE_SHEET, "Расходы")
+                      or self._find_header_row(f"{self.FINANCE_SHEET}!C:C", "Кто?"))
+        row_data = [project, date, who, amount, what, expense_type, comment]
+        inserted = False
         try:
             self.api.batchUpdate(
                 spreadsheetId=self.spreadsheet_id,
@@ -212,25 +215,38 @@ class SheetsClient:
                     }
                 }]}
             ).execute()
+            inserted = True
         except Exception as e:
-            logger.warning(f"insertTableRow failed, fallback to append: {e}")
-        # Записать данные в первую строку данных (после заголовка)
-        header_row = (self._find_table_header_row(self.FINANCE_SHEET, "Расходы")
-                      or self._find_header_row(f"{self.FINANCE_SHEET}!C:C", "Кто?"))
-        new_row = header_row + 1
-        self.api.values().update(
-            spreadsheetId=self.spreadsheet_id,
-            range=f"{self.FINANCE_SHEET}!A{new_row}:G{new_row}",
-            valueInputOption="USER_ENTERED",
-            body={"values": [[project, date, who, amount, what, expense_type, comment]]},
-        ).execute()
+            logger.warning(f"insertTableRow (Расходы) failed, using append: {e}")
+        if inserted:
+            new_row = header_row + 1
+            self.api.values().update(
+                spreadsheetId=self.spreadsheet_id,
+                range=f"{self.FINANCE_SHEET}!A{new_row}:G{new_row}",
+                valueInputOption="USER_ENTERED",
+                body={"values": [row_data]},
+            ).execute()
+        else:
+            self.api.values().append(
+                spreadsheetId=self.spreadsheet_id,
+                range=f"{self.FINANCE_SHEET}!A{header_row}:G",
+                valueInputOption="USER_ENTERED",
+                insertDataOption="INSERT_ROWS",
+                body={"values": [row_data]},
+            ).execute()
         self._sort_table_by_date(sheet_id, header_row, 0, 7, 1)
         logger.info(f"Sheets: added expense {project} {amount} by {who}")
 
     def add_income(self, project: str, amount: str, what: str, date: str,
                    comment: str = "", income_col_start: str = "O") -> None:
-        """Добавить строку в начало таблицы Доходы (Проект, Сумма, За что?, Дата, Комментарий)."""
+        """Добавить строку в таблицу Доходы (Проект, Сумма, За что?, Дата, Комментарий)."""
         sheet_id = self._get_sheet_id(self.FINANCE_SHEET)
+        header_row = (self._find_table_header_row(self.FINANCE_SHEET, "Доходы")
+                      or self._find_header_row(f"{self.FINANCE_SHEET}!Q:Q", "За что?"))
+        income_start_idx = ord(income_col_start) - ord("A")  # O=14
+        end_col = chr(ord(income_col_start) + 4)
+        row_data = [project, amount, what, date, comment]
+        inserted = False
         try:
             self.api.batchUpdate(
                 spreadsheetId=self.spreadsheet_id,
@@ -242,19 +258,25 @@ class SheetsClient:
                     }
                 }]}
             ).execute()
+            inserted = True
         except Exception as e:
-            logger.warning(f"insertTableRow (Доходы) failed, fallback to append: {e}")
-        header_row = (self._find_table_header_row(self.FINANCE_SHEET, "Доходы")
-                      or self._find_header_row(f"{self.FINANCE_SHEET}!Q:Q", "За что?"))
-        new_row = header_row + 1
-        income_start_idx = ord(income_col_start) - ord("A")  # O=14
-        end_col = chr(ord(income_col_start) + 4)
-        self.api.values().update(
-            spreadsheetId=self.spreadsheet_id,
-            range=f"{self.FINANCE_SHEET}!{income_col_start}{new_row}:{end_col}{new_row}",
-            valueInputOption="USER_ENTERED",
-            body={"values": [[project, amount, what, date, comment]]},
-        ).execute()
+            logger.warning(f"insertTableRow (Доходы) failed, using append: {e}")
+        if inserted:
+            new_row = header_row + 1
+            self.api.values().update(
+                spreadsheetId=self.spreadsheet_id,
+                range=f"{self.FINANCE_SHEET}!{income_col_start}{new_row}:{end_col}{new_row}",
+                valueInputOption="USER_ENTERED",
+                body={"values": [row_data]},
+            ).execute()
+        else:
+            self.api.values().append(
+                spreadsheetId=self.spreadsheet_id,
+                range=f"{self.FINANCE_SHEET}!{income_col_start}{header_row}:{end_col}",
+                valueInputOption="USER_ENTERED",
+                insertDataOption="INSERT_ROWS",
+                body={"values": [row_data]},
+            ).execute()
         self._sort_table_by_date(sheet_id, header_row,
                                   income_start_idx, income_start_idx + 5,
                                   income_start_idx + 3)
