@@ -25,7 +25,7 @@ router = APIRouter(prefix="/api/polls", tags=["polls"])
 @router.get("/events-summary")
 async def get_events_poll_summary(db: Session = Depends(get_db)):
     """Последний опрос для каждого события: attending/not_attending counts."""
-    from .models import PollVote
+    from .models import Poll, PollVote
     polls = db.query(Poll).filter(Poll.calendar_event_id.isnot(None)).order_by(Poll.created_at.desc()).all()
     seen = set()
     summary = {}
