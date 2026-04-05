@@ -42,8 +42,14 @@ function App() {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100vh', fontFamily: 'sans-serif', textAlign: 'center', padding: '0 32px' }}>
         <div style={{ fontSize: 48, marginBottom: 16 }}>🎭</div>
-        <div style={{ fontSize: 18, fontWeight: 600, marginBottom: 8 }}>Доступ закрыт</div>
-        <div style={{ fontSize: 14, color: '#666' }}>Это приложение только для участников студии</div>
+        <div style={{ fontSize: 18, fontWeight: 600, marginBottom: 12 }}>Театр-студия FoShoo</div>
+        <div style={{ fontSize: 14, color: '#444', marginBottom: 20, lineHeight: 1.5 }}>
+          Это приложение театра-студии FoShoo.<br />Приходите к нам на спектакли:
+        </div>
+        <a href="https://foshoo-theatre.ru/" target="_blank" rel="noopener noreferrer"
+           style={{ fontSize: 15, color: '#5a0000', fontWeight: 600, textDecoration: 'none', borderBottom: '1px solid #5a0000' }}>
+          foshoo-theatre.ru
+        </a>
       </div>
     );
   }
