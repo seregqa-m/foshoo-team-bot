@@ -231,6 +231,13 @@ async def get_chart(period: str = "month", from_date: str = None, db: Session = 
         else:
             exp_foshu[k] += row.amount
 
+    for row in db.query(ReturnsLog).all():
+        if from_iso and row.date and row.date < from_iso:
+            continue
+        k = month_key(row.date)
+        if k and row.amount is not None:
+            exp_foshu[k] += row.amount
+
     all_keys = sorted(
         set(income_agg) | set(exp_foshu) | set(exp_personal) | set(exp_donation),
         key=month_sort

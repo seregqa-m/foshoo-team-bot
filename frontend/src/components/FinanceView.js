@@ -181,8 +181,8 @@ function SimpleBarChart({ data }) {
               >
                 <rect x={x} y={bottom - ih} width={barW} height={ih} fill="#111" rx={2} />
                 {donation > 0 && <rect x={x + barW + gap} y={bottom - fH - pH - dH} width={barW} height={Math.max(1, dH)} fill="#ddd" rx={2} />}
-                {personal > 0 && <rect x={x + barW + gap} y={bottom - fH - pH} width={barW} height={Math.max(1, pH)} fill="#e57373" rx={donation > 0 ? 0 : 2} />}
-                {foshu > 0 && <rect x={x + barW + gap} y={bottom - fH} width={barW} height={Math.max(1, fH)} fill="#8B0000" rx={personal > 0 || donation > 0 ? 0 : 2} />}
+                {personal > 0 && <rect x={x + barW + gap} y={bottom - fH - pH} width={barW} height={Math.max(1, pH)} fill="#e8c4c4" rx={donation > 0 ? 0 : 2} />}
+                {foshu > 0 && <rect x={x + barW + gap} y={bottom - fH} width={barW} height={Math.max(1, fH)} fill="#5a0000" rx={personal > 0 || donation > 0 ? 0 : 2} />}
                 {i % Math.ceil(data.length / 6) === 0 && (
                   <text x={x + groupW / 2} y={h - 6} textAnchor="middle" fontSize={9} fill="#999">
                     {d.period.length > 7 ? d.period.slice(0, 5) : d.period}
@@ -194,7 +194,7 @@ function SimpleBarChart({ data }) {
         </svg>
       </div>
       <div style={{ display: 'flex', gap: 10, paddingLeft: padL, marginTop: 4, flexWrap: 'wrap' }}>
-        {[['#111', 'Доход'], ['#8B0000', 'ФоШу'], ['#e57373', 'Личные'], ['#ddd', 'Пожертвования']].map(([c, label]) => (
+        {[['#111', 'Доход'], ['#5a0000', 'ФоШу'], ['#e8c4c4', 'Личные'], ['#ddd', 'Пожертвования']].map(([c, label]) => (
           <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: '#666' }}>
             <div style={{ width: 10, height: 10, background: c, borderRadius: 2, border: c === '#ddd' ? '1px solid #bbb' : 'none' }} /> {label}
           </div>
@@ -391,7 +391,7 @@ export default function FinanceView({ username }) {
                 <div style={{ fontSize: 13, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                   {tx.what}
                 </div>
-                <div style={{ fontSize: 11, color: '#999' }}>{tx.date} · {tx.project}</div>
+                <div style={{ fontSize: 11, color: '#999' }}>{tx.date} · {tx.type === 'expense' ? (tx.who || tx.project) : tx.project}</div>
               </div>
               <div style={{ fontSize: 13, fontWeight: 600, flexShrink: 0 }}>
                 {tx.type === 'income' ? '+' : '−'}{(() => {
