@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import * as calendarApi from '../api/calendar';
+import client from '../api/client';
 
 const MONTHS = ['янв','фев','мар','апр','май','июн','июл','авг','сен','окт','ноя','дек'];
 const DAYS   = ['вс','пн','вт','ср','чт','пт','сб'];
@@ -182,10 +183,9 @@ function WeekCalendar({ events, showNames }) {
   );
 }
 
-function EventCard({ event, userId, onEdit, onPollSent, isAdmin, isPollable }) {
+function EventCard({ event, userId, onEdit, isAdmin, isPollable, poll, onPollAction }) {
   const start = new Date(event.start_time);
   const [polling, setPolling] = useState(false);
-  const [pollDone, setPollDone] = useState(false);
   const [pollError, setPollError] = useState(null);
 
   const handlePoll = async () => {
@@ -194,12 +194,29 @@ function EventCard({ event, userId, onEdit, onPollSent, isAdmin, isPollable }) {
       setPolling(true);
       setPollError(null);
       await calendarApi.launchPoll(event.id, userId);
-      setPollDone(true);
-      onPollSent && onPollSent();
+      onPollAction && onPollAction();
     } catch (e) {
       setPollError(e.response?.data?.detail || 'Ошибка');
     } finally {
       setPolling(false);
+    }
+  };
+
+  const handlePin = async () => {
+    try {
+      await client.post(`/api/polls/${poll.poll_id}/pin`);
+    } catch (e) {
+      alert(e.response?.data?.detail || 'Ошибка закрепления');
+    }
+  };
+
+  const handleDeletePoll = async () => {
+    if (!window.confirm('Удалить опрос?')) return;
+    try {
+      await client.delete(`/api/polls/${poll.poll_id}`);
+      onPollAction && onPollAction();
+    } catch (e) {
+      alert(e.response?.data?.detail || 'Ошибка');
     }
   };
 
@@ -217,16 +234,26 @@ function EventCard({ event, userId, onEdit, onPollSent, isAdmin, isPollable }) {
           {event.location ? `  📍 ${event.location}` : ''}
         </div>
         {pollError && <div style={{ fontSize: 12, color: 'var(--danger)', marginBottom: 8 }}>{pollError}</div>}
-        <div className="event-actions">
+        <div className="event-actions" style={{ flexWrap: 'wrap', gap: 6 }}>
           {isAdmin && <button className="btn btn-secondary" onClick={() => onEdit(event)}>✏️ Ред.</button>}
           {isPollable && (
-            <button
-              className={`btn ${pollDone ? 'btn-success' : 'btn-secondary'}`}
-              onClick={handlePoll}
-              disabled={polling || pollDone}
-            >
-              {polling ? '⌛' : pollDone ? '✅ Отправлен' : '🗳️ Опрос'}
+            <button className="btn btn-secondary" onClick={handlePoll} disabled={polling}>
+              {polling ? '⌛' : '🗳️ Опрос'}
             </button>
+          )}
+          {poll && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginLeft: 2 }}>
+              <span style={{ border: '2px solid #22c55e', borderRadius: 7, padding: '1px 7px', fontWeight: 700, fontSize: 13 }}>
+                {poll.attending}
+              </span>
+              <span style={{ border: '2px solid #ef4444', borderRadius: 7, padding: '1px 7px', fontWeight: 700, fontSize: 13 }}>
+                {poll.not_attending}
+              </span>
+              {poll.telegram_message_id && (
+                <button onClick={handlePin} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 15, padding: '0 2px', lineHeight: 1 }}>📌</button>
+              )}
+              <button onClick={handleDeletePoll} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 18, color: '#ccc', padding: '0 2px', lineHeight: 1 }}>×</button>
+            </div>
           )}
         </div>
       </div>
@@ -345,6 +372,7 @@ export default function CalendarView({ userId, isAdmin }) {
   const [filter, setFilter] = useState('труппа 1');
   const [showNames, setShowNames] = useState([]);
   const [calendarUrl, setCalendarUrl] = useState(null);
+  const [pollSummary, setPollSummary] = useState({});
 
   useEffect(() => {
     fetch(`${process.env.REACT_APP_API_URL || 'http://127.0.0.1:8000'}/api/sheets/shows`)
@@ -357,11 +385,10 @@ export default function CalendarView({ userId, isAdmin }) {
       .catch(() => {});
   }, []);
 
-  const fetchEvents = async (currentFilter) => {
-    const days = 60;
+  const fetchEvents = async () => {
     try {
       setLoading(true);
-      const res = await calendarApi.getEvents(days);
+      const res = await calendarApi.getEvents(60);
       setEvents(res.data.events || []);
       setError(null);
     } catch {
@@ -371,10 +398,16 @@ export default function CalendarView({ userId, isAdmin }) {
     }
   };
 
-  useEffect(() => { fetchEvents(filter); }, [filter]);
+  const fetchPollSummary = () => {
+    client.get('/api/polls/events-summary')
+      .then(r => setPollSummary(r.data.summary || {}))
+      .catch(() => {});
+  };
 
-  const handleSaved = () => { setModal(null); fetchEvents(filter); };
-  const handleDeleted = () => { setModal(null); fetchEvents(filter); };
+  useEffect(() => { fetchEvents(); fetchPollSummary(); }, []);
+
+  const handleSaved = () => { setModal(null); fetchEvents(); };
+  const handleDeleted = () => { setModal(null); fetchEvents(); };
 
   const visibleEvents = filter === 'all'
     ? events
@@ -441,9 +474,10 @@ export default function CalendarView({ userId, isAdmin }) {
               event={e}
               userId={userId}
               onEdit={setModal}
-              onPollSent={fetchEvents}
               isAdmin={isAdmin}
               isPollable={isT1 && !isPerformance}
+              poll={pollSummary[String(e.id)]}
+              onPollAction={fetchPollSummary}
             />
           );
         })

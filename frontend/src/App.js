@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import './index.css';
 import CalendarView from './components/CalendarView';
-import PollingView from './components/PollingView';
 import NotificationsView from './components/NotificationsView';
 import FinanceView from './components/FinanceView';
 import LinksView from './components/LinksView';
@@ -53,7 +52,6 @@ function App() {
     <div className="app">
       <main className="content">
         {activeTab === 'calendar' && <CalendarView userId={userId} isAdmin={isAdmin} />}
-        {activeTab === 'polling' && <PollingView userId={userId} />}
         {activeTab === 'finance' && <FinanceView username={username} />}
         {activeTab === 'links' && <LinksView />}
         {activeTab === 'notifications' && <NotificationsView userId={userId} />}
@@ -65,12 +63,6 @@ function App() {
           onClick={() => setActiveTab('calendar')}
         >
           📅<span>Расписание</span>
-        </button>
-        <button
-          className={activeTab === 'polling' ? 'active' : ''}
-          onClick={() => setActiveTab('polling')}
-        >
-          🗳️<span>Опросы</span>
         </button>
         <button
           className={activeTab === 'finance' ? 'active' : ''}

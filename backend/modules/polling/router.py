@@ -22,6 +22,28 @@ class VoteRequest(BaseModel):
 router = APIRouter(prefix="/api/polls", tags=["polls"])
 
 
+@router.get("/events-summary")
+async def get_events_poll_summary(db: Session = Depends(get_db)):
+    """Последний опрос для каждого события: attending/not_attending counts."""
+    from .models import PollVote
+    polls = db.query(Poll).filter(Poll.calendar_event_id.isnot(None)).order_by(Poll.created_at.desc()).all()
+    seen = set()
+    summary = {}
+    for poll in polls:
+        eid = poll.calendar_event_id
+        if eid in seen:
+            continue
+        seen.add(eid)
+        votes = db.query(PollVote).filter(PollVote.poll_id == poll.id).all()
+        summary[str(eid)] = {
+            "poll_id": poll.id,
+            "attending": sum(1 for v in votes if v.answer == "yes"),
+            "not_attending": sum(1 for v in votes if v.answer == "no"),
+            "telegram_message_id": poll.telegram_message_id,
+        }
+    return {"summary": summary}
+
+
 @router.get("/all")
 async def get_all_polls(db: Session = Depends(get_db)):
     """Все опросы с результатами голосования"""
