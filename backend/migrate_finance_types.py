@@ -35,7 +35,12 @@ def to_iso(s) -> str | None:
 
 
 if __name__ == "__main__":
+    from sqlalchemy import text
+    from core.database import engine
+
     init_db()
+
+    # Шаг 1: через ORM — конвертируем сложные строки вида "р.30 000,00" и даты DD.MM.YYYY
     db = SessionLocal()
     changed = 0
     errors = 0
@@ -57,4 +62,17 @@ if __name__ == "__main__":
 
     db.commit()
     db.close()
-    print(f"Готово: {changed} значений конвертировано, ошибок: {errors}")
+    print(f"ORM: {changed} значений конвертировано, ошибок: {errors}")
+
+    # Шаг 2: через raw SQL — принудительно приводим TEXT "30000" → INTEGER
+    # (SQLAlchemy читает их как int, поэтому ORM их не трогает)
+    sql_changed = 0
+    with engine.connect() as conn:
+        for table in ['expense_log', 'income_log', 'returns_log']:
+            result = conn.execute(text(
+                f"UPDATE {table} SET amount = CAST(amount AS INTEGER) WHERE typeof(amount) = 'text'"
+            ))
+            sql_changed += result.rowcount
+        conn.commit()
+    print(f"SQL: {sql_changed} текстовых amount приведено к INTEGER")
+    print("Готово.")
