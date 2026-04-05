@@ -348,7 +348,7 @@ export default function FinanceView({ username }) {
                 background: chartPeriod === p ? '#111' : '#fff',
                 color: chartPeriod === p ? '#fff' : '#444', cursor: 'pointer',
               }}>
-                {p === 'month' ? 'Месяцы' : 'Дни'}
+                {p === 'month' ? 'Месяцы' : 'История'}
               </button>
             ))}
           </div>

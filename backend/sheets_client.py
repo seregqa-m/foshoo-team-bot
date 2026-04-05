@@ -329,6 +329,14 @@ class SheetsClient:
             logger.warning("Возвраты table not found in sheet metadata")
             return []
 
+        # API может вернуть GridRange dict вместо A1-строки
+        if isinstance(table_range, dict):
+            sr = table_range.get('startRowIndex', 0) + 1
+            er = table_range.get('endRowIndex', 1000)
+            sc = _col_num_to_letter(table_range.get('startColumnIndex', 0) + 1)
+            ec = _col_num_to_letter(table_range.get('endColumnIndex', 1))
+            table_range = f"{self.FINANCE_SHEET}!{sc}{sr}:{ec}{er}"
+
         rows = self.api.values().get(
             spreadsheetId=self.spreadsheet_id,
             range=table_range,
