@@ -8,9 +8,9 @@ class ExpenseLog(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     project = Column(String)
-    date = Column(String)       # dd.mm.yyyy как в таблице
+    date = Column(String)       # ISO: YYYY-MM-DD
     who = Column(String)
-    amount = Column(String)
+    amount = Column(Integer)    # рублей, целое
     what = Column(String)
     expense_type = Column(String)
     comment = Column(String, nullable=True)
@@ -22,9 +22,9 @@ class IncomeLog(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     project = Column(String)
-    amount = Column(String)
+    amount = Column(Integer)    # рублей, целое
     what = Column(String)
-    date = Column(String)       # dd.mm.yyyy
+    date = Column(String)       # ISO: YYYY-MM-DD
     comment = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -36,6 +36,6 @@ class ReturnsLog(Base):
     id = Column(Integer, primary_key=True, index=True)
     project = Column(String)   # Откуда
     who = Column(String)       # Кому
-    amount = Column(String)    # Сколько
-    date = Column(String)      # dd.mm.yyyy
+    amount = Column(Integer)   # рублей, целое
+    date = Column(String)      # ISO: YYYY-MM-DD
     created_at = Column(DateTime, default=datetime.utcnow)

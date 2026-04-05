@@ -46,6 +46,7 @@ app.add_middleware(
 )
 
 
+
 def run_migrations():
     """Добавить новые колонки если их нет (идемпотентно)"""
     from sqlalchemy import text

@@ -18,6 +18,16 @@ from config import GOOGLE_CALENDAR_JSON, GOOGLE_SHEETS_ID
 from sheets_client import SheetsClient
 
 
+def _parse_amount(s) -> int:
+    cleaned = str(s).replace('р.', '').replace('₽', '').replace('\xa0', '').replace(' ', '').replace(',', '.')
+    return round(float(cleaned))
+
+
+def _dmy_to_iso(s: str) -> str:
+    d, m, y = s.strip().split('.')
+    return f"{y}-{m.zfill(2)}-{d.zfill(2)}"
+
+
 def import_expenses(client: SheetsClient, db):
     result = client.api.values().get(
         spreadsheetId=client.spreadsheet_id,
@@ -33,7 +43,7 @@ def import_expenses(client: SheetsClient, db):
             continue  # заголовок
 
         project  = row[0].strip() if len(row) > 0 else ""
-        date     = row[1].strip() if len(row) > 1 else ""
+        date_str = row[1].strip() if len(row) > 1 else ""
         who      = row[2].strip() if len(row) > 2 else ""
         amount   = row[3].strip() if len(row) > 3 else ""
         what     = row[4].strip() if len(row) > 4 else ""
@@ -43,9 +53,20 @@ def import_expenses(client: SheetsClient, db):
         if not project or not amount:
             continue
 
+        try:
+            amount_int = _parse_amount(amount)
+        except Exception:
+            print(f"  skip expense (bad amount): {amount!r}")
+            continue
+
+        try:
+            date_iso = _dmy_to_iso(date_str) if date_str else None
+        except Exception:
+            date_iso = None
+
         db.add(ExpenseLog(
-            project=project, date=date, who=who, amount=amount,
-            what=what, expense_type=etype, comment=comment,
+            project=project, date=date_iso, who=who,
+            amount=amount_int, what=what, expense_type=etype, comment=comment,
         ))
         count += 1
 
@@ -70,15 +91,26 @@ def import_income(client: SheetsClient, db):
         project = row[0].strip() if len(row) > 0 else ""
         amount  = row[1].strip() if len(row) > 1 else ""
         what    = row[2].strip() if len(row) > 2 else ""
-        date    = row[3].strip() if len(row) > 3 else ""
+        date_str = row[3].strip() if len(row) > 3 else ""
         comment = row[4].strip() if len(row) > 4 else ""
 
         if not project or not amount:
             continue
 
+        try:
+            amount_int = _parse_amount(amount)
+        except Exception:
+            print(f"  skip income (bad amount): {amount!r}")
+            continue
+
+        try:
+            date_iso = _dmy_to_iso(date_str) if date_str else None
+        except Exception:
+            date_iso = None
+
         db.add(IncomeLog(
-            project=project, amount=amount, what=what,
-            date=date, comment=comment,
+            project=project, amount=amount_int, what=what,
+            date=date_iso, comment=comment,
         ))
         count += 1
 
@@ -90,7 +122,18 @@ def import_returns(client: SheetsClient, db):
     rows = client.get_returns()
     count = 0
     for r in rows:
-        db.add(ReturnsLog(project=r["project"], who=r["who"], amount=r["amount"], date=r["date"]))
+        try:
+            amount_int = _parse_amount(r["amount"]) if r["amount"] else 0
+        except Exception:
+            amount_int = 0
+        try:
+            date_iso = _dmy_to_iso(r["date"]) if r["date"] else None
+        except Exception:
+            date_iso = None
+        db.add(ReturnsLog(
+            project=r["project"], who=r["who"],
+            amount=amount_int, date=date_iso,
+        ))
         count += 1
     db.commit()
     print(f"Импортировано возвратов: {count}")
