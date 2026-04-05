@@ -43,7 +43,7 @@ function getEventColor(title, showNames) {
   return '#D1D5DB';
 }
 
-function WeekCalendar({ events, showNames }) {
+function WeekCalendar({ events, showNames, onEventClick, onSlotClick }) {
   const [weekOffset, setWeekOffset] = useState(0);
   const [tooltip, setTooltip] = useState(null);
 
@@ -81,6 +81,20 @@ function WeekCalendar({ events, showNames }) {
 
   const fmt = dt => `${String(dt.getHours()).padStart(2,'0')}:${String(dt.getMinutes()).padStart(2,'0')}`;
 
+  const handleSvgClick = (evt) => {
+    if (!onSlotClick) return;
+    const rect = evt.currentTarget.getBoundingClientRect();
+    const x = evt.clientX - rect.left;
+    const y = evt.clientY - rect.top;
+    if (x < LABEL_W || y < HEADER_H) return;
+    const dayIdx = Math.floor((x - LABEL_W) / colW);
+    if (dayIdx < 0 || dayIdx >= 7) return;
+    const hour = Math.min(HOUR_START + Math.floor((y - HEADER_H) / HOUR_H), HOUR_END - 1);
+    const d = new Date(days[dayIdx]);
+    d.setHours(hour, 0, 0, 0);
+    onSlotClick(d);
+  };
+
   const weekEvents = events.filter(e => {
     const d = new Date(e.start_time); d.setHours(0,0,0,0);
     return d >= days[0] && d <= days[6];
@@ -116,7 +130,7 @@ function WeekCalendar({ events, showNames }) {
           </div>
         )}
         <div style={{ overflowY: 'auto', overflowX: 'hidden', maxHeight: 360 }}>
-          <svg width={totalW} height={svgH} style={{ display: 'block' }}>
+          <svg width={totalW} height={svgH} style={{ display: 'block' }} onClick={handleSvgClick}>
             {/* Column backgrounds + day headers */}
             {days.map((d, i) => {
               const isToday = d.getTime() === today.getTime();
@@ -169,6 +183,7 @@ function WeekCalendar({ events, showNames }) {
                   onMouseLeave={() => setTooltip(null)}
                   onTouchStart={() => setTooltip({ title: e.title, time: `${fmt(startDt)}–${fmt(endDt)}`, x: x + w/2, y: y1 })}
                   onTouchEnd={() => setTimeout(() => setTooltip(null), 2000)}
+                  onClick={(evt) => { evt.stopPropagation(); onEventClick && onEventClick(e); }}
                 />
               );
             })}
@@ -261,12 +276,14 @@ function EventCard({ event, userId, onEdit, isAdmin, isPollable, poll, onPollAct
           )}
           {poll && (
             <>
-              <span style={{ border: '2px solid #22c55e', borderRadius: 7, padding: '2px 7px', fontWeight: 700, fontSize: 13 }}>
-                {poll.attending}
-              </span>
-              <span style={{ border: '2px solid #ef4444', borderRadius: 7, padding: '2px 7px', fontWeight: 700, fontSize: 13 }}>
-                {poll.not_attending}
-              </span>
+              <span
+                style={{ border: '2px solid #22c55e', borderRadius: 7, padding: '2px 7px', fontWeight: 700, fontSize: 13, cursor: poll.tg_link ? 'pointer' : 'default' }}
+                onClick={() => poll.tg_link && (window.Telegram?.WebApp?.openLink ? window.Telegram.WebApp.openLink(poll.tg_link) : window.open(poll.tg_link, '_blank'))}
+              >{poll.attending}</span>
+              <span
+                style={{ border: '2px solid #ef4444', borderRadius: 7, padding: '2px 7px', fontWeight: 700, fontSize: 13, cursor: poll.tg_link ? 'pointer' : 'default' }}
+                onClick={() => poll.tg_link && (window.Telegram?.WebApp?.openLink ? window.Telegram.WebApp.openLink(poll.tg_link) : window.open(poll.tg_link, '_blank'))}
+              >{poll.not_attending}</span>
               {poll.telegram_message_id && (
                 <button onClick={handlePin} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 15, padding: '0 2px', lineHeight: 1 }}>📌</button>
               )}
@@ -284,7 +301,7 @@ function EventModal({ event, onClose, onSaved, onDeleted }) {
   const [form, setForm] = useState(
     isEdit
       ? { ...event, start_time: toLocalInput(event.start_time), end_time: toLocalInput(event.end_time) }
-      : { ...EMPTY_FORM }
+      : { ...EMPTY_FORM, ...(event?.start_time ? { start_time: event.start_time, end_time: event.end_time } : {}) }
   );
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -427,6 +444,14 @@ export default function CalendarView({ userId, isAdmin }) {
   const handleSaved = () => { setModal(null); fetchEvents(); };
   const handleDeleted = () => { setModal(null); fetchEvents(); };
 
+  const handleSlotClick = (dt) => {
+    if (!isAdmin) return;
+    const pad = n => String(n).padStart(2, '0');
+    const fmtDt = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:00`;
+    const end = new Date(dt.getTime() + 2 * 3600000);
+    setModal({ start_time: fmtDt(dt), end_time: fmtDt(end) });
+  };
+
   const visibleEvents = filter === 'all'
     ? events
     : filter === 'труппа 1'
@@ -458,7 +483,12 @@ export default function CalendarView({ userId, isAdmin }) {
         </div>
       </div>
 
-      <WeekCalendar events={events} showNames={showNames} />
+      <WeekCalendar
+        events={events}
+        showNames={showNames}
+        onEventClick={isAdmin ? (e) => setModal(e) : null}
+        onSlotClick={handleSlotClick}
+      />
 
       <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
         {FILTERS.map(f => (

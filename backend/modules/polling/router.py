@@ -35,12 +35,21 @@ async def get_events_poll_summary(db: Session = Depends(get_db)):
             continue
         seen.add(eid)
         votes = db.query(PollVote).filter(PollVote.poll_id == poll.id).all()
+        tg_link = None
+        if poll.telegram_message_id:
+            from config import GROUP_CHAT_ID
+            if GROUP_CHAT_ID:
+                cid = str(abs(GROUP_CHAT_ID))
+                if cid.startswith('100'):
+                    cid = cid[3:]
+                tg_link = f"https://t.me/c/{cid}/{poll.telegram_message_id}"
         summary[str(eid)] = {
             "poll_id": poll.id,
             "attending": sum(1 for v in votes if v.answer == "yes"),
             "not_attending": sum(1 for v in votes if v.answer == "no"),
             "telegram_message_id": poll.telegram_message_id,
             "created_at": poll.created_at.isoformat() if poll.created_at else None,
+            "tg_link": tg_link,
         }
     return {"summary": summary}
 
