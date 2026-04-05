@@ -120,13 +120,16 @@ function SimpleBarChart({ data }) {
   const [tooltip, setTooltip] = useState(null);
   const h = 160, padL = 36, padB = 28, padT = 8, padR = 8;
   const totalW = window.innerWidth - 32;
-  const max = Math.max(...data.flatMap(d => [d.income, d.expense]), 1);
+  const max = Math.max(...data.map(d => Math.max(
+    d.income,
+    (d.expense_foshu || 0) + (d.expense_personal || 0) + (d.expense_donation || 0)
+  )), 1);
   const innerW = totalW - padL - padR;
   const groupW = innerW / data.length;
-  const barW = Math.max(3, Math.min(12, Math.floor(groupW * 0.3)));
-  const gap = Math.max(1, Math.floor(groupW * 0.08));
+  const barW = Math.max(3, Math.min(12, Math.floor(groupW * 0.35)));
+  const gap = Math.max(1, Math.floor(groupW * 0.1));
   const chartH = h - padT - padB;
-  const fy = v => padT + chartH - (v / max) * chartH;
+  const bottom = padT + chartH;
 
   return (
     <div style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
@@ -134,18 +137,19 @@ function SimpleBarChart({ data }) {
         {tooltip && (
           <div style={{
             position: 'absolute', top: 0,
-            left: tooltip.x > totalW * 0.7 ? 'auto' : Math.max(0, tooltip.x - 60),
+            left: tooltip.x > totalW * 0.7 ? 'auto' : Math.max(0, tooltip.x - 70),
             right: tooltip.x > totalW * 0.7 ? (totalW - tooltip.x - 10) : 'auto',
             background: '#111', color: '#fff', borderRadius: 6, padding: '4px 8px',
             fontSize: 11, pointerEvents: 'none', whiteSpace: 'nowrap', zIndex: 10,
           }}>
             <div style={{ fontWeight: 600, marginBottom: 2 }}>{tooltip.period}</div>
-            <div>Доход: {tooltip.income.toLocaleString('ru')} ₽</div>
-            <div>Расход: {tooltip.expense.toLocaleString('ru')} ₽</div>
+            <div>Доход: {(tooltip.income || 0).toLocaleString('ru')} ₽</div>
+            {(tooltip.expense_foshu || 0) > 0 && <div>ФоШу: {tooltip.expense_foshu.toLocaleString('ru')} ₽</div>}
+            {(tooltip.expense_personal || 0) > 0 && <div>Личные: {tooltip.expense_personal.toLocaleString('ru')} ₽</div>}
+            {(tooltip.expense_donation || 0) > 0 && <div>Пожертв.: {tooltip.expense_donation.toLocaleString('ru')} ₽</div>}
           </div>
         )}
         <svg width={totalW} height={h}>
-          {/* Y-axis */}
           {[0, 0.5, 1].map(t => {
             const y = padT + chartH * (1 - t);
             const val = max * t;
@@ -158,11 +162,15 @@ function SimpleBarChart({ data }) {
               </g>
             );
           })}
-          {/* Bars */}
           {data.map((d, i) => {
+            const foshu = d.expense_foshu || 0;
+            const personal = d.expense_personal || 0;
+            const donation = d.expense_donation || 0;
             const x = padL + i * groupW;
             const ih = Math.max(2, (d.income / max) * chartH);
-            const eh = Math.max(2, (d.expense / max) * chartH);
+            const fH = (foshu / max) * chartH;
+            const pH = (personal / max) * chartH;
+            const dH = (donation / max) * chartH;
             return (
               <g key={d.period}
                 onMouseEnter={() => setTooltip({ ...d, x: x + groupW / 2 })}
@@ -171,8 +179,10 @@ function SimpleBarChart({ data }) {
                 onTouchEnd={() => setTimeout(() => setTooltip(null), 1500)}
                 style={{ cursor: 'pointer' }}
               >
-                <rect x={x} y={fy(d.income)} width={barW} height={ih} fill="#111" rx={2} />
-                <rect x={x + barW + gap} y={fy(d.expense)} width={barW} height={eh} fill="#ccc" rx={2} />
+                <rect x={x} y={bottom - ih} width={barW} height={ih} fill="#111" rx={2} />
+                {donation > 0 && <rect x={x + barW + gap} y={bottom - fH - pH - dH} width={barW} height={Math.max(1, dH)} fill="#ddd" rx={2} />}
+                {personal > 0 && <rect x={x + barW + gap} y={bottom - fH - pH} width={barW} height={Math.max(1, pH)} fill="#e57373" rx={donation > 0 ? 0 : 2} />}
+                {foshu > 0 && <rect x={x + barW + gap} y={bottom - fH} width={barW} height={Math.max(1, fH)} fill="#8B0000" rx={personal > 0 || donation > 0 ? 0 : 2} />}
                 {i % Math.ceil(data.length / 6) === 0 && (
                   <text x={x + groupW / 2} y={h - 6} textAnchor="middle" fontSize={9} fill="#999">
                     {d.period.length > 7 ? d.period.slice(0, 5) : d.period}
@@ -183,13 +193,12 @@ function SimpleBarChart({ data }) {
           })}
         </svg>
       </div>
-      <div style={{ display: 'flex', gap: 12, paddingLeft: padL, marginTop: 4 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: '#666' }}>
-          <div style={{ width: 10, height: 10, background: '#111', borderRadius: 2 }} /> Доход
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: '#666' }}>
-          <div style={{ width: 10, height: 10, background: '#ccc', borderRadius: 2 }} /> Расход
-        </div>
+      <div style={{ display: 'flex', gap: 10, paddingLeft: padL, marginTop: 4, flexWrap: 'wrap' }}>
+        {[['#111', 'Доход'], ['#8B0000', 'ФоШу'], ['#e57373', 'Личные'], ['#ddd', 'Пожертвования']].map(([c, label]) => (
+          <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: '#666' }}>
+            <div style={{ width: 10, height: 10, background: c, borderRadius: 2, border: c === '#ddd' ? '1px solid #bbb' : 'none' }} /> {label}
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -344,11 +353,13 @@ export default function FinanceView({ username }) {
             ))}
           </div>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, paddingLeft: 8, marginBottom: 10 }}>
-          <span style={{ fontSize: 12, color: '#888' }}>С:</span>
-          <input type="date" value={fromDate} onChange={e => setFromDate(e.target.value)}
-            style={{ fontSize: 12, border: '1px solid #ddd', borderRadius: 6, padding: '3px 6px', outline: 'none' }} />
-        </div>
+        {chartPeriod === 'month' && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, paddingLeft: 8, marginBottom: 10 }}>
+            <span style={{ fontSize: 12, color: '#888' }}>С:</span>
+            <input type="date" value={fromDate} onChange={e => setFromDate(e.target.value)}
+              style={{ fontSize: 12, border: '1px solid #ddd', borderRadius: 6, padding: '3px 6px', outline: 'none' }} />
+          </div>
+        )}
         {chartData.length === 0 ? (
           <div style={{ textAlign: 'center', color: '#999', fontSize: 13, padding: '20px 0' }}>Нет данных</div>
         ) : chartPeriod === 'day' ? (

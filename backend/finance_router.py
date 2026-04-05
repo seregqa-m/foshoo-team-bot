@@ -118,37 +118,11 @@ async def add_expense(req: ExpenseRequest, db: Session = Depends(get_db)):
 @router.get("/chart")
 async def get_chart(period: str = "month", from_date: str = None, db: Session = Depends(get_db)):
     """
-    Агрегация доходов/расходов по месяцам (period=month) или дням (period=day, последние 60 дней).
-    Даты хранятся в формате dd.mm.yyyy.
+    period=month: все доходы/расходы по месяцам с разбивкой по типу расхода.
+    period=day:   P&L — только ФоШу-траты + Возвраты, полный период.
     """
-    from modules.finance.models import ExpenseLog, IncomeLog
+    from modules.finance.models import ExpenseLog, IncomeLog, ReturnsLog
     from collections import defaultdict
-
-    def parse_key(date_str: str) -> str | None:
-        try:
-            parts = date_str.strip().split(".")
-            if len(parts) != 3:
-                return None
-            d, m, y = parts
-            if period == "month":
-                return f"{m}.{y}"
-            else:
-                return date_str
-        except Exception:
-            return None
-
-    def sort_key(label: str) -> tuple:
-        try:
-            parts = label.split(".")
-            if period == "month":
-                return (int(parts[1]), int(parts[0]))
-            else:
-                return (int(parts[2]), int(parts[1]), int(parts[0]))
-        except Exception:
-            return (0,)
-
-    expense_agg: dict[str, float] = defaultdict(float)
-    income_agg: dict[str, float] = defaultdict(float)
 
     def date_tuple(s: str) -> tuple:
         try:
@@ -157,53 +131,146 @@ async def get_chart(period: str = "month", from_date: str = None, db: Session = 
         except Exception:
             return (0, 0, 0)
 
-    from_tuple = date_tuple(from_date) if from_date else None
-
     def parse_amount(raw) -> float:
         s = str(raw).replace("р.", "").replace("₽", "").replace("\xa0", "").replace(" ", "").replace(",", ".")
         return float(s)
 
-    for row in db.query(ExpenseLog).all():
-        if from_tuple and date_tuple(row.date) < from_tuple:
-            continue
-        key = parse_key(row.date)
-        if key:
+    if period == "day":
+        # P&L: доходы − ФоШу-траты − Возвраты, полный период
+        income_agg: dict[str, float] = defaultdict(float)
+        expense_agg: dict[str, float] = defaultdict(float)
+
+        for row in db.query(IncomeLog).all():
+            if row.date:
+                try:
+                    income_agg[row.date] += parse_amount(row.amount)
+                except (ValueError, TypeError):
+                    pass
+
+        for row in db.query(ExpenseLog).filter(ExpenseLog.expense_type == "Трата со счета ФоШу").all():
+            if row.date:
+                try:
+                    expense_agg[row.date] += parse_amount(row.amount)
+                except (ValueError, TypeError):
+                    pass
+
+        for row in db.query(ReturnsLog).all():
+            if row.date:
+                try:
+                    expense_agg[row.date] += parse_amount(row.amount)
+                except (ValueError, TypeError):
+                    pass
+
+        # Полный период от первой транзакции до сегодня
+        all_dates = set(income_agg) | set(expense_agg)
+        if not all_dates:
+            return {"data": []}
+        def to_date(s):
             try:
-                expense_agg[key] += parse_amount(row.amount)
-            except (ValueError, TypeError):
-                pass
+                d, m, y = s.strip().split(".")
+                return date(int(y), int(m), int(d))
+            except Exception:
+                return None
+        valid = [to_date(d) for d in all_dates if to_date(d)]
+        start = min(valid)
+        today_date = date.today()
+        all_keys, cur = [], start
+        while cur <= today_date:
+            all_keys.append(cur.strftime("%d.%m.%Y"))
+            cur += timedelta(days=1)
+
+        data = [
+            {"period": k, "income": round(income_agg[k]), "expense": round(expense_agg[k])}
+            for k in all_keys
+        ]
+        return {"data": data}
+
+    # period == "month"
+    def month_key(date_str: str) -> str | None:
+        try:
+            parts = date_str.strip().split(".")
+            return f"{parts[1]}.{parts[2]}" if len(parts) == 3 else None
+        except Exception:
+            return None
+
+    def month_sort(label: str) -> tuple:
+        try:
+            m, y = label.split(".")
+            return (int(y), int(m))
+        except Exception:
+            return (0, 0)
+
+    from_tuple = date_tuple(from_date) if from_date else None
+
+    income_agg: dict[str, float] = defaultdict(float)
+    exp_foshu: dict[str, float] = defaultdict(float)
+    exp_personal: dict[str, float] = defaultdict(float)
+    exp_donation: dict[str, float] = defaultdict(float)
 
     for row in db.query(IncomeLog).all():
         if from_tuple and date_tuple(row.date) < from_tuple:
             continue
-        key = parse_key(row.date)
-        if key:
+        k = month_key(row.date)
+        if k:
             try:
-                income_agg[key] += parse_amount(row.amount)
+                income_agg[k] += parse_amount(row.amount)
             except (ValueError, TypeError):
                 pass
 
-    if period == "day":
-        # Генерируем все дни от from_date (или 60 дней назад) до сегодня
-        if from_date:
-            d_parts = from_date.strip().split(".")
-            start = date(int(d_parts[2]), int(d_parts[1]), int(d_parts[0]))
+    for row in db.query(ExpenseLog).all():
+        if from_tuple and date_tuple(row.date) < from_tuple:
+            continue
+        k = month_key(row.date)
+        if not k:
+            continue
+        try:
+            amt = parse_amount(row.amount)
+        except (ValueError, TypeError):
+            continue
+        if row.expense_type == "Трата со счета ФоШу":
+            exp_foshu[k] += amt
+        elif row.expense_type == "Личные траты":
+            exp_personal[k] += amt
+        elif row.expense_type in ("Пожертвование", "Пожертвования"):
+            exp_donation[k] += amt
         else:
-            start = date.today() - timedelta(days=59)
-        today_date = date.today()
-        all_keys = []
-        cur = start
-        while cur <= today_date:
-            all_keys.append(cur.strftime("%d.%m.%Y"))
-            cur += timedelta(days=1)
-    else:
-        all_keys = sorted(set(expense_agg) | set(income_agg), key=sort_key)
+            exp_foshu[k] += amt  # неизвестный тип → считаем основным
 
+    all_keys = sorted(
+        set(income_agg) | set(exp_foshu) | set(exp_personal) | set(exp_donation),
+        key=month_sort
+    )
     data = [
-        {"period": k, "income": round(income_agg[k]), "expense": round(expense_agg[k])}
+        {
+            "period": k,
+            "income": round(income_agg[k]),
+            "expense_foshu": round(exp_foshu[k]),
+            "expense_personal": round(exp_personal[k]),
+            "expense_donation": round(exp_donation[k]),
+            "expense": round(exp_foshu[k] + exp_personal[k] + exp_donation[k]),
+        }
         for k in all_keys
     ]
     return {"data": data}
+
+
+@router.post("/sync-returns")
+async def sync_returns(db: Session = Depends(get_db)):
+    """Синхронизировать таблицу Возвраты из Google Sheets."""
+    from modules.finance.models import ReturnsLog
+    try:
+        client = _get_client()
+        rows = client.get_returns()
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    db.query(ReturnsLog).delete()
+    for r in rows:
+        db.add(ReturnsLog(project=r["project"], who=r["who"], amount=r["amount"], date=r["date"]))
+    db.commit()
+    return {"status": "synced", "count": len(rows)}
 
 
 @router.get("/transactions")

@@ -13,7 +13,7 @@ from dotenv import load_dotenv
 load_dotenv(os.path.join(os.path.dirname(__file__), '..', '.env'))
 
 from core.database import init_db, SessionLocal
-from modules.finance.models import ExpenseLog, IncomeLog
+from modules.finance.models import ExpenseLog, IncomeLog, ReturnsLog
 from config import GOOGLE_CALENDAR_JSON, GOOGLE_SHEETS_ID
 from sheets_client import SheetsClient
 
@@ -86,6 +86,16 @@ def import_income(client: SheetsClient, db):
     print(f"Импортировано доходов: {count}")
 
 
+def import_returns(client: SheetsClient, db):
+    rows = client.get_returns()
+    count = 0
+    for r in rows:
+        db.add(ReturnsLog(project=r["project"], who=r["who"], amount=r["amount"], date=r["date"]))
+        count += 1
+    db.commit()
+    print(f"Импортировано возвратов: {count}")
+
+
 if __name__ == "__main__":
     if not GOOGLE_SHEETS_ID:
         print("GOOGLE_SHEETS_ID не задан в .env")
@@ -105,6 +115,7 @@ if __name__ == "__main__":
     client = SheetsClient(GOOGLE_CALENDAR_JSON, GOOGLE_SHEETS_ID)
     import_expenses(client, db)
     import_income(client, db)
+    import_returns(client, db)
 
     db.close()
     print("Готово.")

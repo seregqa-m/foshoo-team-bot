@@ -306,6 +306,47 @@ class SheetsClient:
                 return True
         return False
 
+    def get_returns(self) -> list[dict]:
+        """Прочитать таблицу Возвраты (Откуда, Кому, Сколько, Дата)."""
+        table_range = None
+        try:
+            result = self.api.get(
+                spreadsheetId=self.spreadsheet_id,
+                fields="sheets(properties(title),tables(name,range))"
+            ).execute()
+            for sheet in result.get("sheets", []):
+                if sheet["properties"]["title"] != self.FINANCE_SHEET:
+                    continue
+                for table in sheet.get("tables", []):
+                    if table.get("name") == "Возвраты":
+                        table_range = table.get("range", "")
+                        break
+        except Exception as e:
+            logger.warning(f"get_returns table lookup failed: {e}")
+            return []
+
+        if not table_range:
+            logger.warning("Возвраты table not found in sheet metadata")
+            return []
+
+        rows = self.api.values().get(
+            spreadsheetId=self.spreadsheet_id,
+            range=table_range,
+        ).execute().get("values", [])
+
+        items = []
+        for row in rows:
+            if not row or row[0].strip().lower() in ("откуда", ""):
+                continue
+            project = row[0].strip() if len(row) > 0 else ""
+            who     = row[1].strip() if len(row) > 1 else ""
+            amount  = row[2].strip() if len(row) > 2 else ""
+            date    = row[3].strip() if len(row) > 3 else ""
+            if not project or not amount:
+                continue
+            items.append({"project": project, "who": who, "amount": amount, "date": date})
+        return items
+
     def get_show_names(self) -> list[str]:
         """Уникальные названия спектаклей из вкладки 'Составы спектаклей', столбец A."""
         result = self.api.values().get(

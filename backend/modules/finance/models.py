@@ -27,3 +27,15 @@ class IncomeLog(Base):
     date = Column(String)       # dd.mm.yyyy
     comment = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class ReturnsLog(Base):
+    """Возвраты — компенсация личных трат. Уменьшают баланс в день выплаты."""
+    __tablename__ = "returns_log"
+
+    id = Column(Integer, primary_key=True, index=True)
+    project = Column(String)   # Откуда
+    who = Column(String)       # Кому
+    amount = Column(String)    # Сколько
+    date = Column(String)      # dd.mm.yyyy
+    created_at = Column(DateTime, default=datetime.utcnow)
