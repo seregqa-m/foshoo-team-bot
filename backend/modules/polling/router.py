@@ -163,7 +163,7 @@ async def delete_poll(poll_id: int, force: bool = False, db: Session = Depends(g
     if vote_count > 0 and not force:
         raise HTTPException(
             status_code=409,
-            detail=f"Опрос содержит {vote_count} голосов. Для удаления передайте ?force=true"
+            detail=f"Опрос содержит {vote_count} голосов"
         )
     db.delete(poll)
     db.commit()

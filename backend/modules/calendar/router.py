@@ -216,22 +216,23 @@ async def launch_poll_for_event(
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
 
+    MONTHS_RU = ['янв','фев','мар','апр','май','июн','июл','авг','сен','окт','ноя','дек']
+    DAYS_RU = ['в понедельник','во вторник','в среду','в четверг','в пятницу','в субботу','в воскресенье']
+    dt = event.start_time
+    date_str = f"{DAYS_RU[dt.weekday()]} {dt.day} {MONTHS_RU[dt.month - 1]} в {dt.strftime('%H:%M')}"
+
     poll_service = PollingService(db)
     poll = poll_service.create_poll(
-        title=f"кто будет на занятии: {event.title}",
+        title=f"Кто будет {date_str}?",
         created_by=user_id,
         expires_in_hours=48,
         calendar_event_id=event_id,
     )
 
-    MONTHS_RU = ['янв','фев','мар','апр','май','июн','июл','авг','сен','окт','ноя','дек']
-    dt = event.start_time
-    date_str = f"{dt.day} {MONTHS_RU[dt.month - 1]} в {dt.strftime('%H:%M')}"
-
     try:
         message = await bot.send_poll(
             chat_id=GROUP_CHAT_ID,
-            question=f"Кто будет {date_str}?\n{event.title}",
+            question=f"Кто будет {date_str}?",
             options=["Буду ✅", "Не буду ❌", "Опоздаю ⏰", "Не знаю 🤷"],
             is_anonymous=False,
             allows_multiple_answers=False,
