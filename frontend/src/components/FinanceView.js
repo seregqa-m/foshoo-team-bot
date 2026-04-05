@@ -21,38 +21,36 @@ function smoothPath(points) {
 
 function SplineChart({ data }) {
   const [tooltip, setTooltip] = useState(null);
-  const h = 210, padL = 44, padB = 28, padT = 16, padR = 8;
+  const h = 180, padL = 44, padB = 28, padT = 16, padR = 8;
   const totalW = window.innerWidth - 32;
   const spacing = (totalW - padL - padR) / Math.max(data.length - 1, 1);
   const chartH = h - padT - padB;
-  const halfH = chartH / 2;
-  const zeroY = padT + halfH;
-
-  const maxIncome = Math.max(...data.map(d => d.income), 1);
-  const maxExpense = Math.max(...data.map(d => d.expense), 1);
 
   let cum = 0;
-  const cumBalances = data.map(d => { cum += d.income - d.expense; return cum; });
-  const maxAbsBal = Math.max(...cumBalances.map(v => Math.abs(v)), 1);
+  const cumValues = data.map(d => { cum += d.income - d.expense; return cum; });
 
-  const incPts = data.map((d, i) => ({
-    x: padL + i * spacing,
-    y: zeroY - (d.income / maxIncome) * halfH,
-  }));
-  const expPts = data.map((d, i) => ({
-    x: padL + i * spacing,
-    y: zeroY + (d.expense / maxExpense) * halfH,
-  }));
-  const balPts = cumBalances.map((v, i) => ({
-    x: padL + i * spacing,
-    y: zeroY - (v / maxAbsBal) * halfH,
-  }));
+  const posMax = Math.max(...cumValues, 0);
+  const negMin = Math.min(...cumValues, 0);
+  const range = Math.max(posMax - negMin, 1);
+  // небольшой отступ сверху/снизу
+  const yTop = posMax + range * 0.08;
+  const yBot = negMin - range * 0.08;
+  const totalRange = yTop - yBot;
 
-  const incArea = `${smoothPath(incPts)} L ${incPts[incPts.length-1].x} ${zeroY} L ${incPts[0].x} ${zeroY} Z`;
-  const expArea = `${smoothPath(expPts)} L ${expPts[expPts.length-1].x} ${zeroY} L ${expPts[0].x} ${zeroY} Z`;
+  const toY = v => padT + (yTop - v) / totalRange * chartH;
+  const zeroY = toY(0);
+
+  const pts = cumValues.map((v, i) => ({ x: padL + i * spacing, y: toY(v) }));
+  const areaPath = `${smoothPath(pts)} L ${pts[pts.length-1].x} ${zeroY} L ${pts[0].x} ${zeroY} Z`;
 
   const labelStep = Math.max(1, Math.ceil(data.length / 7));
-  const fmtK = v => v >= 1000 ? `${(v / 1000).toFixed(0)}к` : v.toFixed(0);
+  const fmtK = v => {
+    if (Math.abs(v) >= 1000) return `${(v / 1000).toFixed(0)}к`;
+    return v.toFixed(0);
+  };
+
+  // Y-axis labels: top, zero (if in range), bottom
+  const gridVals = [yTop, 0, yBot].filter(v => v >= yBot && v <= yTop);
 
   return (
     <div style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
@@ -66,44 +64,44 @@ function SplineChart({ data }) {
             fontSize: 11, pointerEvents: 'none', whiteSpace: 'nowrap', zIndex: 10,
           }}>
             <div style={{ fontWeight: 600, marginBottom: 2 }}>{tooltip.period}</div>
-            <div>Доход: {tooltip.income.toLocaleString('ru')} ₽</div>
-            <div>Расход: {tooltip.expense.toLocaleString('ru')} ₽</div>
-            <div>Накоп.: {tooltip.cumBal.toLocaleString('ru')} ₽</div>
+            <div>Баланс: {tooltip.cum >= 0 ? '+' : ''}{Math.round(tooltip.cum).toLocaleString('ru')} ₽</div>
+            <div style={{ color: '#aaa', marginTop: 2 }}>
+              +{tooltip.income.toLocaleString('ru')} / −{tooltip.expense.toLocaleString('ru')}
+            </div>
           </div>
         )}
         <svg width={totalW} height={h}>
-          {/* Grid lines */}
-          <line x1={padL} x2={totalW - padR} y1={padT} y2={padT} stroke="#eee" strokeWidth={1} />
-          <line x1={padL} x2={totalW - padR} y1={zeroY} y2={zeroY} stroke="#ccc" strokeWidth={1} />
-          <line x1={padL} x2={totalW - padR} y1={padT + chartH} y2={padT + chartH} stroke="#eee" strokeWidth={1} />
-          {/* Y-axis labels */}
-          <text x={padL - 4} y={padT + 4} textAnchor="end" fontSize={9} fill="#999">{fmtK(maxIncome)}</text>
-          <text x={padL - 4} y={zeroY + 4} textAnchor="end" fontSize={9} fill="#aaa">0</text>
-          <text x={padL - 4} y={padT + chartH + 4} textAnchor="end" fontSize={9} fill="#999">−{fmtK(maxExpense)}</text>
-          {/* Income area (above zero) */}
-          <path d={incArea} fill="#111" fillOpacity={0.07} />
-          <path d={smoothPath(incPts)} fill="none" stroke="#111" strokeWidth={1.5} />
-          {/* Expense area (below zero) */}
-          <path d={expArea} fill="#888" fillOpacity={0.12} />
-          <path d={smoothPath(expPts)} fill="none" stroke="#999" strokeWidth={1.5} />
-          {/* Cumulative balance line */}
-          <path d={smoothPath(balPts)} fill="none" stroke="#555" strokeWidth={1.5} strokeDasharray="5,2" />
+          {/* Grid */}
+          {gridVals.map(v => (
+            <g key={v}>
+              <line x1={padL} x2={totalW - padR} y1={toY(v)} y2={toY(v)}
+                stroke={v === 0 ? '#ccc' : '#eee'} strokeWidth={v === 0 ? 1 : 1} />
+              <text x={padL - 4} y={toY(v) + 4} textAnchor="end" fontSize={9} fill={v === 0 ? '#aaa' : '#bbb'}>
+                {fmtK(v)}
+              </text>
+            </g>
+          ))}
+          {/* Area fill */}
+          <path d={areaPath} fill="#111" fillOpacity={0.07} />
+          {/* Line */}
+          <path d={smoothPath(pts)} fill="none" stroke="#111" strokeWidth={1.5} />
           {/* Tooltip crosshair */}
           {tooltip && (
-            <line x1={tooltip.x} x2={tooltip.x} y1={padT} y2={padT + chartH} stroke="#ccc" strokeWidth={1} strokeDasharray="3,3" />
+            <line x1={tooltip.x} x2={tooltip.x} y1={padT} y2={padT + chartH}
+              stroke="#ccc" strokeWidth={1} strokeDasharray="3,3" />
           )}
           {/* Hit areas + date labels */}
           {data.map((d, i) => (
             <g key={d.period}
-              onMouseEnter={() => setTooltip({ ...d, x: incPts[i].x, cumBal: cumBalances[i] })}
+              onMouseEnter={() => setTooltip({ ...d, x: pts[i].x, cum: cumValues[i] })}
               onMouseLeave={() => setTooltip(null)}
-              onTouchStart={() => setTooltip({ ...d, x: incPts[i].x, cumBal: cumBalances[i] })}
+              onTouchStart={() => setTooltip({ ...d, x: pts[i].x, cum: cumValues[i] })}
               onTouchEnd={() => setTimeout(() => setTooltip(null), 1500)}
               style={{ cursor: 'pointer' }}
             >
-              <rect x={incPts[i].x - spacing / 2} y={padT} width={spacing} height={chartH} fill="transparent" />
+              <rect x={pts[i].x - spacing / 2} y={padT} width={spacing} height={chartH} fill="transparent" />
               {i % labelStep === 0 && (
-                <text x={incPts[i].x} y={h - 6} textAnchor="middle" fontSize={9} fill="#999">
+                <text x={pts[i].x} y={h - 6} textAnchor="middle" fontSize={9} fill="#999">
                   {d.period.slice(0, 5)}
                 </text>
               )}
@@ -111,16 +109,8 @@ function SplineChart({ data }) {
           ))}
         </svg>
       </div>
-      <div style={{ display: 'flex', gap: 12, paddingLeft: padL, marginTop: 4 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: '#666' }}>
-          <div style={{ width: 20, height: 2, background: '#111', borderRadius: 1 }} /> Доход
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: '#888' }}>
-          <div style={{ width: 20, height: 2, background: '#999', borderRadius: 1 }} /> Расход
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: '#555' }}>
-          <div style={{ width: 20, height: 2, background: '#555', borderRadius: 1 }} /> Накоп.
-        </div>
+      <div style={{ paddingLeft: padL, marginTop: 4, fontSize: 11, color: '#888' }}>
+        Накопительный баланс
       </div>
     </div>
   );
