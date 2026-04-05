@@ -307,6 +307,17 @@ export default function FinanceView({ username }) {
     <>
       <div className="page-header">
         <div className="page-title">Финансы</div>
+        {meta.sheets_url && (
+          <a
+            href={meta.sheets_url}
+            target="_blank"
+            rel="noreferrer"
+            className="btn btn-secondary"
+            style={{ fontSize: 13, padding: '6px 10px', textDecoration: 'none' }}
+          >
+            📊 Таблица
+          </a>
+        )}
       </div>
 
       {success && <div className="alert alert-success">{success}</div>}

@@ -46,6 +46,7 @@ async def get_balance():
 @router.get("/meta")
 async def get_meta():
     """Вернуть списки проектов, типов трат и актёров для форм."""
+    from config import GOOGLE_SHEETS_ID
     actors = []
     try:
         client = _get_client()
@@ -53,7 +54,8 @@ async def get_meta():
         actors = sorted(mapping.values())
     except Exception:
         pass
-    return {"projects": PROJECTS, "expense_types": EXPENSE_TYPES, "actors": actors}
+    sheets_url = f"https://docs.google.com/spreadsheets/d/{GOOGLE_SHEETS_ID}" if GOOGLE_SHEETS_ID else None
+    return {"projects": PROJECTS, "expense_types": EXPENSE_TYPES, "actors": actors, "sheets_url": sheets_url}
 
 
 @router.get("/whoami")
