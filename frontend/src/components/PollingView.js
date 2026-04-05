@@ -40,8 +40,19 @@ export default function PollingView() {
 
   const deletePoll = async (id) => {
     if (!window.confirm('Удалить опрос из БД?')) return;
-    try { await client.delete(`/api/polls/${id}`); loadPolls(); notify('Опрос удалён'); }
-    catch (e) { notify('Ошибка при удалении'); }
+    try {
+      await client.delete(`/api/polls/${id}`);
+      loadPolls(); notify('Опрос удалён');
+    } catch (e) {
+      if (e.response?.status === 409) {
+        if (window.confirm(e.response.data.detail + '\n\nВсё равно удалить?')) {
+          await client.delete(`/api/polls/${id}?force=true`);
+          loadPolls(); notify('Опрос удалён');
+        }
+      } else {
+        notify('Ошибка при удалении');
+      }
+    }
   };
 
   if (loading) return <div className="empty-state">Загрузка...</div>;

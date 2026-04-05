@@ -240,7 +240,14 @@ function EventCard({ event, userId, onEdit, isAdmin, isPollable, poll, onPollAct
       await client.delete(`/api/polls/${poll.poll_id}`);
       onPollAction && onPollAction();
     } catch (e) {
-      alert(e.response?.data?.detail || 'Ошибка');
+      if (e.response?.status === 409) {
+        if (window.confirm(e.response.data.detail + '\n\nВсё равно удалить?')) {
+          await client.delete(`/api/polls/${poll.poll_id}?force=true`);
+          onPollAction && onPollAction();
+        }
+      } else {
+        alert(e.response?.data?.detail || 'Ошибка');
+      }
     }
   };
 

@@ -152,12 +152,19 @@ async def pin_poll(poll_id: int, db: Session = Depends(get_db)):
 
 
 @router.delete("/{poll_id}")
-async def delete_poll(poll_id: int, db: Session = Depends(get_db)):
-    """Удалить опрос и все голоса из БД."""
+async def delete_poll(poll_id: int, force: bool = False, db: Session = Depends(get_db)):
+    """Удалить опрос и все голоса из БД. Если есть голоса — требует ?force=true."""
+    from .models import PollVote
     service = PollingService(db)
     poll = service.get_poll(poll_id)
     if not poll:
         raise HTTPException(status_code=404, detail="Poll not found")
+    vote_count = db.query(PollVote).filter(PollVote.poll_id == poll_id).count()
+    if vote_count > 0 and not force:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Опрос содержит {vote_count} голосов. Для удаления передайте ?force=true"
+        )
     db.delete(poll)
     db.commit()
     return {"status": "deleted"}
