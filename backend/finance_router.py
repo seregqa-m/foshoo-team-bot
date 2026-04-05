@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from core.database import get_db
+from modules.finance.models import ExpenseLog, IncomeLog, ReturnsLog  # noqa: F401 — ensure tables are created on init_db()
 
 router = APIRouter(prefix="/api/finance", tags=["finance"])
 logger = logging.getLogger(__name__)
