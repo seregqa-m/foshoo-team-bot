@@ -4,6 +4,7 @@ import CalendarView from './components/CalendarView';
 import PollingView from './components/PollingView';
 import NotificationsView from './components/NotificationsView';
 import FinanceView from './components/FinanceView';
+import LinksView from './components/LinksView';
 
 function App() {
   const [activeTab, setActiveTab] = useState('calendar');
@@ -54,6 +55,7 @@ function App() {
         {activeTab === 'calendar' && <CalendarView userId={userId} isAdmin={isAdmin} />}
         {activeTab === 'polling' && <PollingView userId={userId} />}
         {activeTab === 'finance' && <FinanceView username={username} />}
+        {activeTab === 'links' && <LinksView />}
         {activeTab === 'notifications' && <NotificationsView userId={userId} />}
       </main>
 
@@ -75,6 +77,12 @@ function App() {
           onClick={() => setActiveTab('finance')}
         >
           💰<span>Финансы</span>
+        </button>
+        <button
+          className={activeTab === 'links' ? 'active' : ''}
+          onClick={() => setActiveTab('links')}
+        >
+          🗂️<span>Ресурсы</span>
         </button>
         <button
           className={activeTab === 'notifications' ? 'active' : ''}

@@ -1,0 +1,69 @@
+{
+  "blocks": [
+    {
+      "id": "main",
+      "title": "Основные",
+      "items": [
+        {
+          "label": "Таблицы (финансы, составы)",
+          "url": "https://docs.google.com/spreadsheets/d/XXXXXXXX"
+        },
+        {
+          "label": "Обновить афишу",
+          "url": "https://drive.google.com/drive/folders/XXXXXXXX",
+          "instruction": "1. Заходим в гугл диск по ссылке\n2. На компе называем файлы с афишами аналогично существующим (для текущего и следующего месяца)\n3. Загружаем/переносим файлы на диск, предложит «заменить», делаем"
+        },
+        {
+          "label": "Отзывы — Любовь Громова",
+          "url": "https://..."
+        },
+        {
+          "label": "Отзывы — Урод",
+          "url": "https://..."
+        }
+      ]
+    },
+    {
+      "id": "tickets",
+      "title": "Билеты",
+      "items": [
+        {
+          "label": "MTS Tickets",
+          "url": "https://..."
+        },
+        {
+          "label": "ticketscloud",
+          "url": "https://..."
+        },
+        {
+          "label": "Афиша",
+          "url": "https://..."
+        },
+        {
+          "label": "Списки на вход",
+          "url": "https://docs.google.com/spreadsheets/d/XXXXXXXX"
+        }
+      ]
+    },
+    {
+      "id": "shows",
+      "title": "Спектакли",
+      "items": [
+        {
+          "label": "Любовь Громова",
+          "url": "https://disk.yandex.ru/XXXXXXXX",
+          "sublabel": "фото, видеозаписи"
+        },
+        {
+          "label": "Урод",
+          "url": "https://disk.yandex.ru/XXXXXXXX",
+          "sublabel": "фото, видеозаписи"
+        },
+        {
+          "label": "Записи спектаклей",
+          "url": "https://disk.yandex.ru/XXXXXXXX"
+        }
+      ]
+    }
+  ]
+}

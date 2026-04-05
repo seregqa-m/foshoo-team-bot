@@ -67,6 +67,9 @@ Thumbs.db
 # Google credentials
 credentials.json
 
+# Links config (contains private URLs, fill from links.json.example)
+backend/links.json
+
 # Frontend build
 frontend/build/
 frontend/dist/
