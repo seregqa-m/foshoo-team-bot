@@ -221,39 +221,48 @@ function EventCard({ event, userId, onEdit, isAdmin, isPollable, poll, onPollAct
   };
 
   return (
-    <div className="event-card">
+    <div className="event-card" style={{ position: 'relative' }}>
+      {isAdmin && (
+        <button
+          onClick={() => onEdit(event)}
+          style={{
+            position: 'absolute', top: 10, right: 12,
+            background: 'none', border: 'none', cursor: 'pointer',
+            fontSize: 15, color: '#bbb', padding: 0, lineHeight: 1,
+          }}
+        >✏️</button>
+      )}
       <div className="event-date-block">
         <div className="event-date-day">{start.getDate()}</div>
         <div className="event-date-month">{MONTHS[start.getMonth()]}</div>
         <div className="event-date-dow">{DAYS[start.getDay()]}</div>
       </div>
       <div className="event-body">
-        <div className="event-title">{event.title}</div>
+        <div className="event-title" style={{ paddingRight: isAdmin ? 24 : 0 }}>{event.title}</div>
         <div className="event-meta">
           {formatTime(event.start_time)} – {formatTime(event.end_time)}
           {event.location ? `  📍 ${event.location}` : ''}
         </div>
         {pollError && <div style={{ fontSize: 12, color: 'var(--danger)', marginBottom: 8 }}>{pollError}</div>}
-        <div className="event-actions" style={{ flexWrap: 'wrap', gap: 6 }}>
-          {isAdmin && <button className="btn btn-secondary" onClick={() => onEdit(event)}>✏️ Ред.</button>}
+        <div className="event-actions" style={{ gap: 6, alignItems: 'center' }}>
           {isPollable && (
-            <button className="btn btn-secondary" onClick={handlePoll} disabled={polling}>
+            <button className="btn btn-secondary" onClick={handlePoll} disabled={polling} style={{ fontSize: 13, padding: '5px 10px' }}>
               {polling ? '⌛' : '🗳️ Опрос'}
             </button>
           )}
           {poll && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginLeft: 2 }}>
-              <span style={{ border: '2px solid #22c55e', borderRadius: 7, padding: '1px 7px', fontWeight: 700, fontSize: 13 }}>
+            <>
+              <span style={{ border: '2px solid #22c55e', borderRadius: 7, padding: '2px 7px', fontWeight: 700, fontSize: 13 }}>
                 {poll.attending}
               </span>
-              <span style={{ border: '2px solid #ef4444', borderRadius: 7, padding: '1px 7px', fontWeight: 700, fontSize: 13 }}>
+              <span style={{ border: '2px solid #ef4444', borderRadius: 7, padding: '2px 7px', fontWeight: 700, fontSize: 13 }}>
                 {poll.not_attending}
               </span>
               {poll.telegram_message_id && (
                 <button onClick={handlePin} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 15, padding: '0 2px', lineHeight: 1 }}>📌</button>
               )}
-              <button onClick={handleDeletePoll} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 18, color: '#ccc', padding: '0 2px', lineHeight: 1 }}>×</button>
-            </div>
+              <button onClick={handleDeletePoll} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 19, color: '#ccc', padding: '0 2px', lineHeight: 1 }}>×</button>
+            </>
           )}
         </div>
       </div>
