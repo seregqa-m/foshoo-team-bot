@@ -54,7 +54,13 @@ async def get_meta():
         actors = sorted(mapping.values())
     except Exception:
         pass
-    sheets_url = f"https://docs.google.com/spreadsheets/d/{GOOGLE_SHEETS_ID}" if GOOGLE_SHEETS_ID else None
+    sheets_url = None
+    if GOOGLE_SHEETS_ID:
+        try:
+            gid = _get_client()._get_sheet_id("Финансы")
+            sheets_url = f"https://docs.google.com/spreadsheets/d/{GOOGLE_SHEETS_ID}/edit#gid={gid}"
+        except Exception:
+            sheets_url = f"https://docs.google.com/spreadsheets/d/{GOOGLE_SHEETS_ID}"
     return {"projects": PROJECTS, "expense_types": EXPENSE_TYPES, "actors": actors, "sheets_url": sheets_url}
 
 
