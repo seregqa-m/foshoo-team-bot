@@ -190,6 +190,15 @@ function EventCard({ event, userId, onEdit, isAdmin, isPollable, poll, onPollAct
 
   const handlePoll = async () => {
     if (!userId) { setPollError('Нет userId'); return; }
+    if (poll) {
+      const date = poll.created_at
+        ? new Date(poll.created_at).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' })
+        : '—';
+      const confirmed = window.confirm(
+        `Запустить новый опрос?\n\nПоследний был ${date}: буду ${poll.attending}, не буду ${poll.not_attending}.`
+      );
+      if (!confirmed) return;
+    }
     try {
       setPolling(true);
       setPollError(null);

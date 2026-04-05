@@ -40,6 +40,7 @@ async def get_events_poll_summary(db: Session = Depends(get_db)):
             "attending": sum(1 for v in votes if v.answer == "yes"),
             "not_attending": sum(1 for v in votes if v.answer == "no"),
             "telegram_message_id": poll.telegram_message_id,
+            "created_at": poll.created_at.isoformat() if poll.created_at else None,
         }
     return {"summary": summary}
 
