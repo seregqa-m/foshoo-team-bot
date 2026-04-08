@@ -35,15 +35,15 @@ const HOUR_H     = 18;
 const HEADER_H   = 42;
 const LABEL_W    = 28;
 
-function getEventColor(title, showNames) {
+function getEventColor(title, showNames, trouFilter = 'труппа 1') {
   const t = title.toLowerCase();
-  if (t.includes('труппа 1') || showNames.some(s => t.includes(s))) return '#C4B5FD';
+  if (t.includes(trouFilter) || showNames.some(s => t.includes(s))) return '#C4B5FD';
   if (t.includes('труппа 2')) return '#FDE68A';
   if (t.includes('лаба')) return '#FCA5A5';
   return '#D1D5DB';
 }
 
-function WeekCalendar({ events, showNames, onEventClick, onSlotClick }) {
+function WeekCalendar({ events, showNames, trouFilter = 'труппа 1', onEventClick, onSlotClick }) {
   const [weekOffset, setWeekOffset] = useState(0);
   const [tooltip, setTooltip] = useState(null);
 
@@ -175,7 +175,7 @@ function WeekCalendar({ events, showNames, onEventClick, onSlotClick }) {
               const h  = Math.max(6, y2 - y1);
               const x  = LABEL_W + dayIdx * colW + 3;
               const w  = colW - 6;
-              const color = getEventColor(e.title, showNames);
+              const color = getEventColor(e.title, showNames, trouFilter);
               return (
                 <rect key={idx} x={x} y={y1} width={w} height={h} rx={3}
                   fill={color} fillOpacity={0.9} style={{ cursor: 'pointer' }}
@@ -406,7 +406,7 @@ function EventModal({ event, onClose, onSaved, onDeleted }) {
   );
 }
 
-export default function CalendarView({ userId, isAdmin }) {
+export default function CalendarView({ userId, isAdmin, trouFilter = 'труппа 1' }) {
   const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -464,7 +464,7 @@ export default function CalendarView({ userId, isAdmin }) {
     : filter === 'труппа 1'
       ? events.filter(e => {
           const t = e.title.toLowerCase();
-          return t.includes('труппа 1') || showNames.some(s => t.includes(s));
+          return t.includes(trouFilter) || showNames.some(s => t.includes(s));
         })
       : events.filter(e => e.title.toLowerCase().includes(filter));
 
@@ -493,6 +493,7 @@ export default function CalendarView({ userId, isAdmin }) {
       <WeekCalendar
         events={events}
         showNames={showNames}
+        trouFilter={trouFilter}
         onEventClick={isAdmin ? (e) => setModal(e) : null}
         onSlotClick={handleSlotClick}
       />
@@ -521,7 +522,7 @@ export default function CalendarView({ userId, isAdmin }) {
       ) : (
         visibleEvents.map(e => {
           const t = e.title.toLowerCase();
-          const isT1 = t.includes('труппа 1') || showNames.some(s => t.includes(s));
+          const isT1 = t.includes(trouFilter) || showNames.some(s => t.includes(s));
           const isPerformance = showNames.some(s => t.includes(s));
           return (
             <EventCard

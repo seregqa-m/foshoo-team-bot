@@ -38,5 +38,8 @@ ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")
 # Telegram Group Chat (для отправки опросов)
 GROUP_CHAT_ID = int(os.getenv("GROUP_CHAT_ID", 0))
 
+# Troupe filter (substring used to identify main troupe events in calendar titles)
+TROUPE_FILTER = os.getenv("TROUPE_FILTER", "труппа 1")
+
 # Logging
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")

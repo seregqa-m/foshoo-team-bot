@@ -11,6 +11,14 @@ function App() {
   const [username, setUsername] = useState('');
   const [allowed, setAllowed] = useState(null); // null = проверяем
   const [isAdmin, setIsAdmin] = useState(false);
+  const [trouFilter, setTrouFilter] = useState('труппа 1');
+
+  useEffect(() => {
+    fetch(`${process.env.REACT_APP_API_URL || 'http://127.0.0.1:8000'}/api/auth/app-config`)
+      .then(r => r.json())
+      .then(data => { if (data.troupe_filter) setTrouFilter(data.troupe_filter); })
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     if (window.Telegram?.WebApp) {
@@ -57,7 +65,7 @@ function App() {
   return (
     <div className="app">
       <main className="content">
-        {activeTab === 'calendar' && <CalendarView userId={userId} isAdmin={isAdmin} />}
+        {activeTab === 'calendar' && <CalendarView userId={userId} isAdmin={isAdmin} trouFilter={trouFilter} />}
         {activeTab === 'finance' && <FinanceView username={username} />}
         {activeTab === 'links' && <LinksView />}
         {activeTab === 'notifications' && <NotificationsView userId={userId} />}

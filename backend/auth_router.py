@@ -37,3 +37,10 @@ async def check_access(username: str = "", user_id: int = 0):
     except Exception as e:
         logger.error(f"Auth check failed: {e}")
         return {"allowed": True, "is_admin": is_admin}
+
+
+@router.get("/app-config")
+async def app_config():
+    """Вернуть публичные настройки приложения для фронтенда."""
+    from config import TROUPE_FILTER
+    return {"troupe_filter": TROUPE_FILTER}
