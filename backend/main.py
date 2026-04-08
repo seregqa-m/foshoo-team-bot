@@ -205,6 +205,8 @@ async def _auto_create_polls():
                 continue
             if show_names_lower and any(s in event.title.lower() for s in show_names_lower):
                 continue
+            if 'труппа 1' not in event.title.lower():
+                continue
             existing = db.query(Poll).filter(
                 Poll.calendar_event_id == event.id,
                 Poll.is_active == True,
