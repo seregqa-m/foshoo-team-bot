@@ -222,6 +222,15 @@ async def launch_poll_for_event(
     month_day = format_date(dt, 'd MMM', locale='ru_RU')
     date_str = f"в {day_name} {month_day} в {dt.strftime('%H:%M')}"
 
+    from modules.polling.models import Poll
+    existing = db.query(Poll).filter(
+        Poll.calendar_event_id == event_id,
+        Poll.is_active == True,
+    ).first()
+    if existing:
+        raise HTTPException(status_code=409,
+            detail=f"Для этого события уже есть активный опрос (id={existing.id})")
+
     poll_service = PollingService(db)
     poll = poll_service.create_poll(
         title=f"Кто будет {date_str}?",

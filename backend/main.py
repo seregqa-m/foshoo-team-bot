@@ -130,7 +130,11 @@ async def poll_reminder_background():
         except Exception as e:
             logger.error(f"❌ Poll cleanup failed: {e}")
         try:
-            await _check_and_send_reminders()
+            await _auto_create_polls()
+        except Exception as e:
+            logger.error(f"❌ Auto poll creation failed: {e}")
+        try:
+            await _send_poll_reminders()
         except Exception as e:
             logger.error(f"❌ Reminder check failed: {e}")
         await asyncio.sleep(60)
@@ -159,7 +163,84 @@ async def _cleanup_old_polls():
         db.close()
 
 
-async def _check_and_send_reminders():
+async def _auto_create_polls():
+    """Автоматически создать опрос в группе за N дней до события."""
+    from datetime import datetime, timedelta
+    from modules.polling.models import Poll
+    from modules.polling.services import PollingService
+    from modules.notifications.models import NotificationSetting
+    from modules.calendar.models import CalendarEvent
+    from config import ADMIN_ID, GROUP_CHAT_ID, GOOGLE_CALENDAR_JSON, GOOGLE_SHEETS_ID
+    import os
+
+    if not GROUP_CHAT_ID:
+        return
+
+    now = datetime.utcnow()
+    db = SessionLocal()
+    try:
+        settings = db.query(NotificationSetting).filter(
+            NotificationSetting.user_id == ADMIN_ID
+        ).first()
+        if not (settings and settings.poll_reminders_enabled):
+            return
+
+        moscow_now = now + timedelta(hours=3)
+        h, m = map(int, settings.reminder_time.split(":"))
+        if (moscow_now.hour, moscow_now.minute) < (h, m):
+            return
+
+        target_date = (now + timedelta(days=settings.reminder_days_before)).date()
+
+        show_names_lower = []
+        if GOOGLE_SHEETS_ID and os.path.exists(GOOGLE_CALENDAR_JSON):
+            try:
+                from sheets_client import SheetsClient as _SC
+                show_names_lower = [s.lower() for s in _SC(GOOGLE_CALENDAR_JSON, GOOGLE_SHEETS_ID).get_show_names()]
+            except Exception:
+                pass
+
+        for event in db.query(CalendarEvent).all():
+            if event.start_time.date() != target_date:
+                continue
+            if show_names_lower and any(s in event.title.lower() for s in show_names_lower):
+                continue
+            existing = db.query(Poll).filter(
+                Poll.calendar_event_id == event.id,
+                Poll.is_active == True,
+            ).first()
+            if existing:
+                continue
+
+            from babel.dates import format_date
+            dt = event.start_time
+            date_str = f"в {format_date(dt, 'EEEE', locale='ru_RU')} {format_date(dt, 'd MMM', locale='ru_RU')} в {dt.strftime('%H:%M')}"
+
+            poll_service = PollingService(db)
+            poll = poll_service.create_poll(
+                title=f"Кто будет {date_str}?",
+                created_by=ADMIN_ID,
+                expires_in_hours=settings.reminder_days_before * 24 + 48,
+                calendar_event_id=event.id,
+            )
+            try:
+                message = await bot.send_poll(
+                    chat_id=GROUP_CHAT_ID,
+                    question=f"Кто будет {date_str}?",
+                    options=["Буду ✅", "Не буду ❌", "Опоздаю ⏰", "Не знаю 🤷"],
+                    is_anonymous=False,
+                    allows_multiple_answers=False,
+                )
+                poll_service.save_telegram_ids(poll.id, message.poll.id, message.message_id)
+                logger.info(f"✅ Auto poll created: '{event.title}' on {target_date} → poll {poll.id}")
+            except Exception as e:
+                logger.error(f"❌ Auto poll send failed for event {event.id}: {e}")
+    finally:
+        db.close()
+
+
+async def _send_poll_reminders():
+    """Отправить напоминание об опросе за 1 день до события и закрепить опрос."""
     from datetime import datetime, timedelta
     from modules.polling.models import Poll, PollVote
     from modules.notifications.models import NotificationSetting
@@ -172,25 +253,20 @@ async def _check_and_send_reminders():
     now = datetime.utcnow()
     db = SessionLocal()
     try:
-        # Читаем настройки напоминаний у администратора
         settings = db.query(NotificationSetting).filter(
             NotificationSetting.user_id == ADMIN_ID
         ).first()
-        days_before = settings.reminder_days_before if settings else 3
         reminder_time_str = settings.reminder_time if settings else "18:00"
         if not (settings and settings.poll_reminders_enabled):
             return
 
-        # Проверяем что сейчас уже прошло настроенное время (московское UTC+3)
         moscow_now = now + timedelta(hours=3)
         h, m = map(int, reminder_time_str.split(":"))
         if (moscow_now.hour, moscow_now.minute) < (h, m):
             return
 
-        # Ищем события через days_before дней
-        target_date = (now + timedelta(days=days_before)).date()
+        target_date = (now + timedelta(days=1)).date()  # всегда за 1 день
 
-        # Находим активные опросы с событиями на target_date
         from modules.calendar.models import CalendarEvent
         polls = db.query(Poll).join(
             CalendarEvent, Poll.calendar_event_id == CalendarEvent.id
@@ -199,7 +275,6 @@ async def _check_and_send_reminders():
             Poll.reminder_sent_at == None,
         ).all()
 
-        # Список названий спектаклей для фильтрации
         show_names_lower = []
         if GOOGLE_SHEETS_ID and os.path.exists(GOOGLE_CALENDAR_JSON):
             try:
@@ -212,11 +287,9 @@ async def _check_and_send_reminders():
             event = db.query(CalendarEvent).filter(CalendarEvent.id == poll.calendar_event_id).first()
             if not event or event.start_time.date() != target_date:
                 continue
-            # Пропускаем спектакли — посещаемость на них заранее определена
             if show_names_lower and any(s in event.title.lower() for s in show_names_lower):
                 continue
 
-            # Кто уже проголосовал (yes/no)
             voted_usernames = {
                 v.username.lower() for v in
                 db.query(PollVote).filter(
@@ -227,40 +300,43 @@ async def _check_and_send_reminders():
                 if v.username
             }
 
-            # Все участники труппы из Sheets
             unvoted_mentions = []
             if GOOGLE_SHEETS_ID and os.path.exists(GOOGLE_CALENDAR_JSON):
                 try:
                     from sheets_client import SheetsClient
                     client = SheetsClient(GOOGLE_CALENDAR_JSON, GOOGLE_SHEETS_ID)
-                    mapping = client.get_actor_mapping()  # {username: actor_name}
-                    for username in mapping:
+                    for username in client.get_actor_mapping():
                         if username not in voted_usernames:
                             unvoted_mentions.append(f"@{username}")
                 except Exception as e:
                     logger.error(f"Sheets read for reminder failed: {e}")
 
             if not unvoted_mentions:
-                # Все отметились — тоже ставим флаг чтобы не повторять
                 poll.reminder_sent_at = now
                 db.commit()
                 continue
 
             date_str = event.start_time.strftime("%d.%m в %H:%M")
             mentions = " ".join(unvoted_mentions)
-
-            # Ссылка на опрос
             poll_link = ""
             if poll.telegram_message_id and GROUP_CHAT_ID:
                 group_id = str(GROUP_CHAT_ID).lstrip("-").lstrip("100") if str(GROUP_CHAT_ID).startswith("-100") else str(abs(GROUP_CHAT_ID))
                 poll_link = f"\nhttps://t.me/c/{group_id}/{poll.telegram_message_id}"
 
-            text = f"ребят, отметьте присутствие {date_str}!\n{mentions}{poll_link}"
+            await bot.send_message(chat_id=GROUP_CHAT_ID,
+                                   text=f"ребят, отметьте присутствие {date_str}!\n{mentions}{poll_link}")
 
-            await bot.send_message(chat_id=GROUP_CHAT_ID, text=text)
+            if poll.telegram_message_id:
+                try:
+                    await bot.pin_chat_message(chat_id=GROUP_CHAT_ID,
+                                               message_id=poll.telegram_message_id,
+                                               disable_notification=True)
+                except Exception as e:
+                    logger.warning(f"Pin poll failed: {e}")
+
             poll.reminder_sent_at = now
             db.commit()
-            logger.info(f"Reminder sent for poll {poll.id}, event {event.start_time.date()}")
+            logger.info(f"✅ Reminder sent for poll {poll.id}, event {event.start_time.date()}")
 
     finally:
         db.close()

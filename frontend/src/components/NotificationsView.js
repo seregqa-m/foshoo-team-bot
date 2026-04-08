@@ -57,23 +57,15 @@ export default function NotificationsView({ userId }) {
       {error && <div className="alert alert-error">{error}</div>}
       {saved && <div className="alert alert-success">Настройки сохранены</div>}
 
-      <div className="section-label">Типы уведомлений</div>
+      <div className="section-label">Авто-создание опросов</div>
       <div className="card-white">
         <div className="toggle-row">
-          <span className="toggle-label">📊 Напоминания об опросах</span>
+          <span className="toggle-label">📊 Авто-создание опросов</span>
           <Toggle checked={settings.poll_reminders_enabled} onChange={() => toggle('poll_reminders_enabled')} />
-        </div>
-        <div className="toggle-row">
-          <span className="toggle-label">💰 Напоминания о платежах</span>
-          <Toggle checked={settings.payment_reminders_enabled} onChange={() => toggle('payment_reminders_enabled')} />
-        </div>
-        <div className="toggle-row">
-          <span className="toggle-label">📅 Напоминания о занятиях</span>
-          <Toggle checked={settings.event_reminders_enabled} onChange={() => toggle('event_reminders_enabled')} />
         </div>
       </div>
 
-      <div className="section-label">Напомнить за N дней до события</div>
+      <div className="section-label">Создавать опрос за N дней до события</div>
       <div className="card-white" style={{ padding: '14px 16px', display: 'flex', gap: 12, alignItems: 'center' }}>
         <select
           className="select-input"
@@ -95,6 +87,9 @@ export default function NotificationsView({ userId }) {
           value={settings.reminder_time ?? '18:00'}
           onChange={e => { setSettings(s => ({ ...s, reminder_time: e.target.value })); setSaved(false); }}
         />
+      </div>
+      <div style={{ fontSize: 12, color: '#888', padding: '4px 4px 0' }}>
+        Напоминание отправляется автоматически за 1 день до события
       </div>
 
       <button className="btn btn-primary" style={{ width: '100%', padding: 14, fontSize: 15, marginTop: 8 }} onClick={handleSave}>
