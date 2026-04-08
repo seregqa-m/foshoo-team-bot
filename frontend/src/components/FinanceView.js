@@ -144,7 +144,7 @@ function SimpleBarChart({ data }) {
           }}>
             <div style={{ fontWeight: 600, marginBottom: 2 }}>{tooltip.period}</div>
             <div>Доход: {(tooltip.income || 0).toLocaleString('ru')} ₽</div>
-            {(tooltip.expense_foshu || 0) > 0 && <div>ФоШу: {tooltip.expense_foshu.toLocaleString('ru')} ₽</div>}
+            {(tooltip.expense_foshu || 0) > 0 && <div>Копилка: {tooltip.expense_foshu.toLocaleString('ru')} ₽</div>}
             {(tooltip.expense_personal || 0) > 0 && <div>Личные: {tooltip.expense_personal.toLocaleString('ru')} ₽</div>}
             {(tooltip.expense_donation || 0) > 0 && <div>Пожертв.: {tooltip.expense_donation.toLocaleString('ru')} ₽</div>}
           </div>
@@ -194,7 +194,7 @@ function SimpleBarChart({ data }) {
         </svg>
       </div>
       <div style={{ display: 'flex', gap: 10, paddingLeft: padL, marginTop: 4, flexWrap: 'wrap' }}>
-        {[['#111', 'Доход'], ['#5a0000', 'ФоШу'], ['#e8c4c4', 'Личные'], ['#ddd', 'Пожертвования']].map(([c, label]) => (
+        {[['#111', 'Доход'], ['#5a0000', 'Копилка'], ['#e8c4c4', 'Личные'], ['#ddd', 'Пожертвования']].map(([c, label]) => (
           <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: '#666' }}>
             <div style={{ width: 10, height: 10, background: c, borderRadius: 2, border: c === '#ddd' ? '1px solid #bbb' : 'none' }} /> {label}
           </div>
