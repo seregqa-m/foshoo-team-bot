@@ -340,6 +340,52 @@ class SheetsClient:
             items.append({"project": project, "who": who, "amount": amount, "date": date})
         return items
 
+    def get_expenses(self) -> list[dict]:
+        """Прочитать все строки таблицы Расходы (A–G)."""
+        header_row = (self._find_table_header_row(self.FINANCE_SHEET, "Расходы")
+                      or self._find_header_row(f"{self.FINANCE_SHEET}!C:C", "Кто?"))
+        result = self.api.values().get(
+            spreadsheetId=self.spreadsheet_id,
+            range=f"{self.FINANCE_SHEET}!A{header_row + 1}:G1000",
+        ).execute()
+        items = []
+        for row in result.get("values", []):
+            project      = row[0].strip() if len(row) > 0 else ""
+            date         = row[1].strip() if len(row) > 1 else ""
+            who          = row[2].strip() if len(row) > 2 else ""
+            amount       = row[3].strip() if len(row) > 3 else ""
+            what         = row[4].strip() if len(row) > 4 else ""
+            expense_type = row[5].strip() if len(row) > 5 else ""
+            comment      = row[6].strip() if len(row) > 6 else ""
+            if not project or not amount:
+                continue
+            items.append({"project": project, "date": date, "who": who,
+                          "amount": amount, "what": what,
+                          "expense_type": expense_type, "comment": comment})
+        return items
+
+    def get_incomes(self, income_col_start: str = "O") -> list[dict]:
+        """Прочитать все строки таблицы Доходы (O–S)."""
+        end_col = chr(ord(income_col_start) + 4)
+        header_row = (self._find_table_header_row(self.FINANCE_SHEET, "Доходы")
+                      or self._find_header_row(f"{self.FINANCE_SHEET}!Q:Q", "За что?"))
+        result = self.api.values().get(
+            spreadsheetId=self.spreadsheet_id,
+            range=f"{self.FINANCE_SHEET}!{income_col_start}{header_row + 1}:{end_col}1000",
+        ).execute()
+        items = []
+        for row in result.get("values", []):
+            project = row[0].strip() if len(row) > 0 else ""
+            amount  = row[1].strip() if len(row) > 1 else ""
+            what    = row[2].strip() if len(row) > 2 else ""
+            date    = row[3].strip() if len(row) > 3 else ""
+            comment = row[4].strip() if len(row) > 4 else ""
+            if not project or not amount:
+                continue
+            items.append({"project": project, "amount": amount, "what": what,
+                          "date": date, "comment": comment})
+        return items
+
     def get_show_names(self) -> list[str]:
         """Уникальные названия спектаклей из вкладки 'Составы спектаклей', столбец A."""
         result = self.api.values().get(

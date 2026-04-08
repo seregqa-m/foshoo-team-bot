@@ -31,6 +31,21 @@ def _amt(v) -> int:
     return _parse_amount(v)
 
 
+def _safe_date(s) -> str | None:
+    """DD.MM.YYYY или уже ISO → ISO; None/пустая → None."""
+    if not s:
+        return None
+    s = str(s).strip()
+    if not s:
+        return None
+    if len(s) == 10 and '-' in s:
+        return s
+    try:
+        return _dmy_to_iso(s)
+    except Exception:
+        return None
+
+
 def _dmy_to_iso(s: str) -> str:
     """'15.01.2024' → '2024-01-15'"""
     d, m, y = s.strip().split('.')
@@ -266,26 +281,58 @@ async def get_chart(period: str = "month", from_date: str = None, db: Session = 
     return {"data": data}
 
 
-@router.post("/sync-returns")
-async def sync_returns(db: Session = Depends(get_db)):
-    """Синхронизировать таблицу Возвраты из Google Sheets."""
-    try:
-        client = _get_client()
-        rows = client.get_returns()
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+def sync_finance_from_sheets(db: Session) -> dict:
+    """Полная замена данных в БД из Google Sheets (расходы + доходы + возвраты)."""
+    from config import GOOGLE_CALENDAR_JSON, GOOGLE_SHEETS_ID
+    from sheets_client import SheetsClient
+    import os
+    if not GOOGLE_SHEETS_ID or not os.path.exists(GOOGLE_CALENDAR_JSON):
+        return {"skipped": True}
+
+    client = SheetsClient(GOOGLE_CALENDAR_JSON, GOOGLE_SHEETS_ID)
+    expenses = client.get_expenses()
+    incomes  = client.get_incomes()
+    returns  = client.get_returns()
+
+    db.query(ExpenseLog).delete()
+    for e in expenses:
+        db.add(ExpenseLog(
+            project=e["project"], date=_safe_date(e["date"]), who=e["who"],
+            amount=_parse_amount(e["amount"]) if e["amount"] else 0,
+            what=e["what"], expense_type=e["expense_type"], comment=e["comment"],
+        ))
+
+    db.query(IncomeLog).delete()
+    for i in incomes:
+        db.add(IncomeLog(
+            project=i["project"],
+            amount=_parse_amount(i["amount"]) if i["amount"] else 0,
+            what=i["what"], date=_safe_date(i["date"]), comment=i["comment"],
+        ))
 
     db.query(ReturnsLog).delete()
-    for r in rows:
+    for r in returns:
         db.add(ReturnsLog(
             project=r["project"], who=r["who"],
             amount=_parse_amount(r["amount"]) if r["amount"] else 0,
-            date=_dmy_to_iso(r["date"]) if r["date"] else None,
+            date=_safe_date(r["date"]),
         ))
+
     db.commit()
-    return {"status": "synced", "count": len(rows)}
+    return {"expenses": len(expenses), "incomes": len(incomes), "returns": len(returns)}
+
+
+@router.post("/sync")
+async def sync_all(db: Session = Depends(get_db)):
+    """Синхронизировать расходы, доходы и возвраты из Google Sheets → БД."""
+    try:
+        result = sync_finance_from_sheets(db)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"sync_all failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    return {"status": "synced", **result}
 
 
 @router.get("/transactions")

@@ -102,6 +102,24 @@ async def sync_calendar_background():
         await asyncio.sleep(SYNC_INTERVAL_MINUTES * 60)
 
 
+async def sync_finance_background():
+    """Периодическая синхронизация финансов из Google Sheets."""
+    await asyncio.sleep(30)
+    while True:
+        try:
+            from finance_router import sync_finance_from_sheets
+            db = SessionLocal()
+            try:
+                result = sync_finance_from_sheets(db)
+                if not result.get("skipped"):
+                    logger.info(f"✅ Finance sync: {result}")
+            finally:
+                db.close()
+        except Exception as e:
+            logger.error(f"❌ Finance sync failed: {e}")
+        await asyncio.sleep(SYNC_INTERVAL_MINUTES * 60)
+
+
 async def poll_reminder_background():
     """Проверять каждую минуту: нужно ли отправить напоминание об опросе в группу."""
     await asyncio.sleep(15)
@@ -262,6 +280,9 @@ async def startup():
 
     # Запустить background sync task для Google Calendar
     asyncio.create_task(sync_calendar_background())
+
+    # Запустить синхронизацию финансов
+    asyncio.create_task(sync_finance_background())
 
     # Запустить фоновую проверку напоминаний
     asyncio.create_task(poll_reminder_background())
