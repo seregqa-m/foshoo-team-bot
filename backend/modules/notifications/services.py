@@ -75,6 +75,7 @@ class NotificationService:
         event_reminders_enabled: bool = None,
         reminder_days_before: int = None,
         reminder_time: str = None,
+        troupe_filter: str = None,
     ) -> NotificationSetting:
         """Обновить настройки уведомлений"""
         settings = self.get_user_settings(user_id)
@@ -89,6 +90,8 @@ class NotificationService:
             settings.reminder_days_before = reminder_days_before
         if reminder_time is not None:
             settings.reminder_time = reminder_time
+        if troupe_filter is not None:
+            settings.troupe_filter = troupe_filter
 
         self.db.commit()
         return settings

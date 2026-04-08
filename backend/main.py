@@ -58,6 +58,7 @@ def run_migrations():
             "ALTER TABLE poll_votes ADD COLUMN username TEXT",
             "ALTER TABLE notification_settings ADD COLUMN reminder_days_before INTEGER DEFAULT 3",
             "ALTER TABLE notification_settings ADD COLUMN reminder_time TEXT DEFAULT '18:00'",
+            "ALTER TABLE notification_settings ADD COLUMN troupe_filter TEXT DEFAULT 'труппа 1'",
         ]:
             try:
                 conn.execute(text(stmt))

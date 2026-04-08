@@ -42,5 +42,15 @@ async def check_access(username: str = "", user_id: int = 0):
 @router.get("/app-config")
 async def app_config():
     """Вернуть публичные настройки приложения для фронтенда."""
-    from config import TROUPE_FILTER
-    return {"troupe_filter": TROUPE_FILTER}
+    from config import ADMIN_ID, TROUPE_FILTER
+    from core.database import SessionLocal
+    from modules.notifications.models import NotificationSetting
+    db = SessionLocal()
+    try:
+        settings = db.query(NotificationSetting).filter(
+            NotificationSetting.user_id == ADMIN_ID
+        ).first()
+        troupe_filter = (settings.troupe_filter if settings and settings.troupe_filter else None) or TROUPE_FILTER
+    finally:
+        db.close()
+    return {"troupe_filter": troupe_filter}

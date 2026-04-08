@@ -14,6 +14,7 @@ class UpdateSettingsRequest(BaseModel):
     event_reminders_enabled: bool = None
     reminder_days_before: int = None
     reminder_time: str = None
+    troupe_filter: str = None
 
 
 router = APIRouter(prefix="/api/notifications", tags=["notifications"])
@@ -37,6 +38,7 @@ async def get_notification_settings(
         "event_reminders_enabled": settings.event_reminders_enabled,
         "reminder_days_before": settings.reminder_days_before,
         "reminder_time": settings.reminder_time,
+        "troupe_filter": settings.troupe_filter or "труппа 1",
     }
 
 
@@ -58,6 +60,7 @@ async def update_notification_settings(
         event_reminders_enabled=request.event_reminders_enabled,
         reminder_days_before=request.reminder_days_before,
         reminder_time=request.reminder_time,
+        troupe_filter=request.troupe_filter,
     )
 
     return {"status": "updated"}

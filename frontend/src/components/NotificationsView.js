@@ -51,7 +51,7 @@ export default function NotificationsView({ userId }) {
   return (
     <>
       <div className="page-header">
-        <div className="page-title">Уведомления</div>
+        <div className="page-title">Настройки</div>
       </div>
 
       {error && <div className="alert alert-error">{error}</div>}
@@ -90,6 +90,20 @@ export default function NotificationsView({ userId }) {
       </div>
       <div style={{ fontSize: 12, color: '#888', padding: '4px 4px 0' }}>
         Напоминание отправляется автоматически за 1 день до события
+      </div>
+
+      <div className="section-label" style={{ marginTop: 16 }}>Основная группа</div>
+      <div className="card-white" style={{ padding: '14px 16px' }}>
+        <div style={{ fontSize: 13, color: '#666', marginBottom: 8 }}>
+          Подстрока в названии события для фильтрации и авто-опросов
+        </div>
+        <input
+          type="text"
+          className="form-input"
+          style={{ width: '100%' }}
+          value={settings.troupe_filter ?? 'труппа 1'}
+          onChange={e => { setSettings(s => ({ ...s, troupe_filter: e.target.value })); setSaved(false); }}
+        />
       </div>
 
       <button className="btn btn-primary" style={{ width: '100%', padding: 14, fontSize: 15, marginTop: 8 }} onClick={handleSave}>

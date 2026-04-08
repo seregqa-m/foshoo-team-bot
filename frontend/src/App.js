@@ -94,7 +94,7 @@ function App() {
           className={activeTab === 'notifications' ? 'active' : ''}
           onClick={() => setActiveTab('notifications')}
         >
-          🔔<span>Уведомления</span>
+          ⚙️<span>Настройки</span>
         </button>
       </nav>
     </div>
