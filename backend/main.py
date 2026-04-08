@@ -181,10 +181,10 @@ async def _check_and_send_reminders():
         if not (settings and settings.poll_reminders_enabled):
             return
 
-        # Проверяем что сейчас нужное время (с точностью до минуты, московское UTC+3)
+        # Проверяем что сейчас уже прошло настроенное время (московское UTC+3)
         moscow_now = now + timedelta(hours=3)
         h, m = map(int, reminder_time_str.split(":"))
-        if moscow_now.hour != h or moscow_now.minute != m:
+        if (moscow_now.hour, moscow_now.minute) < (h, m):
             return
 
         # Ищем события через days_before дней
