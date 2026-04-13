@@ -16,11 +16,11 @@ router = APIRouter(prefix="/api/availability", tags=["availability"])
 
 
 def _date_label(dt: datetime) -> str:
-    """datetime → строка для опции опроса, напр. 'сб 17 мая 19:30'"""
+    """datetime → строка для опции опроса, напр. 'сб 17 мая'"""
     from babel.dates import format_date
     day_name = format_date(dt, 'EE', locale='ru_RU').rstrip('.')
     month_day = format_date(dt, 'd MMM', locale='ru_RU')
-    return f"{day_name} {month_day} {dt.strftime('%H:%M')}"
+    return f"{day_name} {month_day}"
 
 
 def _get_troupe_filter(db: Session) -> str:
@@ -212,7 +212,7 @@ async def create_campaign(req: CreateCampaignRequest, db: Session = Depends(get_
 
     for batch_idx, batch in enumerate(batches):
         options = [_date_label(e.start_time) for e in batch]
-        question = f"Занятость на {month_label}" + (
+        question = f"Отметьте даты когда вы свободны — {month_label}" + (
             poll_suffix.format(batch_idx + 1) if poll_suffix else ""
         )
 
