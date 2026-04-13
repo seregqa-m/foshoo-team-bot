@@ -40,5 +40,6 @@ class NotificationSetting(Base):
     reminder_days_before = Column(Integer, default=3)
     reminder_time = Column(String, default="18:00")
     troupe_filter = Column(String, default="труппа 1")
+    current_show = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

@@ -59,6 +59,7 @@ def run_migrations():
             "ALTER TABLE notification_settings ADD COLUMN reminder_days_before INTEGER DEFAULT 3",
             "ALTER TABLE notification_settings ADD COLUMN reminder_time TEXT DEFAULT '18:00'",
             "ALTER TABLE notification_settings ADD COLUMN troupe_filter TEXT DEFAULT 'труппа 1'",
+            "ALTER TABLE notification_settings ADD COLUMN current_show TEXT",
         ]:
             try:
                 conn.execute(text(stmt))
@@ -309,7 +310,15 @@ async def _send_poll_reminders():
                 try:
                     from sheets_client import SheetsClient
                     client = SheetsClient(GOOGLE_CALENDAR_JSON, GOOGLE_SHEETS_ID)
-                    for username in client.get_actor_mapping():
+                    mapping = client.get_actor_mapping()  # {username: name}
+
+                    target_usernames = set(mapping.keys())
+                    if settings and settings.current_show:
+                        cast_names = {n.lower() for n in client.get_show_cast(settings.current_show)}
+                        name_to_username = {name.lower(): uname for uname, name in mapping.items()}
+                        target_usernames = {name_to_username[n] for n in cast_names if n in name_to_username}
+
+                    for username in target_usernames:
                         if username not in voted_usernames:
                             unvoted_mentions.append(f"@{username}")
                 except Exception as e:

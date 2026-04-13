@@ -400,6 +400,20 @@ class SheetsClient:
                 names.add(row[0].strip())
         return list(names)
 
+    def get_show_cast(self, show_name: str) -> list[str]:
+        """Уникальные имена актёров для указанного спектакля (столбец C)."""
+        result = self.api.values().get(
+            spreadsheetId=self.spreadsheet_id,
+            range="Составы спектаклей!A:C",
+        ).execute()
+        actors = set()
+        for i, row in enumerate(result.get("values", [])):
+            if i == 0:
+                continue  # заголовок
+            if len(row) >= 3 and row[0].strip() == show_name and row[2].strip():
+                actors.add(row[2].strip())
+        return list(actors)
+
     def record_poll_answer(self, telegram_username: str, event_dt: datetime, answer: str) -> bool:
         """
         Записать ответ актёра в таблицу.
