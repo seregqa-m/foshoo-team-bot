@@ -212,7 +212,7 @@ async def create_campaign(req: CreateCampaignRequest, db: Session = Depends(get_
 
     for batch_idx, batch in enumerate(batches):
         options = [_date_label(e.start_time) for e in batch]
-        question = f"Отметьте даты когда вы свободны — {month_label}" + (
+        question = f"Отметьте даты когда вы свободны для спектаклей — {month_label}" + (
             poll_suffix.format(batch_idx + 1) if poll_suffix else ""
         )
 
