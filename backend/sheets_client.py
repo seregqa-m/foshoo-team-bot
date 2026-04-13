@@ -400,6 +400,25 @@ class SheetsClient:
                 names.add(row[0].strip())
         return list(names)
 
+    def check_dates_exist(self, event_dts: list) -> list:
+        """Вернуть список datetime из event_dts у которых НЕТ столбца в График [составы]."""
+        result = self.api.values().get(
+            spreadsheetId=self.spreadsheet_id,
+            range=f"{SCHEDULE_SHEET}!1:1",
+        ).execute()
+        headers = result.get("values", [[]])[0]
+        parsed = [_parse_header_date(h) for h in headers]
+
+        missing = []
+        for dt in event_dts:
+            found = any(
+                p and p.day == dt.day and p.month == dt.month
+                for p in parsed
+            )
+            if not found:
+                missing.append(dt)
+        return missing
+
     def get_show_cast(self, show_name: str) -> list[str]:
         """Уникальные имена актёров для указанного спектакля (столбец C)."""
         result = self.api.values().get(

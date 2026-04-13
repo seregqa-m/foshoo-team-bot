@@ -10,6 +10,189 @@ function Toggle({ checked, onChange }) {
   );
 }
 
+const API = process.env.REACT_APP_API_URL || 'http://127.0.0.1:8000';
+
+function AvailabilitySection({ showNames }) {
+  const [campaign, setCampaign] = useState(undefined); // undefined=loading, null=none
+  const [showForm, setShowForm] = useState(false);
+  const [nextEvents, setNextEvents] = useState([]);
+  const [selectedShows, setSelectedShows] = useState([]);
+  const [selectedEvents, setSelectedEvents] = useState([]);
+  const [missingDates, setMissingDates] = useState([]);
+  const [nonVoters, setNonVoters] = useState(null);
+  const [sending, setSending] = useState(false);
+  const [formError, setFormError] = useState(null);
+
+  const loadCampaign = () => {
+    client.get('/api/availability/current')
+      .then(r => setCampaign(r.data.campaign || null))
+      .catch(() => setCampaign(null));
+  };
+
+  useEffect(() => { loadCampaign(); }, []);
+
+  const openForm = () => {
+    setShowForm(true);
+    setFormError(null);
+    setMissingDates([]);
+    client.get('/api/availability/next-month-events')
+      .then(r => {
+        const evs = r.data.events || [];
+        setNextEvents(evs);
+        setSelectedEvents(evs.map(e => e.id));
+      })
+      .catch(() => setFormError('Не удалось загрузить события'));
+  };
+
+  const toggleShow = name => setSelectedShows(s =>
+    s.includes(name) ? s.filter(x => x !== name) : [...s, name]
+  );
+  const toggleEvent = id => setSelectedEvents(s =>
+    s.includes(id) ? s.filter(x => x !== id) : [...s, id]
+  );
+
+  const checkDates = async (ids) => {
+    if (!ids.length) { setMissingDates([]); return; }
+    try {
+      const r = await client.get('/api/availability/check-dates', {
+        params: { event_ids: ids.join(',') }
+      });
+      setMissingDates(r.data.missing || []);
+    } catch { setMissingDates([]); }
+  };
+
+  const handleEventToggle = async (id) => {
+    const next = selectedEvents.includes(id)
+      ? selectedEvents.filter(x => x !== id)
+      : [...selectedEvents, id];
+    setSelectedEvents(next);
+    await checkDates(next);
+  };
+
+  const handleSend = async () => {
+    if (!selectedShows.length) { setFormError('Выберите хотя бы один спектакль'); return; }
+    if (!selectedEvents.length) { setFormError('Выберите хотя бы одну дату'); return; }
+    setSending(true);
+    setFormError(null);
+    try {
+      await client.post('/api/availability/campaign', {
+        show_names: selectedShows,
+        event_ids: selectedEvents,
+      });
+      setShowForm(false);
+      loadCampaign();
+    } catch (e) {
+      setFormError(e.response?.data?.detail || 'Ошибка отправки');
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const loadNonVoters = async () => {
+    const r = await client.get('/api/availability/non-voters');
+    setNonVoters(r.data.non_voters || []);
+  };
+
+  const monthLabel = (m) => {
+    if (!m) return '';
+    const [y, mo] = m.split('-');
+    const months = ['','янв','фев','мар','апр','май','июн','июл','авг','сен','окт','ноя','дек'];
+    return `${months[parseInt(mo)]} ${y}`;
+  };
+
+  return (
+    <>
+      <div className="section-label" style={{ marginTop: 16 }}>Опрос занятости</div>
+
+      {campaign === undefined ? (
+        <div className="card-white" style={{ padding: '12px 16px', color: '#888', fontSize: 13 }}>Загрузка...</div>
+      ) : campaign ? (
+        <div className="card-white" style={{ padding: '14px 16px' }}>
+          <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>
+            Кампания на {monthLabel(campaign.month)}
+          </div>
+          <div style={{ fontSize: 13, color: '#666', marginBottom: 8 }}>
+            {JSON.parse ? campaign.show_names?.join(', ') : ''} · {campaign.polls.reduce((s, p) => s + p.voter_count, 0)} ответов
+          </div>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <button className="btn btn-secondary" style={{ fontSize: 13 }} onClick={loadNonVoters}>
+              Кто не ответил
+            </button>
+            <button className="btn btn-secondary" style={{ fontSize: 13 }} onClick={() => { setShowForm(true); openForm(); }}>
+              Новая кампания
+            </button>
+          </div>
+          {nonVoters !== null && (
+            <div style={{ marginTop: 10, fontSize: 13 }}>
+              {nonVoters.length === 0
+                ? <span style={{ color: '#22c55e' }}>Все ответили</span>
+                : nonVoters.map(u => <span key={u} style={{ marginRight: 6 }}>@{u}</span>)
+              }
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="card-white" style={{ padding: '14px 16px' }}>
+          <div style={{ fontSize: 13, color: '#666', marginBottom: 10 }}>Кампания ещё не запускалась</div>
+          <button className="btn btn-primary" style={{ fontSize: 13 }} onClick={openForm}>
+            Запустить опрос занятости
+          </button>
+        </div>
+      )}
+
+      {showForm && (
+        <div className="card-white" style={{ padding: '14px 16px', marginTop: 8 }}>
+          <div style={{ fontWeight: 600, marginBottom: 10 }}>Новая кампания</div>
+
+          <div style={{ fontSize: 13, color: '#666', marginBottom: 6 }}>Спектакли в следующем месяце:</div>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 14 }}>
+            {showNames.map(name => (
+              <button
+                key={name}
+                onClick={() => toggleShow(name)}
+                style={{
+                  padding: '4px 12px', borderRadius: 16, fontSize: 13, cursor: 'pointer',
+                  border: selectedShows.includes(name) ? '2px solid #5a0000' : '1.5px solid #ccc',
+                  background: selectedShows.includes(name) ? '#f5e6e6' : '#fff',
+                  color: '#333',
+                }}
+              >{name}</button>
+            ))}
+          </div>
+
+          <div style={{ fontSize: 13, color: '#666', marginBottom: 6 }}>Даты (из календаря):</div>
+          {nextEvents.length === 0
+            ? <div style={{ fontSize: 13, color: '#aaa', marginBottom: 10 }}>Нет событий в следующем месяце</div>
+            : nextEvents.map(e => (
+              <label key={e.id} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, fontSize: 13, cursor: 'pointer' }}>
+                <input type="checkbox" checked={selectedEvents.includes(e.id)} onChange={() => handleEventToggle(e.id)} />
+                {e.date_label}
+              </label>
+            ))
+          }
+
+          {missingDates.length > 0 && (
+            <div style={{ background: '#fff8e1', border: '1px solid #f59e0b', borderRadius: 8, padding: '8px 12px', fontSize: 12, marginBottom: 10 }}>
+              ⚠️ Нет столбцов в «График [составы]»: {missingDates.join(', ')}
+            </div>
+          )}
+
+          {formError && <div className="alert alert-error" style={{ marginBottom: 8 }}>{formError}</div>}
+
+          <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+            <button className="btn btn-primary" style={{ flex: 1, fontSize: 13 }} onClick={handleSend} disabled={sending}>
+              {sending ? 'Отправка...' : 'Отправить в чат'}
+            </button>
+            <button className="btn btn-secondary" style={{ fontSize: 13 }} onClick={() => setShowForm(false)}>
+              Отмена
+            </button>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
 export default function NotificationsView({ userId }) {
   const [settings, setSettings] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -18,11 +201,12 @@ export default function NotificationsView({ userId }) {
   const [showNames, setShowNames] = useState([]);
 
   useEffect(() => {
-    fetch(`${process.env.REACT_APP_API_URL || 'http://127.0.0.1:8000'}/api/sheets/shows`)
+    fetch(`${API}/api/sheets/shows`)
       .then(r => r.json())
       .then(data => setShowNames(data.shows || []))
       .catch(() => {});
   }, []);
+
 
   useEffect(() => {
     if (!userId) { setLoading(false); return; }
@@ -135,6 +319,8 @@ export default function NotificationsView({ userId }) {
       <button className="btn btn-primary" style={{ width: '100%', padding: 14, fontSize: 15, marginTop: 8 }} onClick={handleSave}>
         Сохранить
       </button>
+
+      <AvailabilitySection showNames={showNames} />
     </>
   );
 }

@@ -61,14 +61,24 @@ async def handle_poll_answer(poll_answer: PollAnswer):
     from modules.polling.services import PollingService
     from modules.polling.models import Poll, PollVote
     from modules.calendar.models import CalendarEvent
-
-    answer = "retracted" if not poll_answer.option_ids else _POLL_ANSWER_MAP.get(poll_answer.option_ids[0])
-    if not answer:
-        logger.warning(f"Unknown poll option index: {poll_answer.option_ids[0]}")
-        return
+    from modules.availability.models import AvailabilityPoll as AvailPoll, \
+        AvailabilityPollOption, AvailabilityVote
 
     db = SessionLocal()
     try:
+        # Проверить сначала — это опрос занятости?
+        avail_poll = db.query(AvailPoll).filter(
+            AvailPoll.telegram_poll_id == poll_answer.poll_id
+        ).first()
+        if avail_poll:
+            await _handle_availability_answer(poll_answer, avail_poll, db)
+            return
+
+        answer = "retracted" if not poll_answer.option_ids else _POLL_ANSWER_MAP.get(poll_answer.option_ids[0])
+        if not answer:
+            logger.warning(f"Unknown poll option index: {poll_answer.option_ids[0]}")
+            return
+
         poll = db.query(Poll).filter(Poll.telegram_poll_id == poll_answer.poll_id).first()
         if not poll:
             logger.warning(f"No DB poll for telegram_poll_id={poll_answer.poll_id}")
@@ -107,4 +117,59 @@ async def handle_poll_answer(poll_answer: PollAnswer):
         logger.error(f"poll_answer handler error: {e}")
     finally:
         db.close()
+
+
+async def _handle_availability_answer(poll_answer, avail_poll, db):
+    """Обработать ответ на опрос занятости: записать да/нет в Google Sheets."""
+    from modules.availability.models import AvailabilityPollOption, AvailabilityVote
+    from modules.calendar.models import CalendarEvent
+
+    username = poll_answer.user.username
+    if not username:
+        logger.warning(f"Availability poll answer from user without username: {poll_answer.user.id}")
+        return
+
+    # Зафиксировать факт голосования (upsert по user_id + poll_id)
+    existing_vote = db.query(AvailabilityVote).filter(
+        AvailabilityVote.poll_id == avail_poll.id,
+        AvailabilityVote.user_id == poll_answer.user.id,
+    ).first()
+    if not existing_vote:
+        db.add(AvailabilityVote(
+            poll_id=avail_poll.id,
+            user_id=poll_answer.user.id,
+            username=username,
+        ))
+
+    # Если нет ответов (retract) — не трогаем таблицу
+    if not poll_answer.option_ids:
+        db.commit()
+        return
+
+    selected = set(poll_answer.option_ids)
+    options = db.query(AvailabilityPollOption).filter(
+        AvailabilityPollOption.poll_id == avail_poll.id
+    ).all()
+
+    try:
+        from config import GOOGLE_CALENDAR_JSON, GOOGLE_SHEETS_ID
+        from sheets_client import SheetsClient
+        import os
+        if not (GOOGLE_SHEETS_ID and os.path.exists(GOOGLE_CALENDAR_JSON)):
+            db.commit()
+            return
+        client = SheetsClient(GOOGLE_CALENDAR_JSON, GOOGLE_SHEETS_ID)
+        for opt in options:
+            answer = "yes" if opt.option_index in selected else "no"
+            event = db.query(CalendarEvent).filter(
+                CalendarEvent.id == opt.calendar_event_id
+            ).first()
+            if event:
+                client.record_poll_answer(username, event.start_time, answer)
+    except Exception as e:
+        logger.error(f"Availability sheets write error: {e}")
+
+    db.commit()
+    logger.info(f"Availability vote saved: poll={avail_poll.id} user=@{username} "
+                f"selected={list(selected)}")
 
