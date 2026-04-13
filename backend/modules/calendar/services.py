@@ -51,10 +51,17 @@ class CalendarService:
             raise ValueError(f"Empty start/end time in Google Calendar event: {dt_obj}")
         return datetime.fromisoformat(s.replace("Z", "+00:00"))
 
-    def sync_from_google(self, events_data: list[dict]) -> None:
+    def sync_from_google(self, events_data: list[dict], days: int = 90) -> None:
         """Синхронизировать события из Google Calendar"""
+        now = datetime.utcnow()
+        window_end = now + timedelta(days=days)
+        synced_ids: set[str] = set()
+
         for event_data in events_data:
             google_event_id = event_data.get("id")
+            if not google_event_id:
+                continue
+            synced_ids.add(google_event_id)
             try:
                 start_time = self._parse_dt(event_data.get("start", {}))
                 end_time = self._parse_dt(event_data.get("end", {}))
@@ -67,6 +74,7 @@ class CalendarService:
             ).first()
 
             if existing:
+                existing.is_cancelled = False  # восстановить если было отменено
                 existing.title = event_data.get("summary", "")
                 existing.description = event_data.get("description", "")
                 existing.location = event_data.get("location", "")
@@ -74,7 +82,7 @@ class CalendarService:
                 existing.end_time = end_time
                 existing.last_synced = datetime.utcnow()
             else:
-                new_event = CalendarEvent(
+                self.db.add(CalendarEvent(
                     google_event_id=google_event_id,
                     title=event_data.get("summary", ""),
                     description=event_data.get("description", ""),
@@ -82,11 +90,22 @@ class CalendarService:
                     start_time=start_time,
                     end_time=end_time,
                     last_synced=datetime.utcnow()
-                )
-                self.db.add(new_event)
+                ))
+
+        # Отменить события в окне синхронизации которых нет в ответе Google
+        stale = self.db.query(CalendarEvent).filter(
+            CalendarEvent.is_cancelled == False,
+            CalendarEvent.start_time >= now,
+            CalendarEvent.start_time <= window_end,
+            CalendarEvent.google_event_id.isnot(None),
+            CalendarEvent.google_event_id.notin_(synced_ids),
+        ).all()
+        for event in stale:
+            event.is_cancelled = True
+            logger.info(f"Cancelled stale event: id={event.id} '{event.title}' {event.start_time.date()}")
 
         self.db.commit()
-        logger.info(f"Synced {len(events_data)} events from Google Calendar")
+        logger.info(f"Synced {len(events_data)} events, cancelled {len(stale)} stale")
 
     def create_event(
         self,
