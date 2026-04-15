@@ -20,6 +20,7 @@ function AvailabilitySection({ showNames }) {
   const [selectedEvents, setSelectedEvents] = useState([]);
   const [missingDates, setMissingDates] = useState([]);
   const [nonVoters, setNonVoters] = useState(null);
+  const [pinging, setPinging] = useState(false);
   const [sending, setSending] = useState(false);
   const [formError, setFormError] = useState(null);
 
@@ -93,6 +94,15 @@ function AvailabilitySection({ showNames }) {
     setNonVoters(r.data.non_voters || []);
   };
 
+  const handlePing = async () => {
+    setPinging(true);
+    try {
+      await client.post('/api/availability/ping-non-voters');
+    } finally {
+      setPinging(false);
+    }
+  };
+
   const monthLabel = (m) => {
     if (!m) return '';
     const [y, mo] = m.split('-');
@@ -102,47 +112,54 @@ function AvailabilitySection({ showNames }) {
 
   return (
     <>
-      <div className="section-label" style={{ marginTop: 16 }}>Опрос занятости</div>
+      <div className="section-label" style={{ marginTop: 16 }}>Опрос занятости для спектов</div>
 
       {campaign === undefined ? (
         <div className="card-white" style={{ padding: '12px 16px', color: '#888', fontSize: 13 }}>Загрузка...</div>
       ) : campaign ? (
         <div className="card-white" style={{ padding: '14px 16px' }}>
           <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>
-            Кампания на {monthLabel(campaign.month)}
+            Опрос на {monthLabel(campaign.month)}
           </div>
           <div style={{ fontSize: 13, color: '#666', marginBottom: 8 }}>
-            {JSON.parse ? campaign.show_names?.join(', ') : ''} · {campaign.polls.reduce((s, p) => s + p.voter_count, 0)} ответов
+            {campaign.show_names?.join(', ')} · {campaign.polls.reduce((s, p) => s + p.voter_count, 0)} ответов
           </div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             <button className="btn btn-secondary" style={{ fontSize: 13 }} onClick={loadNonVoters}>
-              Кто не ответил
+              Посмотреть неответивших
             </button>
             <button className="btn btn-secondary" style={{ fontSize: 13 }} onClick={() => { setShowForm(true); openForm(); }}>
-              Новая кампания
+              Новый опрос
             </button>
           </div>
           {nonVoters !== null && (
-            <div style={{ marginTop: 10, fontSize: 13 }}>
+            <div style={{ marginTop: 10 }}>
               {nonVoters.length === 0
-                ? <span style={{ color: '#22c55e' }}>Все ответили</span>
-                : nonVoters.map(u => <span key={u} style={{ marginRight: 6 }}>@{u}</span>)
+                ? <span style={{ fontSize: 13, color: '#22c55e' }}>Все ответили</span>
+                : <>
+                    <div style={{ fontSize: 13, marginBottom: 8 }}>
+                      {nonVoters.map(u => <span key={u} style={{ marginRight: 6 }}>@{u}</span>)}
+                    </div>
+                    <button className="btn btn-primary" style={{ fontSize: 13 }} onClick={handlePing} disabled={pinging}>
+                      {pinging ? 'Отправка...' : 'Пингануть'}
+                    </button>
+                  </>
               }
             </div>
           )}
         </div>
       ) : (
         <div className="card-white" style={{ padding: '14px 16px' }}>
-          <div style={{ fontSize: 13, color: '#666', marginBottom: 10 }}>Кампания ещё не запускалась</div>
+          <div style={{ fontSize: 13, color: '#666', marginBottom: 10 }}>Опрос ещё не запускался</div>
           <button className="btn btn-primary" style={{ fontSize: 13 }} onClick={openForm}>
-            Запустить опрос занятости
+            Запустить опрос занятости для спектов
           </button>
         </div>
       )}
 
       {showForm && (
         <div className="card-white" style={{ padding: '14px 16px', marginTop: 8 }}>
-          <div style={{ fontWeight: 600, marginBottom: 10 }}>Новая кампания</div>
+          <div style={{ fontWeight: 600, marginBottom: 10 }}>Новый опрос</div>
 
           <div style={{ fontSize: 13, color: '#666', marginBottom: 6 }}>Спектакли в следующем месяце:</div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 14 }}>

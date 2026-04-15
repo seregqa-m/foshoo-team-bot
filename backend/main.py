@@ -335,7 +335,7 @@ async def _send_poll_reminders():
             poll_link = ""
             if poll.telegram_message_id and GROUP_CHAT_ID:
                 group_id = str(GROUP_CHAT_ID).lstrip("-").lstrip("100") if str(GROUP_CHAT_ID).startswith("-100") else str(abs(GROUP_CHAT_ID))
-                poll_link = f"\nhttps://t.me/c/{group_id}/{poll.telegram_message_id}"
+                poll_link = f"\n\nhttps://t.me/c/{group_id}/{poll.telegram_message_id}"
 
             await bot.send_message(chat_id=GROUP_CHAT_ID,
                                    text=f"ребят, отметьте присутствие {date_str}!\n{mentions}{poll_link}")

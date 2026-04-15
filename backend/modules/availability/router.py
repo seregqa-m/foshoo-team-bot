@@ -163,6 +163,71 @@ async def get_non_voters(db: Session = Depends(get_db)):
     return {"non_voters": sorted(non_voters)}
 
 
+@router.post("/ping-non-voters")
+async def ping_non_voters(db: Session = Depends(get_db)):
+    """Отправить в чат напоминание с тегами тех, кто не ответил на опрос занятости."""
+    from bot import bot
+    from babel.dates import format_date
+
+    if not GROUP_CHAT_ID:
+        raise HTTPException(status_code=400, detail="GROUP_CHAT_ID не настроен")
+
+    campaign = db.query(AvailabilityCampaign).order_by(
+        AvailabilityCampaign.id.desc()
+    ).first()
+    if not campaign:
+        raise HTTPException(status_code=404, detail="Нет активного опроса")
+
+    show_names = json.loads(campaign.show_names)
+    if not GOOGLE_SHEETS_ID or not os.path.exists(GOOGLE_CALENDAR_JSON):
+        raise HTTPException(status_code=503, detail="Google Sheets не настроен")
+
+    try:
+        from sheets_client import SheetsClient
+        client = SheetsClient(GOOGLE_CALENDAR_JSON, GOOGLE_SHEETS_ID)
+        mapping = client.get_actor_mapping()
+        cast_usernames: set[str] = set()
+        for show in show_names:
+            cast_names = {n.lower() for n in client.get_show_cast(show)}
+            name_to_uname = {name.lower(): uname for uname, name in mapping.items()}
+            cast_usernames |= {name_to_uname[n] for n in cast_names if n in name_to_uname}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Ошибка чтения состава: {e}")
+
+    non_voters = []
+    for uname in cast_usernames:
+        for poll in campaign.polls:
+            voted = any(v.username and v.username.lower() == uname for v in poll.votes)
+            if not voted:
+                non_voters.append(uname)
+                break
+
+    if not non_voters:
+        return {"status": "all_answered", "count": 0}
+
+    first_event_dt = db.query(CalendarEvent).filter(
+        CalendarEvent.id == campaign.polls[0].options[0].calendar_event_id
+    ).first()
+    month_label = format_date(first_event_dt.start_time, "MMMM yyyy", locale="ru_RU") \
+        if first_event_dt else campaign.month
+
+    mentions = " ".join(f"@{u}" for u in sorted(non_voters))
+
+    poll_links = []
+    for poll in campaign.polls:
+        if poll.telegram_message_id:
+            group_id = str(GROUP_CHAT_ID).lstrip("-100") if str(GROUP_CHAT_ID).startswith("-100") \
+                else str(abs(GROUP_CHAT_ID))
+            poll_links.append(f"https://t.me/c/{group_id}/{poll.telegram_message_id}")
+
+    text = f"ребят, ещё не отметили занятость на {month_label}!\n{mentions}"
+    if poll_links:
+        text += "\n\n" + "\n".join(poll_links)
+
+    await bot.send_message(chat_id=GROUP_CHAT_ID, text=text)
+    return {"status": "sent", "count": len(non_voters)}
+
+
 class CreateCampaignRequest(BaseModel):
     show_names: list[str]
     event_ids: list[int]
