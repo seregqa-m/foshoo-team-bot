@@ -103,6 +103,14 @@ class CalendarService:
         for event in stale:
             event.is_cancelled = True
             logger.info(f"Cancelled stale event: id={event.id} '{event.title}' {event.start_time.date()}")
+            try:
+                from modules.polling.models import Poll
+                self.db.query(Poll).filter(
+                    Poll.calendar_event_id == event.id,
+                    Poll.is_active == True,
+                ).update({"is_active": False})
+            except Exception as e:
+                logger.warning(f"Failed to deactivate polls for event {event.id}: {e}")
 
         self.db.commit()
         logger.info(f"Synced {len(events_data)} events, cancelled {len(stale)} stale")
