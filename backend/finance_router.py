@@ -10,7 +10,7 @@ from modules.finance.models import ExpenseLog, IncomeLog, ReturnsLog  # noqa: F4
 router = APIRouter(prefix="/api/finance", tags=["finance"])
 logger = logging.getLogger(__name__)
 
-EXPENSE_TYPES = ["Личные траты", "Трата со счета ФоШу", "Пожертвование"]
+EXPENSE_TYPES = ["Личные траты", "Трата со счета ФоШу", "Пожертвование", "Возврат"]
 PROJECTS = ["Театр", "Любовь Громова", "Урод", "Слепые"]
 
 
@@ -183,11 +183,9 @@ async def get_chart(period: str = "month", from_date: str = None, db: Session = 
             if row.date and row.amount is not None:
                 income_agg[row.date] += _amt(row.amount)
 
-        for row in db.query(ExpenseLog).filter(ExpenseLog.expense_type == "Трата со счета ФоШу").all():
-            if row.date and row.amount is not None:
-                expense_agg[row.date] += _amt(row.amount)
-
-        for row in db.query(ReturnsLog).all():
+        for row in db.query(ExpenseLog).filter(
+            ExpenseLog.expense_type.in_(["Трата со счета ФоШу", "Возврат"])
+        ).all():
             if row.date and row.amount is not None:
                 expense_agg[row.date] += _amt(row.amount)
 
@@ -247,7 +245,7 @@ async def get_chart(period: str = "month", from_date: str = None, db: Session = 
         if not k or row.amount is None:
             continue
         amt = _amt(row.amount)
-        if row.expense_type == "Трата со счета ФоШу":
+        if row.expense_type in ("Трата со счета ФоШу", "Возврат"):
             exp_foshu[k] += amt
         elif row.expense_type == "Личные траты":
             exp_personal[k] += amt
@@ -255,13 +253,6 @@ async def get_chart(period: str = "month", from_date: str = None, db: Session = 
             exp_donation[k] += amt
         else:
             exp_foshu[k] += amt
-
-    for row in db.query(ReturnsLog).all():
-        if from_iso and row.date and row.date < from_iso:
-            continue
-        k = month_key(row.date)
-        if k and row.amount is not None:
-            exp_foshu[k] += _amt(row.amount)
 
     all_keys = sorted(
         set(income_agg) | set(exp_foshu) | set(exp_personal) | set(exp_donation),
@@ -292,7 +283,6 @@ def sync_finance_from_sheets(db: Session) -> dict:
     client = SheetsClient(GOOGLE_CALENDAR_JSON, GOOGLE_SHEETS_ID)
     expenses = client.get_expenses()
     incomes  = client.get_incomes()
-    returns  = client.get_returns()
 
     db.query(ExpenseLog).delete()
     for e in expenses:
@@ -310,16 +300,8 @@ def sync_finance_from_sheets(db: Session) -> dict:
             what=i["what"], date=_safe_date(i["date"]), comment=i["comment"],
         ))
 
-    db.query(ReturnsLog).delete()
-    for r in returns:
-        db.add(ReturnsLog(
-            project=r["project"], who=r["who"],
-            amount=_parse_amount(r["amount"]) if r["amount"] else 0,
-            date=_safe_date(r["date"]),
-        ))
-
     db.commit()
-    return {"expenses": len(expenses), "incomes": len(incomes), "returns": len(returns)}
+    return {"expenses": len(expenses), "incomes": len(incomes)}
 
 
 @router.post("/sync")
