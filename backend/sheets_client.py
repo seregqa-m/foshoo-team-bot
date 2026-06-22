@@ -247,18 +247,22 @@ class SheetsClient:
                                   income_start_idx + 3)
         logger.info(f"Sheets: added income {project} {amount}")
 
-    def _delete_table_row(self, sheet_id: int, table_name: str, row_index: int) -> None:
-        """Удалить строку внутри именованной таблицы (не трогает соседние таблицы)."""
+    def _delete_sheet_row(self, sheet_id: int, row_index_0based: int) -> None:
+        """Удалить строку по абсолютному 0-based индексу (весь диапазон листа)."""
         self.api.batchUpdate(
             spreadsheetId=self.spreadsheet_id,
-            body={"requests": [{"deleteTableRow": {
-                "tableRange": {"sheetId": sheet_id, "name": table_name},
-                "rowIndex": row_index,
+            body={"requests": [{"deleteDimension": {
+                "range": {
+                    "sheetId": sheet_id,
+                    "dimension": "ROWS",
+                    "startIndex": row_index_0based,
+                    "endIndex": row_index_0based + 1,
+                }
             }}]}
         ).execute()
 
     def delete_expense_row(self, date_str: str, what: str) -> bool:
-        """Найти строку расхода по дате и описанию и удалить её из таблицы Расходы."""
+        """Найти строку расхода по дате и описанию и удалить её."""
         header_row = (self._find_table_header_row(self.FINANCE_SHEET, "Расходы")
                       or self._find_header_row(f"{self.FINANCE_SHEET}!C:C", "Кто?"))
         result = self.api.values().get(
@@ -270,13 +274,14 @@ class SheetsClient:
             row_what = row[4].strip() if len(row) > 4 else ""
             if row_date == date_str and row_what == what:
                 sheet_id = self._get_sheet_id(self.FINANCE_SHEET)
-                self._delete_table_row(sheet_id, "Расходы", i)
-                logger.info(f"Sheets: deleted expense row (table index {i})")
+                # header_row — 1-based, данные начинаются с header_row+1 (1-based) = header_row (0-based)
+                self._delete_sheet_row(sheet_id, header_row + i)
+                logger.info(f"Sheets: deleted expense row at sheet row {header_row + i + 1}")
                 return True
         return False
 
     def delete_income_row(self, date_str: str, what: str) -> bool:
-        """Найти строку дохода по дате и описанию и удалить её из таблицы Доходы."""
+        """Найти строку дохода по дате и описанию и удалить её."""
         header_row = (self._find_table_header_row(self.FINANCE_SHEET, "Доходы")
                       or self._find_header_row(f"{self.FINANCE_SHEET}!Q:Q", "За что?"))
         result = self.api.values().get(
@@ -288,8 +293,8 @@ class SheetsClient:
             row_date = row[3].strip() if len(row) > 3 else ""
             if row_date == date_str and row_what == what:
                 sheet_id = self._get_sheet_id(self.FINANCE_SHEET)
-                self._delete_table_row(sheet_id, "Доходы", i)
-                logger.info(f"Sheets: deleted income row (table index {i})")
+                self._delete_sheet_row(sheet_id, header_row + i)
+                logger.info(f"Sheets: deleted income row at sheet row {header_row + i + 1}")
                 return True
         return False
 
