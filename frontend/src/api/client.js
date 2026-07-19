@@ -10,12 +10,20 @@ const client = axios.create({
 });
 
 export const assistantApi = {
-  async chat({ userId, sessionId, message, history }) {
+  async chat({ userId, username, sessionId, message, history }) {
     const { data } = await client.post('/api/assistant/chat', {
       user_id: userId,
+      username: username || '',
       session_id: sessionId,
       message,
       history,
+    });
+    return data;
+  },
+  async execute({ userId, actionToken }) {
+    const { data } = await client.post('/api/assistant/execute', {
+      user_id: userId,
+      action_token: actionToken,
     });
     return data;
   },

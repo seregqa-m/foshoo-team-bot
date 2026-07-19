@@ -1,15 +1,18 @@
 """
-Провайдер-агностичная обёртка для LLM.
+Провайдер-агностичная обёртка для LLM с поддержкой function calling.
 
-MVP-реализация — YandexGPT через Yandex Cloud Foundation Models REST API.
-Дизайн позволяет позже подменить провайдера (OpenAI-совместимый API,
-Claude через посредника, OSS-модели) без изменения вызывающего кода.
+MVP-реализация — YandexGPT через OpenAI-совместимый endpoint Yandex AI Studio
+(`https://ai.api.cloud.yandex.net/v1/chat/completions`). Формат сообщений и
+tool_calls — стандартный OpenAI, поэтому позже подменить провайдера (Claude
+через посредника, OpenAI напрямую, OSS-модели) можно без переписывания
+вызывающего кода.
 """
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Any, Optional
 
 import aiohttp
 
@@ -17,7 +20,7 @@ from config import YANDEX_API_KEY, YANDEX_FOLDER_ID, YANDEX_GPT_MODEL
 
 logger = logging.getLogger(__name__)
 
-YANDEX_COMPLETION_URL = "https://llm.api.cloud.yandex.net/foundationModels/v1/completion"
+YANDEX_OPENAI_URL = "https://ai.api.cloud.yandex.net/v1/chat/completions"
 
 
 class LLMConfigurationError(RuntimeError):
@@ -30,22 +33,56 @@ class LLMProviderError(RuntimeError):
 
 @dataclass
 class ChatMessage:
-    role: str  # "system" | "user" | "assistant"
-    text: str
+    """OpenAI-style сообщение. role ∈ {"system","user","assistant","tool"}.
+
+    Для role="tool" обязательно tool_call_id.
+    Для role="assistant" с tool_calls — content может быть пустым, tool_calls
+    заполнен структурами вида {id, type: "function", function: {name, arguments}}.
+    """
+    role: str
+    text: str = ""
+    tool_call_id: Optional[str] = None
+    tool_calls: Optional[list[dict]] = None
+
+
+@dataclass
+class ToolCall:
+    id: str
+    name: str
+    arguments: dict[str, Any]
 
 
 @dataclass
 class LLMResponse:
-    text: str
+    text: str = ""
+    tool_calls: list[ToolCall] = field(default_factory=list)
     input_tokens: Optional[int] = None
     output_tokens: Optional[int] = None
+    finish_reason: Optional[str] = None
     raw: dict = field(default_factory=dict)
 
 
-class LLMClient:
-    """Абстрактный интерфейс. Реализации: YandexGPTClient, (позже) OpenAICompatibleClient."""
+def _message_to_openai(m: ChatMessage) -> dict:
+    """Сконвертировать ChatMessage в OpenAI-совместимый JSON."""
+    if m.role == "tool":
+        return {"role": "tool", "tool_call_id": m.tool_call_id or "", "content": m.text}
+    if m.role == "assistant" and m.tool_calls:
+        return {"role": "assistant", "content": m.text or "", "tool_calls": m.tool_calls}
+    return {"role": m.role, "content": m.text}
 
-    async def chat(self, messages: list[ChatMessage], *, temperature: float = 0.3, max_tokens: int = 1500) -> LLMResponse:
+
+class LLMClient:
+    """Абстрактный интерфейс LLM. Реализации: YandexGPTClient и (позже) другие."""
+
+    async def chat(
+        self,
+        messages: list[ChatMessage],
+        *,
+        tools: Optional[list[dict]] = None,
+        tool_choice: str = "auto",
+        temperature: float = 0.3,
+        max_tokens: int = 1500,
+    ) -> LLMResponse:
         raise NotImplementedError
 
 
@@ -57,38 +94,65 @@ class YandexGPTClient(LLMClient):
         self.folder_id = folder_id
         self.model_uri = f"gpt://{folder_id}/{model}"
 
-    async def chat(self, messages: list[ChatMessage], *, temperature: float = 0.3, max_tokens: int = 1500) -> LLMResponse:
-        payload = {
-            "modelUri": self.model_uri,
-            "completionOptions": {
-                "stream": False,
-                "temperature": temperature,
-                "maxTokens": max_tokens,
-            },
-            "messages": [{"role": m.role, "text": m.text} for m in messages],
+    async def chat(
+        self,
+        messages: list[ChatMessage],
+        *,
+        tools: Optional[list[dict]] = None,
+        tool_choice: str = "auto",
+        temperature: float = 0.3,
+        max_tokens: int = 1500,
+    ) -> LLMResponse:
+        payload: dict[str, Any] = {
+            "model": self.model_uri,
+            "messages": [_message_to_openai(m) for m in messages],
+            "temperature": temperature,
+            "max_tokens": max_tokens,
         }
+        if tools:
+            payload["tools"] = tools
+            payload["tool_choice"] = tool_choice
+
         headers = {
             "Authorization": f"Api-Key {self.api_key}",
-            "x-folder-id": self.folder_id,
+            "OpenAI-Project": self.folder_id,
             "Content-Type": "application/json",
         }
 
-        timeout = aiohttp.ClientTimeout(total=30)
+        timeout = aiohttp.ClientTimeout(total=45)
         async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.post(YANDEX_COMPLETION_URL, json=payload, headers=headers) as resp:
+            async with session.post(YANDEX_OPENAI_URL, json=payload, headers=headers) as resp:
                 body = await resp.json()
                 if resp.status >= 400:
-                    logger.error(f"YandexGPT error {resp.status}: {body}")
+                    logger.error(f"YandexGPT (OpenAI) error {resp.status}: {body}")
                     raise LLMProviderError(f"YandexGPT {resp.status}: {body}")
 
         try:
-            alt = body["result"]["alternatives"][0]
-            text = alt["message"]["text"]
-            usage = body["result"].get("usage", {})
+            choice = body["choices"][0]
+            msg = choice.get("message", {})
+            text = msg.get("content") or ""
+            raw_tool_calls = msg.get("tool_calls") or []
+            parsed_tools: list[ToolCall] = []
+            for tc in raw_tool_calls:
+                fn = tc.get("function", {})
+                args_str = fn.get("arguments") or "{}"
+                try:
+                    args = json.loads(args_str) if isinstance(args_str, str) else args_str
+                except json.JSONDecodeError:
+                    logger.warning(f"tool_call arguments not valid JSON: {args_str}")
+                    args = {}
+                parsed_tools.append(ToolCall(
+                    id=tc.get("id", ""),
+                    name=fn.get("name", ""),
+                    arguments=args if isinstance(args, dict) else {},
+                ))
+            usage = body.get("usage", {})
             return LLMResponse(
                 text=text,
-                input_tokens=int(usage.get("inputTextTokens", 0)) or None,
-                output_tokens=int(usage.get("completionTokens", 0)) or None,
+                tool_calls=parsed_tools,
+                input_tokens=usage.get("prompt_tokens"),
+                output_tokens=usage.get("completion_tokens"),
+                finish_reason=choice.get("finish_reason"),
                 raw=body,
             )
         except (KeyError, IndexError) as e:
@@ -96,7 +160,7 @@ class YandexGPTClient(LLMClient):
 
 
 def get_llm_client() -> LLMClient:
-    """Фабрика провайдера. Пока — только YandexGPT."""
+    """Фабрика провайдера. Пока — только YandexGPT через OpenAI-compat endpoint."""
     return YandexGPTClient(
         api_key=YANDEX_API_KEY,
         folder_id=YANDEX_FOLDER_ID,

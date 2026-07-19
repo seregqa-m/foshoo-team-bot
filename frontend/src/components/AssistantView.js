@@ -9,6 +9,39 @@ function useSessionId() {
   return sid;
 }
 
+function ActionPreviewCard({ preview, state, onConfirm, onCancel }) {
+  const disabled = state && state !== 'pending';
+  return (
+    <div className={`action-preview action-preview--${state || 'pending'}`}>
+      <div className="action-preview__title">{preview.title}</div>
+      <ul className="action-preview__lines">
+        {(preview.lines || []).map((l, i) => (
+          <li key={i}>{l}</li>
+        ))}
+      </ul>
+      {(preview.warnings || []).map((w, i) => (
+        <div key={i} className="action-preview__warning">⚠️ {w}</div>
+      ))}
+      <div className="action-preview__actions">
+        <button
+          className="btn-primary"
+          onClick={onConfirm}
+          disabled={disabled}
+        >
+          {state === 'executing' ? 'Выполняю…'
+            : state === 'done' ? 'Выполнено'
+            : state === 'failed' ? 'Ошибка'
+            : state === 'cancelled' ? 'Отменено'
+            : 'Выполнить'}
+        </button>
+        {(!state || state === 'pending') && (
+          <button className="btn-secondary" onClick={onCancel}>Отмена</button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function AssistantView({ userId, username }) {
   const sessionId = useSessionId();
   const [messages, setMessages] = useState([]); // {role, content, error?}
@@ -55,23 +88,59 @@ export default function AssistantView({ userId, username }) {
     if (!msg || sending) return;
     setInput('');
     const userMsg = { role: 'user', content: msg };
-    const historyForApi = messages.map(m => ({ role: m.role, content: m.content }));
+    // История для LLM — только текстовые роли, без action-preview штук
+    const historyForApi = messages
+      .filter(m => (m.role === 'user' || m.role === 'assistant') && m.content)
+      .map(m => ({ role: m.role, content: m.content }));
     setMessages(m => [...m, userMsg]);
     setSending(true);
     try {
       const res = await assistantApi.chat({
         userId,
+        username,
         sessionId,
         message: msg,
         history: historyForApi,
       });
-      setMessages(m => [...m, { role: 'assistant', content: res.reply }]);
+      setMessages(m => [
+        ...m,
+        {
+          role: 'assistant',
+          content: res.reply,
+          pendingAction: res.pending_action || null,
+          actionState: res.pending_action ? 'pending' : null,
+        },
+      ]);
     } catch (e) {
       const detail = e.response?.data?.detail || 'Не получилось получить ответ';
       setMessages(m => [...m, { role: 'assistant', content: detail, error: true }]);
     } finally {
       setSending(false);
     }
+  };
+
+  const confirmAction = async (idx) => {
+    const target = messages[idx];
+    if (!target?.pendingAction) return;
+    setMessages(m => m.map((x, i) => (i === idx ? { ...x, actionState: 'executing' } : x)));
+    try {
+      const res = await assistantApi.execute({
+        userId,
+        actionToken: target.pendingAction.action_token,
+      });
+      const okText = res.success ? 'Готово ✅' : `Не получилось: ${res.message || ''}`;
+      setMessages(m => m.map((x, i) => (i === idx ? { ...x, actionState: res.success ? 'done' : 'failed' } : x)));
+      setMessages(m => [...m, { role: 'assistant', content: okText }]);
+    } catch (e) {
+      const detail = e.response?.data?.detail || 'Не удалось выполнить';
+      setMessages(m => m.map((x, i) => (i === idx ? { ...x, actionState: 'failed' } : x)));
+      setMessages(m => [...m, { role: 'assistant', content: detail, error: true }]);
+    }
+  };
+
+  const cancelAction = (idx) => {
+    setMessages(m => m.map((x, i) => (i === idx ? { ...x, actionState: 'cancelled' } : x)));
+    setMessages(m => [...m, { role: 'assistant', content: 'Ок, отменил.' }]);
   };
 
   const onKey = (e) => {
@@ -130,9 +199,21 @@ export default function AssistantView({ userId, username }) {
         <>
           <div className="assistant-messages" ref={listRef}>
             {messages.map((m, i) => (
-              <div key={i} className={`chat-bubble ${m.role === 'user' ? 'chat-bubble--user' : 'chat-bubble--assistant'} ${m.error ? 'chat-bubble--error' : ''}`}>
-                {m.content}
-              </div>
+              <React.Fragment key={i}>
+                {m.content && (
+                  <div className={`chat-bubble ${m.role === 'user' ? 'chat-bubble--user' : 'chat-bubble--assistant'} ${m.error ? 'chat-bubble--error' : ''}`}>
+                    {m.content}
+                  </div>
+                )}
+                {m.pendingAction && (
+                  <ActionPreviewCard
+                    preview={m.pendingAction.preview}
+                    state={m.actionState}
+                    onConfirm={() => confirmAction(i)}
+                    onCancel={() => cancelAction(i)}
+                  />
+                )}
+              </React.Fragment>
             ))}
             {sending && (
               <div className="chat-bubble chat-bubble--assistant chat-bubble--typing">

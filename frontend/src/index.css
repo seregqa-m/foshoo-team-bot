@@ -640,3 +640,83 @@ body {
   0%, 60%, 100% { opacity: 0.3; transform: translateY(0); }
   30% { opacity: 1; transform: translateY(-3px); }
 }
+
+/* Action preview card (confirm flow) */
+.action-preview {
+  align-self: flex-start;
+  max-width: 92%;
+  background: var(--bg);
+  border: 1.5px solid var(--border);
+  border-radius: 16px;
+  padding: 14px 16px;
+  margin-top: 4px;
+}
+
+.action-preview__title {
+  font-size: 15px;
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+
+.action-preview__lines {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 14px;
+  color: #333;
+}
+
+.action-preview__lines li {
+  padding-left: 0;
+}
+
+.action-preview__warning {
+  font-size: 13px;
+  color: var(--warning);
+  background: #fdf6ec;
+  padding: 6px 10px;
+  border-radius: 8px;
+  margin-bottom: 8px;
+}
+
+.action-preview__actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.action-preview__actions .btn-primary,
+.action-preview__actions .btn-secondary {
+  flex: 1;
+  padding: 10px 14px;
+  border: none;
+  border-radius: 10px;
+  font-size: 14px;
+  font-family: inherit;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.action-preview__actions .btn-primary {
+  background: var(--accent);
+  color: #fff;
+}
+
+.action-preview__actions .btn-secondary {
+  background: var(--card-bg);
+  color: var(--text);
+}
+
+.action-preview__actions .btn-primary:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.action-preview--done { border-color: var(--success); }
+.action-preview--done .action-preview__title::after { content: ' ✅'; }
+
+.action-preview--failed { border-color: var(--danger); }
+.action-preview--cancelled { opacity: 0.6; }
