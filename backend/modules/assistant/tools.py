@@ -522,12 +522,235 @@ GET_SHOW_CAST = Tool(
 )
 
 
+# ----------------------- POLLS & SETTINGS (write) ----------------------- #
+
+async def _create_attendance_poll_handler(db: Session, args: dict, ctx: dict) -> dict:
+    from modules.calendar.router import launch_poll_for_event
+    event_id = int(args.get("event_id") or 0)
+    if not event_id:
+        raise HTTPException(status_code=400, detail="event_id обязателен")
+    return await launch_poll_for_event(event_id=event_id, user_id=ctx.get("user_id"), db=db)
+
+
+CREATE_ATTENDANCE_POLL = Tool(
+    name="create_attendance_poll",
+    description=(
+        "Запустить в Telegram-группе опрос посещаемости на событие. Используй "
+        "когда пользователь просит: «запусти опрос на субботу», «опроси группу "
+        "про репетицию». Event_id ищи в CONTEXT.upcoming_events. Один активный "
+        "опрос на событие."
+    ),
+    schema={
+        "type": "function",
+        "function": {
+            "name": "create_attendance_poll",
+            "description": "Создать опрос посещаемости на событие. Требует подтверждения.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "event_id": {"type": "integer", "description": "ID события из CONTEXT.upcoming_events[i].id"},
+                },
+                "required": ["event_id"],
+            },
+        },
+    },
+    handler=_create_attendance_poll_handler,
+    safety_level="confirm",
+    preview_builder=lambda args: {
+        "title": "Запустить опрос посещаемости",
+        "lines": [f"Событие #{args.get('event_id')} — уточни ниже что там за занятие"],
+        "warnings": ["Опрос уйдёт всем в Telegram-группу"],
+    },
+)
+
+
+async def _stop_poll_handler(db: Session, args: dict, ctx: dict) -> dict:
+    from modules.polling.router import stop_poll as stop_poll_ep
+    poll_id = int(args.get("poll_id") or 0)
+    if not poll_id:
+        raise HTTPException(status_code=400, detail="poll_id обязателен")
+    return await stop_poll_ep(poll_id=poll_id, db=db)
+
+
+STOP_POLL = Tool(
+    name="stop_poll",
+    description=(
+        "Остановить активный опрос посещаемости. Poll_id ищи в "
+        "CONTEXT.active_polls."
+    ),
+    schema={
+        "type": "function",
+        "function": {
+            "name": "stop_poll",
+            "description": "Остановить опрос в Telegram и пометить неактивным. Требует подтверждения.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "poll_id": {"type": "integer", "description": "ID опроса из CONTEXT.active_polls[i].id"},
+                },
+                "required": ["poll_id"],
+            },
+        },
+    },
+    handler=_stop_poll_handler,
+    safety_level="confirm",
+    preview_builder=lambda args: {
+        "title": f"Остановить опрос #{args.get('poll_id')}",
+        "lines": ["Опрос закроется в Telegram и станет неактивным"],
+        "warnings": [],
+    },
+)
+
+
+async def _create_availability_campaign_handler(db: Session, args: dict, ctx: dict) -> dict:
+    from modules.availability.router import CreateCampaignRequest, create_campaign
+    show_names = args.get("show_names") or []
+    event_ids = args.get("event_ids") or []
+    if not show_names or not event_ids:
+        raise HTTPException(status_code=400, detail="show_names и event_ids обязательны")
+    req = CreateCampaignRequest(show_names=list(show_names), event_ids=[int(x) for x in event_ids])
+    return await create_campaign(req=req, db=db)
+
+
+CREATE_AVAILABILITY_CAMPAIGN = Tool(
+    name="create_availability_campaign",
+    description=(
+        "Запустить ежемесячный опрос занятости на следующий месяц. "
+        "show_names — список спектаклей из CONTEXT.shows (обычно те что «в "
+        "работе»). event_ids — даты из CONTEXT.upcoming_events (или получи "
+        "полный список через get_events_in_range на следующий месяц). "
+        "Старая кампания удалится."
+    ),
+    schema={
+        "type": "function",
+        "function": {
+            "name": "create_availability_campaign",
+            "description": "Создать новую кампанию опроса занятости. Требует подтверждения.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "show_names": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Список названий спектаклей из CONTEXT.shows",
+                    },
+                    "event_ids": {
+                        "type": "array",
+                        "items": {"type": "integer"},
+                        "description": "ID событий (даты). До 20.",
+                    },
+                },
+                "required": ["show_names", "event_ids"],
+            },
+        },
+    },
+    handler=_create_availability_campaign_handler,
+    safety_level="confirm",
+    preview_builder=lambda args: {
+        "title": "Опрос занятости",
+        "lines": [
+            f"Спектакли: {', '.join(args.get('show_names') or [])}",
+            f"Дат: {len(args.get('event_ids') or [])}",
+        ],
+        "warnings": [
+            "Старая кампания опроса будет удалена",
+            "Новые опросы уйдут в Telegram-группу (батчами по 10)",
+        ],
+    },
+)
+
+
+async def _ping_non_voters_handler(db: Session, args: dict, ctx: dict) -> dict:
+    from modules.availability.router import ping_non_voters as ping_ep
+    return await ping_ep(db=db)
+
+
+PING_NON_VOTERS = Tool(
+    name="ping_non_voters",
+    description=(
+        "Опубликовать в группе тег для актёров, кто ещё не ответил на текущий "
+        "опрос занятости. Действует только если есть активная кампания."
+    ),
+    schema={
+        "type": "function",
+        "function": {
+            "name": "ping_non_voters",
+            "description": "Публичный пинг в Telegram-группе. Требует подтверждения.",
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    handler=_ping_non_voters_handler,
+    safety_level="confirm",
+    preview_builder=lambda args: {
+        "title": "Пингануть в группе неответивших",
+        "lines": ["Список неответивших — в CONTEXT.availability_campaign.non_voters"],
+        "warnings": ["Публичное упоминание в Telegram-группе"],
+    },
+)
+
+
+async def _update_settings_handler(db: Session, args: dict, ctx: dict) -> dict:
+    from config import ADMIN_ID
+    from modules.notifications.router import (
+        UpdateSettingsRequest,
+        update_notification_settings,
+    )
+    payload = {k: v for k, v in args.items() if k in {
+        "poll_reminders_enabled",
+        "reminder_days_before",
+        "reminder_time",
+        "current_show",
+        "troupe_filter",
+    } and v is not None}
+    if not payload:
+        raise HTTPException(status_code=400, detail="Нечего обновлять")
+    req = UpdateSettingsRequest(**payload)
+    return await update_notification_settings(request=req, user_id=ADMIN_ID, db=db)
+
+
+UPDATE_SETTINGS = Tool(
+    name="update_settings",
+    description=(
+        "Обновить глобальные настройки приложения. Передавай ТОЛЬКО те поля, "
+        "которые меняются. current_show — название репетируемого спектакля из "
+        "CONTEXT.shows (пингуются только его актёры)."
+    ),
+    schema={
+        "type": "function",
+        "function": {
+            "name": "update_settings",
+            "description": "Изменить глобальные настройки авто-опросов и труппы. Требует подтверждения.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "poll_reminders_enabled": {"type": "boolean", "description": "Вкл/выкл авто-опросы посещаемости"},
+                    "reminder_days_before": {"type": "integer", "description": "За сколько дней до события создавать опрос (1-7)"},
+                    "reminder_time": {"type": "string", "description": "Время создания опроса, формат HH:MM (МСК)"},
+                    "current_show": {"type": "string", "description": "Название текущего репетируемого спектакля из CONTEXT.shows, или пустая строка чтобы сбросить"},
+                    "troupe_filter": {"type": "string", "description": "Подстрока в названии события для фильтра (например 'труппа 1')"},
+                },
+                "required": [],
+            },
+        },
+    },
+    handler=_update_settings_handler,
+    safety_level="confirm",
+    preview_builder=lambda args: {
+        "title": "Обновить настройки",
+        "lines": [f"{k} → {v}" for k, v in args.items() if v is not None] or ["без изменений"],
+        "warnings": ["Настройки применяются ко всей группе"],
+    },
+)
+
+
 # ----------------------- REGISTRY ----------------------- #
 
 TOOLS: dict[str, Tool] = {
     t.name: t for t in [
         # write, требуют confirm
         ADD_EXPENSE, ADD_INCOME, CREATE_EVENT, UPDATE_EVENT,
+        CREATE_ATTENDANCE_POLL, STOP_POLL, CREATE_AVAILABILITY_CAMPAIGN,
+        PING_NON_VOTERS, UPDATE_SETTINGS,
         # read, исполняются сразу
         SEARCH_EXPENSES, GET_EVENTS_IN_RANGE, GET_SHOW_CAST,
     ]

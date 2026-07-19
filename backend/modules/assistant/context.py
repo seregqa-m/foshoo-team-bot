@@ -216,6 +216,94 @@ def _sheets_snapshot(sc) -> dict[str, Any]:
     }
 
 
+def _collect_active_polls(db: Session) -> list[dict]:
+    """Активные опросы посещаемости с привязкой к событию и счётчиком голосов."""
+    try:
+        from modules.polling.models import Poll, PollVote
+    except Exception:
+        return []
+    now = datetime.utcnow()
+    polls = (
+        db.query(Poll)
+        .filter(Poll.is_active == True)  # noqa: E712
+        .order_by(Poll.created_at.desc())
+        .limit(10)
+        .all()
+    )
+    result = []
+    for p in polls:
+        yes = db.query(PollVote).filter(PollVote.poll_id == p.id, PollVote.answer == "yes").count()
+        no = db.query(PollVote).filter(PollVote.poll_id == p.id, PollVote.answer == "no").count()
+        maybe = db.query(PollVote).filter(PollVote.poll_id == p.id, PollVote.answer == "maybe").count()
+        event = None
+        if p.calendar_event_id:
+            e = db.query(CalendarEvent).filter(CalendarEvent.id == p.calendar_event_id).first()
+            if e:
+                event = {"id": e.id, "title": e.title, "start_iso": e.start_time.isoformat()}
+        result.append({
+            "id": p.id,
+            "title": p.title,
+            "event": event,
+            "yes": yes,
+            "no": no,
+            "maybe": maybe,
+            "created_at": p.created_at.isoformat() if p.created_at else None,
+        })
+    return result
+
+
+def _collect_availability_campaign(db: Session, actor_mapping: dict) -> Optional[dict]:
+    """Текущая (последняя) кампания опроса занятости + список неответивших."""
+    try:
+        from modules.availability.models import AvailabilityCampaign
+    except Exception:
+        return None
+    import json as _json
+    campaign = db.query(AvailabilityCampaign).order_by(AvailabilityCampaign.id.desc()).first()
+    if not campaign:
+        return None
+    show_names = []
+    try:
+        show_names = _json.loads(campaign.show_names or "[]")
+    except Exception:
+        pass
+
+    total_voters = 0
+    for poll in campaign.polls:
+        total_voters += len({v.username for v in poll.votes if v.username})
+
+    non_voters: list[str] = []
+    if actor_mapping and show_names:
+        try:
+            from sheets_client import SheetsClient
+            sc = SheetsClient(GOOGLE_CALENDAR_JSON, GOOGLE_SHEETS_ID)
+            cast_usernames: set[str] = set()
+            name_to_uname = {name.lower(): u for u, name in actor_mapping.items()}
+            for show in show_names:
+                cast = _cached_sheets(f"cast:{show}", lambda s=show: sc.get_show_cast(s)) or []
+                cast_names = {n.lower() for n in cast}
+                cast_usernames |= {name_to_uname[n] for n in cast_names if n in name_to_uname}
+            for uname in cast_usernames:
+                voted_all = True
+                for poll in campaign.polls:
+                    if not any(v.username and v.username.lower() == uname for v in poll.votes):
+                        voted_all = False
+                        break
+                if not voted_all:
+                    non_voters.append(uname)
+        except Exception as e:
+            logger.warning(f"non_voters compute failed in context: {e}")
+
+    return {
+        "id": campaign.id,
+        "month": campaign.month,
+        "shows": show_names,
+        "polls_count": len(campaign.polls),
+        "voters_count": total_voters,
+        "non_voters": sorted(non_voters),
+    }
+
+
 def _resolve_current_user(actor_mapping: dict, *, user_id: Optional[int], username: str) -> dict:
     """Собрать блок про текущего пользователя. actor_name резолвим по username."""
     uname = (username or "").lstrip("@").lower()
@@ -254,6 +342,8 @@ def build_context(
     stats = _expense_stats_30d(db)
     settings = _collect_settings(db)
     current_user = _resolve_current_user(actor_mapping, user_id=user_id, username=username)
+    active_polls = _collect_active_polls(db)
+    availability_campaign = _collect_availability_campaign(db, actor_mapping)
 
     return {
         "now_msk": now_msk.strftime("%Y-%m-%d %H:%M"),
@@ -266,6 +356,8 @@ def build_context(
         "shows": sheets.get("shows", []),
         "actors": [{"name": name, "username": u} for u, name in actor_mapping.items()],
         "upcoming_events": upcoming,
+        "active_polls": active_polls,
+        "availability_campaign": availability_campaign,
         "recent_expenses": recent_exp,
         "recent_incomes": recent_inc,
         "expense_stats_30d": stats,
