@@ -9,4 +9,20 @@ const client = axios.create({
   },
 });
 
+export const assistantApi = {
+  async chat({ userId, sessionId, message, history }) {
+    const { data } = await client.post('/api/assistant/chat', {
+      user_id: userId,
+      session_id: sessionId,
+      message,
+      history,
+    });
+    return data;
+  },
+  async hints() {
+    const { data } = await client.get('/api/assistant/hints');
+    return data.hints || [];
+  },
+};
+
 export default client;

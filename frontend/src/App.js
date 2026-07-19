@@ -1,12 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import './index.css';
+import AssistantView from './components/AssistantView';
 import CalendarView from './components/CalendarView';
 import NotificationsView from './components/NotificationsView';
 import FinanceView from './components/FinanceView';
 import LinksView from './components/LinksView';
 
 function App() {
-  const [activeTab, setActiveTab] = useState('calendar');
+  const [activeTab, setActiveTab] = useState('assistant');
   const [userId, setUserId] = useState(null);
   const [username, setUsername] = useState('');
   const [allowed, setAllowed] = useState(null); // null = проверяем
@@ -64,7 +65,8 @@ function App() {
 
   return (
     <div className="app">
-      <main className="content">
+      <main className={`content ${activeTab === 'assistant' ? 'content--assistant' : ''}`}>
+        {activeTab === 'assistant' && <AssistantView userId={userId} username={username} />}
         {activeTab === 'calendar' && <CalendarView userId={userId} isAdmin={isAdmin} trouFilter={trouFilter} />}
         {activeTab === 'finance' && <FinanceView username={username} />}
         {activeTab === 'links' && <LinksView />}
@@ -72,6 +74,12 @@ function App() {
       </main>
 
       <nav className="tab-bar">
+        <button
+          className={activeTab === 'assistant' ? 'active' : ''}
+          onClick={() => setActiveTab('assistant')}
+        >
+          🤖<span>Ассистент</span>
+        </button>
         <button
           className={activeTab === 'calendar' ? 'active' : ''}
           onClick={() => setActiveTab('calendar')}
