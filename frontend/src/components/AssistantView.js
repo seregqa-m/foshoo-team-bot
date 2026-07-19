@@ -81,7 +81,7 @@ export default function AssistantView({ userId, username }) {
     }
   };
 
-  const useHint = (h) => {
+  const applyHint = (h) => {
     setInput(h);
     textareaRef.current?.focus();
   };
@@ -120,7 +120,7 @@ export default function AssistantView({ userId, username }) {
           </div>
           <div className="assistant-hints">
             {hints.map((h, i) => (
-              <button key={i} className="assistant-hint" onClick={() => useHint(h)}>
+              <button key={i} className="assistant-hint" onClick={() => applyHint(h)}>
                 {h}
               </button>
             ))}
