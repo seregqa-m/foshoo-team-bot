@@ -16,6 +16,7 @@ from modules.calendar.google_client import GoogleCalendarClient
 from modules.polling.router import router as polling_router
 from modules.notifications.router import router as notifications_router
 from modules.availability.router import router as availability_router
+from modules.assistant.router import router as assistant_router
 from auth_router import router as auth_router
 from sheets_router import router as sheets_router
 from finance_router import router as finance_router
@@ -361,6 +362,7 @@ async def _send_poll_reminders():
 async def startup():
     logger.info("🚀 Starting application")
     import modules.availability.models  # noqa: ensure tables created
+    import modules.assistant.models  # noqa: ensure assistant_action_log table created
     run_migrations()
     init_db()
     logger.info("✅ Database initialized")
@@ -392,6 +394,7 @@ app.include_router(calendar_router)
 app.include_router(polling_router)
 app.include_router(notifications_router)
 app.include_router(availability_router)
+app.include_router(assistant_router)
 app.include_router(links_router)
 
 
