@@ -1,12 +1,12 @@
 """
 AssistantService — оркестратор одного chat-запроса.
 
-Фаза 4: LLM получает свежий context в system prompt + реестр tools через
-function calling. Если LLM решает выполнить действие — она возвращает
-tool_call. Бэк НЕ выполняет сразу: формирует action_token (JWT, 5 мин) с
-tool_name и args, отдаёт фронту preview. Фронт показывает
-ActionPreviewCard → пользователь [Выполнить] → POST /api/assistant/execute
-с action_token → вызов handler'а из реестра tools.
+Tool routing по safety_level:
+- "read"    — исполняем немедленно, возвращаем результат модели
+              в tool-turn'е и продолжаем диалог (до MAX_TOOL_HOPS итераций).
+- "confirm" — НЕ исполняем. Формируем JWT action_token со всеми аргументами
+              и отдаём фронту preview. Пользователь жмёт [Выполнить] →
+              POST /api/assistant/execute → tool.handler.
 
 Deletions/mass-updates не входят в реестр — LLM их не видит.
 """
@@ -34,6 +34,7 @@ logger = logging.getLogger(__name__)
 ACTION_TOKEN_TTL_SECONDS = 300  # 5 минут
 ACTION_TOKEN_ALG = "HS256"
 ACTION_TOKEN_ISS = "foshoo-assistant"
+MAX_TOOL_HOPS = 4  # защита от циклов при read-tools
 
 
 SYSTEM_PROMPT_TEMPLATE = """Ты — Помощник FoShoo, ассистент актёров театр-студии «FoShoo».
@@ -48,18 +49,24 @@ SYSTEM_PROMPT_TEMPLATE = """Ты — Помощник FoShoo, ассистент
 
 Что ты сейчас умеешь
 - Отвечать на вопросы про данные приложения (баланс, события, транзакции, состав, настройки).
-- Через инструменты (tools) исполнять действия: добавить расход, добавить доход, создать событие, обновить событие («перенеси на …»).
-- Каждое действие требует подтверждения пользователем — ты только формулируешь его, бэк покажет preview с кнопками [Выполнить] [Отмена].
+- Углубляться через read-tools: search_expenses (поиск в истории расходов), get_events_in_range (события за произвольный интервал), get_show_cast (состав спектакля).
+- Через write-tools исполнять действия: add_expense, add_income, create_event, update_event.
+- Каждое write-действие требует подтверждения пользователем — ты только формулируешь его, бэк покажет preview с кнопками [Выполнить] [Отмена].
 - Опросы, пинг неответивших и настройки авто-опросов — в следующем обновлении.
 - Удаление данных (событий, транзакций, опросов) — только вручную через UI, ты этого не делаешь.
 
+Про текущего пользователя
+- CONTEXT.current_user описывает, кто сейчас пишет: {user_id, username, actor_name, is_known_actor}.
+- Если пользователь описывает СВОЮ трату («я потратил», «купил», без явного имени) — подставь CONTEXT.current_user.actor_name в поле who add_expense. Если is_known_actor=false — оставь who пустым, бэк подставит из username или дефолт.
+- Если пользователь говорит про кого-то другого — подставь имя из CONTEXT.actors по совпадению.
+
 Как выбирать tool
-- Если пользователь описывает действие — вызывай подходящий tool с максимально полными аргументами.
+- Read-tools вызывай без подтверждения, когда пользователь спрашивает про глубокую историю: «сколько потратили на костюмы в марте», «расписание за август», «кто в составе Слепых». Не гадай — сходи и посмотри.
+- Write-tools вызывай, когда пользователь описывает действие («потратил X», «перенеси»).
 - Проекты и типы расходов бери СТРОГО из CONTEXT.projects / CONTEXT.expense_types.
 - Для «перенеси занятие с воскресенья на пятницу 20:00» найди event_id в CONTEXT.upcoming_events (совпадение по дате+названию) и вызывай update_event.
 - Даты в tool_call — строго ISO 8601 (`YYYY-MM-DDTHH:MM:00`). Даты финансов — `DD.MM.YYYY` или пусто (сегодня).
 - Если данных не хватает (не ясен проект, дата, сумма) — задай ОДИН уточняющий вопрос, tool НЕ вызывай.
-- Если пользователь называет актёра — резолви полное имя из CONTEXT.actors.
 
 Проверка на здравый смысл
 - Смотри на CONTEXT.expense_stats_30d и CONTEXT.recent_expenses: типичный расход обычно X ₽. Если сумма из запроса на порядок больше — переспроси у пользователя, не ошибся ли он с нулями, ПЕРЕД вызовом tool.
@@ -82,8 +89,8 @@ CONTEXT_BLOCK_TEMPLATE = """CONTEXT (данные приложения на те
 """
 
 
-def _build_system_prompt(db: Session, user_id: int) -> str:
-    ctx = build_context(db, user_id=user_id)
+def _build_system_prompt(db: Session, user_id: int, username: str = "") -> str:
+    ctx = build_context(db, user_id=user_id, username=username)
     context_json = json.dumps(ctx, ensure_ascii=False)
     context_block = CONTEXT_BLOCK_TEMPLATE.format(
         context_json=context_json,
@@ -149,7 +156,7 @@ class AssistantService:
         message: str,
         history: list[dict] | None = None,
     ) -> ChatResult:
-        system_prompt = _build_system_prompt(self.db, user_id)
+        system_prompt = _build_system_prompt(self.db, user_id, username=username)
         messages: list[ChatMessage] = [ChatMessage(role="system", text=system_prompt)]
 
         for h in history or []:
@@ -160,37 +167,85 @@ class AssistantService:
 
         messages.append(ChatMessage(role="user", text=message))
 
-        response: LLMResponse = await self.llm.chat(
-            messages,
-            tools=get_tool_schemas(),
-            tool_choice="auto",
-        )
+        total_in = 0
+        total_out = 0
+        tool_ctx = {"user_id": user_id, "username": username}
 
-        # Взяли первый tool_call, если есть. Multi-call за один шаг пока не поддерживаем.
-        if response.tool_calls:
+        for hop in range(MAX_TOOL_HOPS):
+            response: LLMResponse = await self.llm.chat(
+                messages,
+                tools=get_tool_schemas(),
+                tool_choice="auto",
+            )
+            total_in += response.input_tokens or 0
+            total_out += response.output_tokens or 0
+
+            if not response.tool_calls:
+                return ChatResult(
+                    reply=response.text or "…",
+                    input_tokens=total_in or None,
+                    output_tokens=total_out or None,
+                )
+
+            # Берём первый tool_call (multi-call за шаг пока не поддерживаем).
             call = response.tool_calls[0]
             tool = get_tool(call.name)
             if tool is None:
                 return ChatResult(
                     reply=f"Хотел использовать инструмент «{call.name}», но такого нет. Уточни, что именно надо сделать?",
-                    input_tokens=response.input_tokens,
-                    output_tokens=response.output_tokens,
+                    input_tokens=total_in or None,
+                    output_tokens=total_out or None,
                 )
-            preview = tool.preview_builder(call.arguments)
-            token = _make_action_token(user_id=user_id, tool_name=call.name, args={**call.arguments, "_username": username})
-            # Формируем короткий человеческий preambule к preview
-            preface = response.text.strip() or f"Хочу {preview['title'].lower()}. Подтверди — тогда сделаю."
-            return ChatResult(
-                reply=preface,
-                pending_action=PendingAction(action_token=token, tool_name=call.name, preview=preview),
-                input_tokens=response.input_tokens,
-                output_tokens=response.output_tokens,
-            )
 
+            if tool.safety_level == "confirm":
+                if tool.preview_builder is None:
+                    return ChatResult(
+                        reply=f"У инструмента «{call.name}» не настроен preview. Обратись к разработчику.",
+                        input_tokens=total_in or None,
+                        output_tokens=total_out or None,
+                    )
+                preview = tool.preview_builder(call.arguments)
+                token = _make_action_token(
+                    user_id=user_id,
+                    tool_name=call.name,
+                    args={**call.arguments, "_username": username},
+                )
+                preface = response.text.strip() or f"Хочу {preview['title'].lower()}. Подтверди — тогда сделаю."
+                return ChatResult(
+                    reply=preface,
+                    pending_action=PendingAction(action_token=token, tool_name=call.name, preview=preview),
+                    input_tokens=total_in or None,
+                    output_tokens=total_out or None,
+                )
+
+            # safety_level == "read": исполняем немедленно, кормим результат обратно
+            try:
+                tool_result = await tool.handler(self.db, call.arguments, tool_ctx)
+            except Exception as e:
+                logger.error(f"read-tool {call.name} failed: {e}", exc_info=True)
+                tool_result = {"error": str(e)[:500]}
+            # добавляем assistant-turn с tool_calls и tool-turn с результатом
+            messages.append(ChatMessage(
+                role="assistant",
+                text=response.text or "",
+                tool_calls=[{
+                    "id": call.id,
+                    "type": "function",
+                    "function": {"name": call.name, "arguments": json.dumps(call.arguments, ensure_ascii=False)},
+                }],
+            ))
+            messages.append(ChatMessage(
+                role="tool",
+                text=json.dumps(tool_result, ensure_ascii=False, default=str),
+                tool_call_id=call.id,
+            ))
+            # следующая итерация цикла
+
+        # исчерпали MAX_TOOL_HOPS
         return ChatResult(
-            reply=response.text or "…",
-            input_tokens=response.input_tokens,
-            output_tokens=response.output_tokens,
+            reply="Что-то я закрутился с инструментами. Переспроси, пожалуйста, коротко?",
+            input_tokens=total_in or None,
+            output_tokens=total_out or None,
         )
 
     async def execute_pending(self, *, user_id: int, action_token: str) -> dict:
