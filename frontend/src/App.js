@@ -66,11 +66,16 @@ function App() {
   return (
     <div className="app">
       <main className={`content ${activeTab === 'assistant' ? 'content--assistant' : ''}`}>
-        {activeTab === 'assistant' && <AssistantView userId={userId} username={username} />}
+        {activeTab === 'assistant' && (
+          <AssistantView
+            userId={userId}
+            username={username}
+            renderSettings={() => <NotificationsView userId={userId} />}
+          />
+        )}
         {activeTab === 'calendar' && <CalendarView userId={userId} isAdmin={isAdmin} trouFilter={trouFilter} />}
         {activeTab === 'finance' && <FinanceView username={username} />}
         {activeTab === 'links' && <LinksView />}
-        {activeTab === 'notifications' && <NotificationsView userId={userId} />}
       </main>
 
       <nav className="tab-bar">
@@ -97,12 +102,6 @@ function App() {
           onClick={() => setActiveTab('links')}
         >
           🗂️<span>Ресурсы</span>
-        </button>
-        <button
-          className={activeTab === 'notifications' ? 'active' : ''}
-          onClick={() => setActiveTab('notifications')}
-        >
-          ⚙️<span>Настройки</span>
         </button>
       </nav>
     </div>

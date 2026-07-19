@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import random
+import time
 from typing import Any, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -23,6 +24,24 @@ from .services import AssistantService
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/assistant", tags=["assistant"])
+
+
+# Простой per-user throttle: не чаще 1 chat-запроса раз в N секунд.
+# In-memory, обнуляется при рестарте — этого хватает против случайного
+# спам-клика; агрессивный DoS — не наша модель угроз (внутренний бот).
+_LAST_REQUEST_AT: dict[int, float] = {}
+_MIN_INTERVAL_SECONDS = 2.0
+
+
+def _throttle(user_id: int) -> None:
+    now = time.time()
+    prev = _LAST_REQUEST_AT.get(user_id, 0.0)
+    if now - prev < _MIN_INTERVAL_SECONDS:
+        raise HTTPException(
+            status_code=429,
+            detail="Не так быстро — подожди пару секунд",
+        )
+    _LAST_REQUEST_AT[user_id] = now
 
 
 HINTS_POOL = [
@@ -91,6 +110,8 @@ async def get_hints():
 async def chat(request: ChatRequest, db: Session = Depends(get_db)):
     if not ASSISTANT_ENABLED:
         raise HTTPException(status_code=503, detail="Ассистент отключён")
+
+    _throttle(request.user_id)
 
     try:
         service = AssistantService(db)

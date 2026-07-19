@@ -42,12 +42,34 @@ function ActionPreviewCard({ preview, state, onConfirm, onCancel }) {
   );
 }
 
-export default function AssistantView({ userId, username }) {
+function SettingsOverlay({ open, onClose, children }) {
+  useEffect(() => {
+    if (!open) return undefined;
+    const onEsc = (e) => {
+      if (e.key === 'Escape') onClose();
+    };
+    document.addEventListener('keydown', onEsc);
+    return () => document.removeEventListener('keydown', onEsc);
+  }, [open, onClose]);
+  if (!open) return null;
+  return (
+    <div className="settings-overlay">
+      <div className="settings-overlay__header">
+        <button className="settings-overlay__back" onClick={onClose} aria-label="Назад">←</button>
+        <div className="settings-overlay__title">Настройки</div>
+      </div>
+      <div className="settings-overlay__body">{children}</div>
+    </div>
+  );
+}
+
+export default function AssistantView({ userId, username, renderSettings }) {
   const sessionId = useSessionId();
   const [messages, setMessages] = useState([]); // {role, content, error?}
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const [hints, setHints] = useState([]);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const listRef = useRef(null);
   const textareaRef = useRef(null);
 
@@ -159,6 +181,18 @@ export default function AssistantView({ userId, username }) {
 
   return (
     <div className={`assistant ${empty ? 'assistant-empty' : 'assistant-chat'}`}>
+      {renderSettings && (
+        <button
+          className="assistant-gear"
+          onClick={() => setSettingsOpen(true)}
+          aria-label="Настройки"
+        >
+          ⚙️
+        </button>
+      )}
+      <SettingsOverlay open={settingsOpen} onClose={() => setSettingsOpen(false)}>
+        {renderSettings && renderSettings()}
+      </SettingsOverlay>
       {empty ? (
         <div className="assistant-landing">
           <div className="assistant-hero">
