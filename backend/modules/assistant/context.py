@@ -166,13 +166,13 @@ def _expense_stats_30d(db: Session) -> dict[str, Any]:
 
     # медиана — берём отсортированный список только сумм (одно поле, быстро)
     amounts = [
-        a for (a,) in db.query(ExpenseLog.amount)
+        float(a) for (a,) in db.query(ExpenseLog.amount)
         .filter(ExpenseLog.date >= cutoff_iso)
         .order_by(ExpenseLog.amount)
         .all()
     ]
     mid = len(amounts) // 2
-    median = amounts[mid] if len(amounts) % 2 else (amounts[mid - 1] + amounts[mid]) // 2
+    median = amounts[mid] if len(amounts) % 2 else (amounts[mid - 1] + amounts[mid]) / 2
 
     return {
         "count": int(count),
