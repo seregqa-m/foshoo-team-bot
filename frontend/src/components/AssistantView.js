@@ -245,6 +245,34 @@ export default function AssistantView({ userId, username, renderSettings }) {
       const okText = res.success ? 'Готово ✅' : `Не получилось: ${res.message || ''}`;
       setMessages(m => m.map((x, i) => (i === idx ? { ...x, actionState: res.success ? 'done' : 'failed' } : x)));
       setMessages(m => [...m, { role: 'assistant', content: okText }]);
+
+      if (res.success) {
+        // Автоматически продолжаем диалог — LLM предложит следующую операцию если она была
+        const historySnapshot = [
+          ...messages
+            .filter(m => (m.role === 'user' || m.role === 'assistant') && m.content)
+            .map(m => ({ role: m.role, content: m.content })),
+          { role: 'assistant', content: okText },
+        ];
+        setSending(true);
+        try {
+          const followUp = await assistantApi.chat({
+            userId, username, sessionId,
+            message: 'продолжи',
+            history: historySnapshot,
+          });
+          setMessages(m => [...m, {
+            role: 'assistant',
+            content: followUp.reply,
+            pendingAction: followUp.pending_action || null,
+            actionState: followUp.pending_action ? 'pending' : null,
+          }]);
+        } catch (_) {
+          // автопродолжение некритично — молча игнорируем
+        } finally {
+          setSending(false);
+        }
+      }
     } catch (e) {
       const detail = e.response?.data?.detail || 'Не удалось выполнить';
       setMessages(m => m.map((x, i) => (i === idx ? { ...x, actionState: 'failed' } : x)));
