@@ -258,7 +258,7 @@ export default function AssistantView({ userId, username, renderSettings }) {
         try {
           const followUp = await assistantApi.chat({
             userId, username, sessionId,
-            message: 'продолжи',
+            message: 'Выполни следующую операцию из предыдущего запроса — вызови tool немедленно.',
             history: historySnapshot,
           });
           setMessages(m => [...m, {
