@@ -745,12 +745,43 @@ UPDATE_SETTINGS = Tool(
 
 # ----------------------- REGISTRY ----------------------- #
 
+async def _upload_afisha_handler(db: Session, args: dict, ctx: dict) -> dict:
+    # Загрузка файла происходит на фронте напрямую в /api/afisha/upload.
+    # Этот путь не должен вызываться через /execute.
+    return {"message": "Загрузи файл через карточку выше"}
+
+
+UPLOAD_AFISHA = Tool(
+    name="upload_afisha",
+    description="Открыть форму загрузки новой афиши на сайт foshoo-theatre.ru. "
+                "Текущая афиша станет архивной. Вызывай когда пользователь просит обновить, загрузить или заменить афишу.",
+    schema={
+        "type": "function",
+        "function": {
+            "name": "upload_afisha",
+            "description": "Открыть форму загрузки новой афиши на сайт.",
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    handler=_upload_afisha_handler,
+    safety_level="confirm",
+    preview_builder=lambda args: {
+        "title": "Обновить афишу на сайте",
+        "lines": [
+            "Текущая афиша (afisha-new) станет архивной (afisha-old).",
+            "Выбери файл с новой афишей — изображение или PDF.",
+        ],
+        "warnings": [],
+    },
+)
+
+
 TOOLS: dict[str, Tool] = {
     t.name: t for t in [
         # write, требуют confirm
         ADD_EXPENSE, ADD_INCOME, CREATE_EVENT, UPDATE_EVENT,
         CREATE_ATTENDANCE_POLL, STOP_POLL, CREATE_AVAILABILITY_CAMPAIGN,
-        PING_NON_VOTERS, UPDATE_SETTINGS,
+        PING_NON_VOTERS, UPDATE_SETTINGS, UPLOAD_AFISHA,
         # read, исполняются сразу
         SEARCH_EXPENSES, GET_EVENTS_IN_RANGE, GET_SHOW_CAST,
     ]

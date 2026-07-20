@@ -1,6 +1,17 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { assistantApi } from '../api/client';
 
+const API_BASE = process.env.REACT_APP_API_URL || 'http://127.0.0.1:8000';
+const AFISHA_SITE_URL = 'https://foshoo-theatre.ru/afisha';
+
+function openUrl(url) {
+  if (window.Telegram?.WebApp?.openLink) {
+    window.Telegram.WebApp.openLink(url);
+  } else {
+    window.open(url, '_blank', 'noreferrer');
+  }
+}
+
 function useSessionId() {
   const [sid] = useState(() => {
     if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
@@ -9,7 +20,88 @@ function useSessionId() {
   return sid;
 }
 
-function ActionPreviewCard({ preview, state, onConfirm, onCancel }) {
+function AfishaUploadCard({ preview, state, onDone, onCancel }) {
+  const [file, setFile] = useState(null);
+  const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState('');
+  const fileRef = useRef(null);
+  const finished = state && state !== 'pending';
+
+  const doUpload = async () => {
+    if (!file) return;
+    setUploading(true);
+    setError('');
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      const res = await fetch(`${API_BASE}/api/afisha/upload`, { method: 'POST', body: fd });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.detail || `Ошибка ${res.status}`);
+      }
+      onDone(true);
+      openUrl(AFISHA_SITE_URL);
+    } catch (e) {
+      setError(e.message);
+      onDone(false);
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  return (
+    <div className={`action-preview action-preview--${state || 'pending'}`}>
+      <div className="action-preview__title">{preview.title}</div>
+      <ul className="action-preview__lines">
+        {(preview.lines || []).map((l, i) => <li key={i}>{l}</li>)}
+      </ul>
+      {!finished && (
+        <>
+          <div style={{ margin: '10px 0 6px' }}>
+            <input
+              ref={fileRef}
+              type="file"
+              accept="image/*,.pdf"
+              style={{ display: 'none' }}
+              onChange={e => { setFile(e.target.files?.[0] || null); e.target.value = ''; }}
+            />
+            <button
+              className="btn-secondary"
+              onClick={() => fileRef.current?.click()}
+              disabled={uploading}
+            >
+              {file ? `📎 ${file.name}` : 'Выбрать файл'}
+            </button>
+          </div>
+          {error && <div className="action-preview__warning">{error}</div>}
+          <div className="action-preview__actions">
+            <button
+              className="btn-primary"
+              onClick={doUpload}
+              disabled={!file || uploading}
+            >
+              {uploading ? 'Загрузка…' : 'Загрузить'}
+            </button>
+            <button className="btn-secondary" onClick={onCancel}>Отмена</button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function ActionPreviewCard({ preview, toolName, state, onConfirm, onCancel, onAfishaResult }) {
+  if (toolName === 'upload_afisha') {
+    return (
+      <AfishaUploadCard
+        preview={preview}
+        state={state}
+        onDone={onAfishaResult}
+        onCancel={onCancel}
+      />
+    );
+  }
+
   const disabled = state && state !== 'pending';
   return (
     <div className={`action-preview action-preview--${state || 'pending'}`}>
@@ -242,9 +334,20 @@ export default function AssistantView({ userId, username, renderSettings }) {
                 {m.pendingAction && (
                   <ActionPreviewCard
                     preview={m.pendingAction.preview}
+                    toolName={m.pendingAction.tool_name}
                     state={m.actionState}
                     onConfirm={() => confirmAction(i)}
                     onCancel={() => cancelAction(i)}
+                    onAfishaResult={(success) => {
+                      setMessages(prev => prev.map((x, j) =>
+                        j === i ? { ...x, actionState: success ? 'done' : 'failed' } : x
+                      ));
+                      setMessages(prev => [...prev, {
+                        role: 'assistant',
+                        content: success ? 'Афиша обновлена ✅ Сайт должен открыться автоматически.' : 'Не удалось загрузить файл.',
+                        error: !success,
+                      }]);
+                    }}
                   />
                 )}
               </React.Fragment>
