@@ -247,12 +247,15 @@ export default function AssistantView({ userId, username, renderSettings }) {
       setMessages(m => [...m, { role: 'assistant', content: okText }]);
 
       if (res.success) {
-        // Автоматически продолжаем диалог — LLM предложит следующую операцию если она была
+        // Автоматически продолжаем диалог — LLM предложит следующую операцию если она была.
+        // Описываем что именно выполнено, чтобы LLM не повторила то же самое.
+        const preview = target.pendingAction?.preview || {};
+        const doneNote = `[Выполнено: ${preview.title || 'действие'} — ${(preview.lines || []).join('; ')}]`;
         const historySnapshot = [
           ...messages
             .filter(m => (m.role === 'user' || m.role === 'assistant') && m.content)
             .map(m => ({ role: m.role, content: m.content })),
-          { role: 'assistant', content: okText },
+          { role: 'assistant', content: doneNote },
         ];
         setSending(true);
         try {
