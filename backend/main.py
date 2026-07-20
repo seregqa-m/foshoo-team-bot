@@ -21,6 +21,7 @@ from auth_router import router as auth_router
 from sheets_router import router as sheets_router
 from finance_router import router as finance_router
 from links_router import router as links_router
+from afisha_router import router as afisha_router
 from bot import bot, dp
 
 # Логирование
@@ -396,6 +397,7 @@ app.include_router(notifications_router)
 app.include_router(availability_router)
 app.include_router(assistant_router)
 app.include_router(links_router)
+app.include_router(afisha_router)
 
 
 @app.get("/")

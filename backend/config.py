@@ -49,3 +49,6 @@ YANDEX_API_KEY = os.getenv("YANDEX_API_KEY", "")
 YANDEX_FOLDER_ID = os.getenv("YANDEX_FOLDER_ID", "")
 YANDEX_GPT_MODEL = os.getenv("YANDEX_GPT_MODEL", "yandexgpt/latest")
 ASSISTANT_ENABLED = os.getenv("ASSISTANT_ENABLED", "true").lower() == "true"
+
+# Афиша: ID файла на Google Drive (не меняется при обновлении содержимого)
+AFISHA_DRIVE_FILE_ID = os.getenv("AFISHA_DRIVE_FILE_ID", "")
