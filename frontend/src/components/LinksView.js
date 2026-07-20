@@ -85,11 +85,13 @@ function AfishaUpload() {
   const [file, setFile] = useState(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [done, setDone] = useState(false);
   const [error, setError] = useState('');
   const inputRef = useRef(null);
 
   const pickFile = () => {
     setError('');
+    setDone(false);
     inputRef.current?.click();
   };
 
@@ -113,8 +115,9 @@ function AfishaUpload() {
         const data = await res.json().catch(() => ({}));
         throw new Error(data.detail || `Ошибка ${res.status}`);
       }
-      setConfirmOpen(false);
       setFile(null);
+      setDone(true);
+      // Открываем сайт автоматически
       openUrl(AFISHA_SITE_URL);
     } catch (e) {
       setError(e.message);
@@ -126,6 +129,7 @@ function AfishaUpload() {
   const cancel = () => {
     setConfirmOpen(false);
     setFile(null);
+    setDone(false);
     setError('');
   };
 
@@ -164,42 +168,75 @@ function AfishaUpload() {
             background: '#fff', borderRadius: 16, padding: '24px 20px',
             width: '100%', maxWidth: 360, boxShadow: '0 8px 32px rgba(0,0,0,0.18)',
           }}>
-            <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 8 }}>Обновить афишу?</div>
-            <div style={{ fontSize: 13, color: '#444', marginBottom: 6, wordBreak: 'break-all' }}>
-              Файл <b>{file?.name}</b> заменит текущую афишу на сайте.
-            </div>
-            <div style={{ fontSize: 12, color: '#999', marginBottom: 20 }}>
-              После загрузки откроем сайт — проверь, что всё отображается правильно.
-            </div>
-            {error && (
-              <div style={{ fontSize: 12, color: '#c0392b', marginBottom: 12, background: '#fff5f5', borderRadius: 8, padding: '8px 10px' }}>
-                {error}
-              </div>
+            {done ? (
+              <>
+                <div style={{ fontSize: 22, marginBottom: 8 }}>✓</div>
+                <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 6 }}>Афиша обновлена</div>
+                <div style={{ fontSize: 13, color: '#555', marginBottom: 20 }}>
+                  Сайт должен открыться автоматически. Если нет — нажми кнопку.
+                </div>
+                <div style={{ display: 'flex', gap: 10 }}>
+                  <button
+                    onClick={cancel}
+                    style={{
+                      flex: 1, padding: '10px 0', borderRadius: 10,
+                      border: '1px solid #ddd', background: '#fff',
+                      fontSize: 14, cursor: 'pointer', color: '#555',
+                    }}
+                  >
+                    Закрыть
+                  </button>
+                  <button
+                    onClick={() => openUrl(AFISHA_SITE_URL)}
+                    style={{
+                      flex: 1, padding: '10px 0', borderRadius: 10, border: 'none',
+                      background: '#111', color: '#fff', fontSize: 14, cursor: 'pointer', fontWeight: 500,
+                    }}
+                  >
+                    Открыть сайт
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 8 }}>Обновить афишу?</div>
+                <div style={{ fontSize: 13, color: '#444', marginBottom: 6, wordBreak: 'break-all' }}>
+                  Файл <b>{file?.name}</b> станет новой афишей, текущая — архивной.
+                </div>
+                <div style={{ fontSize: 12, color: '#999', marginBottom: 20 }}>
+                  После загрузки откроем сайт для проверки.
+                </div>
+                {error && (
+                  <div style={{ fontSize: 12, color: '#c0392b', marginBottom: 12, background: '#fff5f5', borderRadius: 8, padding: '8px 10px' }}>
+                    {error}
+                  </div>
+                )}
+                <div style={{ display: 'flex', gap: 10 }}>
+                  <button
+                    onClick={cancel}
+                    disabled={uploading}
+                    style={{
+                      flex: 1, padding: '10px 0', borderRadius: 10,
+                      border: '1px solid #ddd', background: '#fff',
+                      fontSize: 14, cursor: uploading ? 'not-allowed' : 'pointer', color: '#555',
+                    }}
+                  >
+                    Отмена
+                  </button>
+                  <button
+                    onClick={doUpload}
+                    disabled={uploading}
+                    style={{
+                      flex: 1, padding: '10px 0', borderRadius: 10, border: 'none',
+                      background: uploading ? '#999' : '#111', color: '#fff',
+                      fontSize: 14, cursor: uploading ? 'not-allowed' : 'pointer', fontWeight: 500,
+                    }}
+                  >
+                    {uploading ? 'Загрузка…' : 'Загрузить'}
+                  </button>
+                </div>
+              </>
             )}
-            <div style={{ display: 'flex', gap: 10 }}>
-              <button
-                onClick={cancel}
-                disabled={uploading}
-                style={{
-                  flex: 1, padding: '10px 0', borderRadius: 10,
-                  border: '1px solid #ddd', background: '#fff',
-                  fontSize: 14, cursor: uploading ? 'not-allowed' : 'pointer', color: '#555',
-                }}
-              >
-                Отмена
-              </button>
-              <button
-                onClick={doUpload}
-                disabled={uploading}
-                style={{
-                  flex: 1, padding: '10px 0', borderRadius: 10, border: 'none',
-                  background: uploading ? '#999' : '#111', color: '#fff',
-                  fontSize: 14, cursor: uploading ? 'not-allowed' : 'pointer', fontWeight: 500,
-                }}
-              >
-                {uploading ? 'Загрузка…' : 'Загрузить'}
-              </button>
-            </div>
           </div>
         </div>
       )}
