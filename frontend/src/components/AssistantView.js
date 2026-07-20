@@ -273,7 +273,7 @@ export default function AssistantView({ userId, username, renderSettings }) {
 
   return (
     <div className={`assistant ${empty ? 'assistant-empty' : 'assistant-chat'}`}>
-      {renderSettings && (
+      {renderSettings && empty && (
         <button
           className="assistant-gear"
           onClick={() => setSettingsOpen(true)}
