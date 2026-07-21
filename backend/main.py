@@ -82,6 +82,53 @@ async def _run_bot():
 
 
 # Background sync task для Google Calendar
+def _ensure_schedule_columns(db) -> None:
+    """Создать недостающие столбцы в «График [составы]» для спектаклей тек. и след. месяца."""
+    from datetime import date, datetime as dt_cls, timedelta
+    import calendar as cal_mod
+    from config import GOOGLE_SHEETS_ID
+    from modules.calendar.models import CalendarEvent
+
+    if not (GOOGLE_SHEETS_ID and os.path.exists(GOOGLE_CALENDAR_JSON)):
+        return
+
+    today = date.today()
+    range_start = dt_cls(today.year, today.month, 1)
+    next_month = today.month % 12 + 1
+    next_month_year = today.year + (1 if today.month == 12 else 0)
+    last_day = cal_mod.monthrange(next_month_year, next_month)[1]
+    range_end = dt_cls(next_month_year, next_month, last_day, 23, 59, 59)
+
+    events = (
+        db.query(CalendarEvent)
+        .filter(
+            CalendarEvent.start_time >= range_start,
+            CalendarEvent.start_time <= range_end,
+            CalendarEvent.is_cancelled == False,  # noqa: E712
+        )
+        .order_by(CalendarEvent.start_time)
+        .all()
+    )
+    if not events:
+        return
+
+    try:
+        from sheets_client import SheetsClient
+        sc = SheetsClient(GOOGLE_CALENDAR_JSON, GOOGLE_SHEETS_ID)
+        show_names_lower = {s.lower() for s in (sc.get_show_names() or [])}
+        show_events = [
+            (e.start_time, e.title)
+            for e in events
+            if any(s in e.title.lower() for s in show_names_lower)
+        ]
+        if show_events:
+            added = sc.ensure_schedule_columns(show_events)
+            if added:
+                logger.info(f"✅ Schedule columns: добавлено {added} новых столбцов")
+    except Exception as e:
+        logger.error(f"❌ ensure_schedule_columns failed: {e}")
+
+
 async def sync_calendar_background():
     """Периодическая синхронизация с Google Calendar"""
     await asyncio.sleep(10)  # Подождать чтобы приложение запустилось
@@ -97,6 +144,7 @@ async def sync_calendar_background():
                     service = CalendarService(db, google_client)
                     service.sync_from_google(events)
                     logger.info(f"✅ Calendar sync completed: {len(events)} events")
+                    _ensure_schedule_columns(db)
                 finally:
                     db.close()
             else:

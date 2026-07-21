@@ -444,6 +444,62 @@ class SheetsClient:
                 actors.add(row[2].strip())
         return list(actors)
 
+    def ensure_schedule_columns(self, events: list[tuple[datetime, str]]) -> int:
+        """Добавить столбцы для дат которых ещё нет в «График [составы]».
+
+        events — список (start_time, event_title) для спектаклей текущего/следующего месяца.
+        Столбцы добавляются в хронологическом порядке после последнего существующего.
+        Возвращает количество добавленных столбцов.
+        """
+        if not events:
+            return 0
+
+        result = self.api.values().get(
+            spreadsheetId=self.spreadsheet_id,
+            range=f"{SCHEDULE_SHEET}!1:1",
+        ).execute()
+        headers = result.get("values", [[]])[0]
+        last_col = len(headers)
+
+        existing_keys: set[tuple[int, int]] = set()
+        for cell in headers:
+            parsed = _parse_header_date(cell)
+            if parsed:
+                existing_keys.add((parsed.day, parsed.month))
+
+        shows_raw = self.get_show_names() or []
+        show_map = {s.lower(): s for s in shows_raw}
+
+        seen: set[tuple[int, int]] = set(existing_keys)
+        missing: list[tuple[datetime, str]] = []
+        for dt, title in events:
+            key = (dt.day, dt.month)
+            if key not in seen:
+                missing.append((dt, title))
+                seen.add(key)
+
+        if not missing:
+            return 0
+
+        missing.sort(key=lambda x: x[0])
+
+        row1, row2 = [], []
+        for dt, title in missing:
+            row1.append(_format_schedule_header(dt))
+            title_lower = title.lower()
+            match = next((k for k in show_map if k in title_lower), None)
+            row2.append(show_map[match].upper() if match else "")
+
+        start_col = last_col + 1
+        self.api.values().update(
+            spreadsheetId=self.spreadsheet_id,
+            range=f"{SCHEDULE_SHEET}!R1C{start_col}:R2C{start_col + len(missing) - 1}",
+            valueInputOption="RAW",
+            body={"values": [row1, row2]},
+        ).execute()
+        logger.info(f"Sheets: добавлено {len(missing)} столбцов в График [составы]")
+        return len(missing)
+
     def record_poll_answer(self, telegram_username: str, event_dt: datetime, answer: str) -> bool:
         """
         Записать ответ актёра в таблицу.
@@ -475,6 +531,23 @@ class SheetsClient:
 
         self.write_attendance(row, col, sheet_value)
         return True
+
+
+_MONTH_ABBR = {
+    1: "янв", 2: "фев", 3: "мар", 4: "апр", 5: "мая", 6: "июня",
+    7: "июля", 8: "авг", 9: "сен", 10: "окт", 11: "ноя", 12: "дек",
+}
+_DAY_ABBR = ["пн", "вт", "ср", "чт", "пт", "сб", "вс"]  # weekday() 0=пн … 6=вс
+
+
+def _format_schedule_header(dt: datetime) -> str:
+    """datetime → строка-заголовок вида '[пн] 10 апр\n19:00'."""
+    day_abbr = _DAY_ABBR[dt.weekday()]
+    month_abbr = _MONTH_ABBR[dt.month]
+    header = f"[{day_abbr}] {dt.day} {month_abbr}"
+    if dt.hour or dt.minute:
+        header += f"\n{dt.hour}:{dt.minute:02d}"
+    return header
 
 
 def _parse_header_date(cell: str) -> datetime | None:
