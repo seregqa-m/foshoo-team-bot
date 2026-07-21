@@ -919,26 +919,24 @@ async def _record_availability_handler(db: Session, args: dict, ctx: dict) -> di
 
 def _record_availability_preview(args: dict) -> dict:
     entries = args.get("entries", [])
-    by_user: dict[str, dict] = {}
+
+    # Группируем по актёру, собираем строки с конкретными датами
+    by_user: dict[str, list[str]] = {}
     for e in entries:
         u = (e.get("username") or "?").lstrip("@")
-        by_user.setdefault(u, {"yes": 0, "no": 0})
-        a = e.get("answer", "")
-        if a in ("yes", "no"):
-            by_user[u][a] += 1
+        label = e.get("date_label") or f"event {e.get('event_id', '?')}"
+        answer = e.get("answer", "")
+        mark = "✓" if answer == "yes" else "✗"
+        by_user.setdefault(u, []).append(f"{mark} {label}")
 
     lines = []
-    for u, counts in by_user.items():
-        parts = []
-        if counts["yes"]:
-            parts.append(f"может: {counts['yes']}")
-        if counts["no"]:
-            parts.append(f"не может: {counts['no']}")
-        lines.append(f"@{u}: {', '.join(parts)}")
+    for u, items in by_user.items():
+        lines.append(f"@{u}:")
+        lines.extend(f"  {item}" for item in items)
 
     return {
         "title": f"Записать результаты занятости ({len(entries)} записей, {len(by_user)} актёров)",
-        "lines": lines[:20],
+        "lines": lines[:40],
         "warnings": ["Данные будут записаны в Google Sheets «График [составы]»"],
     }
 
@@ -967,6 +965,7 @@ RECORD_AVAILABILITY_RESULTS = Tool(
                                 "username": {"type": "string", "description": "Telegram username (без @)"},
                                 "event_id": {"type": "integer", "description": "ID события из calendar_events"},
                                 "answer": {"type": "string", "enum": ["yes", "no"], "description": "yes = может, no = не может"},
+                                "date_label": {"type": "string", "description": "Человекочитаемая метка даты для preview, например 'сб 17 мая 19:30'"},
                             },
                             "required": ["username", "event_id", "answer"],
                         },
