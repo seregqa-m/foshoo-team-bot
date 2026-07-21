@@ -353,7 +353,7 @@ async def _search_expenses_handler(db: Session, args: dict, ctx: dict) -> dict:
     q = (args.get("query") or "").strip().lower()
     days_back = int(args.get("days_back") or 90)
     project = (args.get("project") or "").strip()
-    who = (args.get("who") or "").strip().lower()
+    who = (args.get("who") or "").strip()  # оригинальный регистр — SQLite LOWER() не работает с кириллицей
     limit = min(int(args.get("limit") or 50), 50)
 
     cutoff_iso = (date.today() - timedelta(days=days_back)).isoformat()
@@ -361,7 +361,7 @@ async def _search_expenses_handler(db: Session, args: dict, ctx: dict) -> dict:
     if project:
         query = query.filter(ExpenseLog.project == project)
     if who:
-        query = query.filter(sqlfunc.lower(ExpenseLog.who).like(f"%{who}%"))
+        query = query.filter(ExpenseLog.who.like(f"%{who}%"))
     if q:
         query = query.filter(or_(
             sqlfunc.lower(ExpenseLog.what).like(f"%{q}%"),
