@@ -349,25 +349,29 @@ UPDATE_EVENT = Tool(
 
 async def _search_expenses_handler(db: Session, args: dict, ctx: dict) -> dict:
     from modules.finance.models import ExpenseLog
+    from sqlalchemy import or_, func as sqlfunc
     q = (args.get("query") or "").strip().lower()
     days_back = int(args.get("days_back") or 90)
     project = (args.get("project") or "").strip()
-    limit = min(int(args.get("limit") or 20), 50)
+    who = (args.get("who") or "").strip().lower()
+    limit = min(int(args.get("limit") or 50), 50)
 
     cutoff_iso = (date.today() - timedelta(days=days_back)).isoformat()
     query = db.query(ExpenseLog).filter(ExpenseLog.date >= cutoff_iso)
     if project:
         query = query.filter(ExpenseLog.project == project)
+    if who:
+        query = query.filter(sqlfunc.lower(ExpenseLog.who).like(f"%{who}%"))
     if q:
-        # что и комментарий
-        from sqlalchemy import or_, func
         query = query.filter(or_(
-            func.lower(ExpenseLog.what).like(f"%{q}%"),
-            func.lower(ExpenseLog.comment).like(f"%{q}%"),
+            sqlfunc.lower(ExpenseLog.what).like(f"%{q}%"),
+            sqlfunc.lower(ExpenseLog.comment).like(f"%{q}%"),
         ))
     rows = query.order_by(ExpenseLog.date.desc(), ExpenseLog.id.desc()).limit(limit).all()
+    total = sum(float(r.amount) for r in rows)
     return {
         "count": len(rows),
+        "total_amount": int(total),
         "expenses": [
             {
                 "date": r.date,
@@ -402,7 +406,8 @@ SEARCH_EXPENSES = Tool(
                     "query": {"type": "string", "description": "Подстрока для поиска по 'что' и комментарию. Пусто = не фильтровать."},
                     "days_back": {"type": "integer", "description": "Глубина в днях от сегодня. По умолчанию 90."},
                     "project": {"type": "string", "description": "Проект из CONTEXT.projects. Пусто = все."},
-                    "limit": {"type": "integer", "description": "Максимум строк, до 50. По умолчанию 20."},
+                    "who": {"type": "string", "description": "Имя актёра (подстрока). Используй для вопросов 'сколько потратил я/Маша/...'"},
+                    "limit": {"type": "integer", "description": "Максимум строк, до 50. По умолчанию 50."},
                 },
                 "required": [],
             },
