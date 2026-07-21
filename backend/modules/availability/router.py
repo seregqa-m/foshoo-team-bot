@@ -255,6 +255,15 @@ async def create_campaign(req: CreateCampaignRequest, db: Session = Depends(get_
     if not events:
         raise HTTPException(status_code=404, detail="События не найдены")
 
+    # Убедиться что в «График [составы]» есть столбцы для всех выбранных дат
+    if GOOGLE_SHEETS_ID and os.path.exists(GOOGLE_CALENDAR_JSON):
+        try:
+            from sheets_client import SheetsClient
+            sc = SheetsClient(GOOGLE_CALENDAR_JSON, GOOGLE_SHEETS_ID)
+            sc.ensure_schedule_columns([(e.start_time, e.title) for e in events])
+        except Exception as _e:
+            logger.warning(f"ensure_schedule_columns before campaign: {_e}")
+
     # Удалить старую кампанию
     old = db.query(AvailabilityCampaign).order_by(AvailabilityCampaign.id.desc()).first()
     if old:
