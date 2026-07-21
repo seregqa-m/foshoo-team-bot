@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, Boolean
 from sqlalchemy.orm import relationship
 from core.database import Base
 from datetime import datetime
@@ -57,3 +57,18 @@ class AvailabilityVote(Base):
     voted_at = Column(DateTime, default=datetime.utcnow)
 
     poll = relationship("AvailabilityPoll", back_populates="votes")
+
+
+class ExternalPoll(Base):
+    """Telegram-опрос, созданный участником группы (не ботом). Хранит структуру для импорта."""
+    __tablename__ = "external_polls"
+
+    id = Column(Integer, primary_key=True)
+    telegram_poll_id = Column(String, unique=True, index=True)
+    question = Column(String)
+    options_json = Column(Text)       # JSON: [{"index": 0, "text": "сб 17 мая"}, ...]
+    source_chat_id = Column(Integer)
+    source_message_id = Column(Integer)
+    is_anonymous = Column(Boolean)
+    allows_multiple = Column(Boolean)
+    seen_at = Column(DateTime, default=datetime.utcnow)

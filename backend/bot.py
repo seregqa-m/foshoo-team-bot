@@ -54,6 +54,44 @@ async def cmd_help(message: Message):
 _POLL_ANSWER_MAP = {0: "yes", 1: "no", 2: "yes", 3: "unknown"}
 
 
+@dp.message(F.poll)
+async def handle_group_poll(message: Message):
+    """Сохранить структуру опроса из группы (для последующего импорта через ассистента)."""
+    import json as _json
+    from core.database import SessionLocal
+    from modules.availability.models import ExternalPoll
+
+    poll = message.poll
+    if poll is None:
+        return
+
+    db = SessionLocal()
+    try:
+        existing = db.query(ExternalPoll).filter(
+            ExternalPoll.telegram_poll_id == poll.id
+        ).first()
+        if existing:
+            return
+
+        options = [{"index": i, "text": o.text} for i, o in enumerate(poll.options)]
+        db.add(ExternalPoll(
+            telegram_poll_id=poll.id,
+            question=poll.question,
+            options_json=_json.dumps(options, ensure_ascii=False),
+            source_chat_id=message.chat.id,
+            source_message_id=message.message_id,
+            is_anonymous=poll.is_anonymous,
+            allows_multiple=poll.allows_multiple_answers,
+        ))
+        db.commit()
+        logger.info(f"Сохранён внешний опрос poll_id={poll.id!r} вопрос={poll.question!r}")
+    except Exception as e:
+        logger.error(f"handle_group_poll error: {e}")
+        db.rollback()
+    finally:
+        db.close()
+
+
 @dp.poll_answer()
 async def handle_poll_answer(poll_answer: PollAnswer):
     """Сохранить ответ на Telegram-опрос в БД и записать явку в Google Sheets"""
