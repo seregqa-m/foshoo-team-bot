@@ -113,16 +113,26 @@ def _ensure_schedule_columns(db) -> None:
         return
 
     try:
+        from config import ADMIN_ID, TROUPE_FILTER
+        from modules.notifications.models import NotificationSetting
         from sheets_client import SheetsClient
+
+        setting = db.query(NotificationSetting).filter(
+            NotificationSetting.user_id == ADMIN_ID
+        ).first()
+        troupe_filter = (setting.troupe_filter if setting and setting.troupe_filter else TROUPE_FILTER).lower()
+
         sc = SheetsClient(GOOGLE_CALENDAR_JSON, GOOGLE_SHEETS_ID)
         show_names_lower = {s.lower() for s in (sc.get_show_names() or [])}
-        show_events = [
+
+        matched_events = [
             (e.start_time, e.title)
             for e in events
-            if any(s in e.title.lower() for s in show_names_lower)
+            if troupe_filter in e.title.lower()
+            or any(s in e.title.lower() for s in show_names_lower)
         ]
-        if show_events:
-            added = sc.ensure_schedule_columns(show_events)
+        if matched_events:
+            added = sc.ensure_schedule_columns(matched_events)
             if added:
                 logger.info(f"✅ Schedule columns: добавлено {added} новых столбцов")
     except Exception as e:
