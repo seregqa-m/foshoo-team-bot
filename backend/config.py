@@ -49,6 +49,10 @@ YANDEX_API_KEY = os.getenv("YANDEX_API_KEY", "")
 YANDEX_FOLDER_ID = os.getenv("YANDEX_FOLDER_ID", "")
 YANDEX_GPT_MODEL = os.getenv("YANDEX_GPT_MODEL", "yandexgpt/latest")
 ASSISTANT_ENABLED = os.getenv("ASSISTANT_ENABLED", "true").lower() == "true"
+LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.3"))
+LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "1500"))
+# reasoning_effort: low | medium | high (только для reasoning-моделей типа gpt-oss)
+LLM_REASONING_EFFORT = os.getenv("LLM_REASONING_EFFORT", "")
 
 # Афиша: ID файлов на Google Drive (не меняются при обновлении содержимого)
 AFISHA_NEW_DRIVE_FILE_ID = os.getenv("AFISHA_NEW_DRIVE_FILE_ID", "")

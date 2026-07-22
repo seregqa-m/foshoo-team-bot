@@ -16,7 +16,10 @@ from typing import Any, Optional
 
 import aiohttp
 
-from config import YANDEX_API_KEY, YANDEX_FOLDER_ID, YANDEX_GPT_MODEL
+from config import (
+    YANDEX_API_KEY, YANDEX_FOLDER_ID, YANDEX_GPT_MODEL,
+    LLM_TEMPERATURE, LLM_MAX_TOKENS, LLM_REASONING_EFFORT,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -87,12 +90,23 @@ class LLMClient:
 
 
 class YandexGPTClient(LLMClient):
-    def __init__(self, api_key: str, folder_id: str, model: str = "yandexgpt/latest"):
+    def __init__(
+        self,
+        api_key: str,
+        folder_id: str,
+        model: str = "yandexgpt/latest",
+        temperature: float = 0.3,
+        max_tokens: int = 1500,
+        reasoning_effort: str = "",
+    ):
         if not api_key or not folder_id:
             raise LLMConfigurationError("YANDEX_API_KEY и YANDEX_FOLDER_ID должны быть заполнены в .env")
         self.api_key = api_key
         self.folder_id = folder_id
         self.model_uri = f"gpt://{folder_id}/{model}"
+        self.default_temperature = temperature
+        self.default_max_tokens = max_tokens
+        self.reasoning_effort = reasoning_effort  # "" = не передаём
 
     async def chat(
         self,
@@ -100,15 +114,17 @@ class YandexGPTClient(LLMClient):
         *,
         tools: Optional[list[dict]] = None,
         tool_choice: str = "auto",
-        temperature: float = 0.3,
-        max_tokens: int = 1500,
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
     ) -> LLMResponse:
         payload: dict[str, Any] = {
             "model": self.model_uri,
             "messages": [_message_to_openai(m) for m in messages],
-            "temperature": temperature,
-            "max_tokens": max_tokens,
+            "temperature": temperature if temperature is not None else self.default_temperature,
+            "max_tokens": max_tokens if max_tokens is not None else self.default_max_tokens,
         }
+        if self.reasoning_effort:
+            payload["reasoning_effort"] = self.reasoning_effort
         if tools:
             payload["tools"] = tools
             payload["tool_choice"] = tool_choice
@@ -165,4 +181,7 @@ def get_llm_client() -> LLMClient:
         api_key=YANDEX_API_KEY,
         folder_id=YANDEX_FOLDER_ID,
         model=YANDEX_GPT_MODEL,
+        temperature=LLM_TEMPERATURE,
+        max_tokens=LLM_MAX_TOKENS,
+        reasoning_effort=LLM_REASONING_EFFORT,
     )
