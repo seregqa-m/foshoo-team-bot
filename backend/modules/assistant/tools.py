@@ -418,6 +418,70 @@ SEARCH_EXPENSES = Tool(
 )
 
 
+async def _search_income_handler(db: Session, args: dict, ctx: dict) -> dict:
+    from modules.finance.models import IncomeLog
+    from sqlalchemy import func as sqlfunc
+    q = (args.get("query") or "").strip().lower()
+    days_back = int(args.get("days_back") or 90)
+    project = (args.get("project") or "").strip()
+    limit = min(int(args.get("limit") or 50), 50)
+
+    cutoff_iso = (date.today() - timedelta(days=days_back)).isoformat()
+    query = db.query(IncomeLog).filter(IncomeLog.date >= cutoff_iso)
+    if project:
+        query = query.filter(IncomeLog.project == project)
+    if q:
+        query = query.filter(
+            sqlfunc.lower(IncomeLog.what).like(f"%{q}%")
+        )
+    rows = query.order_by(IncomeLog.date.desc(), IncomeLog.id.desc()).limit(limit).all()
+    total = sum(float(r.amount) for r in rows)
+    return {
+        "count": len(rows),
+        "total_amount": int(total),
+        "incomes": [
+            {
+                "date": r.date,
+                "amount": r.amount,
+                "what": r.what,
+                "project": r.project,
+                "comment": r.comment or "",
+            }
+            for r in rows
+        ],
+    }
+
+
+SEARCH_INCOME = Tool(
+    name="search_income",
+    description=(
+        "Найти доходы в истории. Используй, когда пользователь спрашивает "
+        "«сколько мы заработали», «доходы за апрель», «поступления по проекту». "
+        "В CONTEXT.recent_incomes только 5 последних — эта функция для более "
+        "глубокой истории."
+    ),
+    schema={
+        "type": "function",
+        "function": {
+            "name": "search_income",
+            "description": "Поиск в истории доходов. Возвращает до 50 совпадений с total_amount.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Подстрока для поиска по полю 'что'. Пусто = не фильтровать."},
+                    "days_back": {"type": "integer", "description": "Глубина в днях от сегодня. По умолчанию 90."},
+                    "project": {"type": "string", "description": "Проект из CONTEXT.projects. Пусто = все."},
+                    "limit": {"type": "integer", "description": "Максимум строк, до 50. По умолчанию 50."},
+                },
+                "required": [],
+            },
+        },
+    },
+    handler=_search_income_handler,
+    safety_level="read",
+)
+
+
 async def _get_events_in_range_handler(db: Session, args: dict, ctx: dict) -> dict:
     from_iso = args.get("from_date")
     to_iso = args.get("to_date")
@@ -788,7 +852,7 @@ TOOLS: dict[str, Tool] = {
         CREATE_ATTENDANCE_POLL, STOP_POLL, CREATE_AVAILABILITY_CAMPAIGN,
         PING_NON_VOTERS, UPDATE_SETTINGS, UPLOAD_AFISHA,
         # read, исполняются сразу
-        SEARCH_EXPENSES, GET_EVENTS_IN_RANGE, GET_SHOW_CAST,
+        SEARCH_EXPENSES, SEARCH_INCOME, GET_EVENTS_IN_RANGE, GET_SHOW_CAST,
     ]
 }
 
