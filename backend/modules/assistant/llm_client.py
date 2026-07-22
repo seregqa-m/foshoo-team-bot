@@ -146,7 +146,16 @@ class YandexGPTClient(LLMClient):
         try:
             choice = body["choices"][0]
             msg = choice.get("message", {})
+            finish_reason = choice.get("finish_reason")
             text = msg.get("content") or ""
+            if not text:
+                # reasoning-модели иногда пишут только в reasoning_content
+                text = msg.get("reasoning_content") or ""
+            if not text and not msg.get("tool_calls"):
+                logger.warning(
+                    f"LLM empty content. finish_reason={finish_reason} "
+                    f"msg_keys={list(msg.keys())} body={str(body)[:500]}"
+                )
             raw_tool_calls = msg.get("tool_calls") or []
             parsed_tools: list[ToolCall] = []
             for tc in raw_tool_calls:
