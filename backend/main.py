@@ -289,15 +289,15 @@ async def _auto_create_polls():
                 Poll.calendar_event_id == event.id,
                 Poll.is_active == True,
             ).first()
-            if existing:
-                continue
+            if existing and existing.telegram_message_id:
+                continue  # уже отправлен в Telegram
 
             from babel.dates import format_date
             dt = event.start_time
             date_str = f"в {format_date(dt, 'EEEE', locale='ru_RU')} {format_date(dt, 'd MMM', locale='ru_RU')} в {dt.strftime('%H:%M')}"
 
             poll_service = PollingService(db)
-            poll = poll_service.create_poll(
+            poll = existing or poll_service.create_poll(
                 title=f"Кто будет {date_str}?",
                 created_by=ADMIN_ID,
                 expires_in_hours=settings.reminder_days_before * 24 + 48,
