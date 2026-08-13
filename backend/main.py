@@ -72,10 +72,8 @@ def run_migrations():
 
 
 async def _run_bot():
-    """Запустить Telegram бота, удалив webhook перед polling"""
+    """Запустить Telegram бота в режиме polling"""
     try:
-        await bot.delete_webhook(drop_pending_updates=True)
-        logger.info("Webhook deleted, starting polling")
         await dp.start_polling(bot, handle_signals=False)
     except Exception as e:
         logger.error(f"❌ Bot polling stopped: {e}", exc_info=True)
