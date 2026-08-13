@@ -20,7 +20,7 @@ class GoogleCalendarClient:
             credentials = service_account.Credentials.from_service_account_file(
                 credentials_file, scopes=SCOPES
             )
-            self.service = build('calendar', 'v3', credentials=credentials)
+            self.service = build('calendar', 'v3', credentials=credentials, cache_discovery=False)
             logger.info("Google Calendar client initialized")
         except Exception as e:
             logger.error(f"Failed to initialize Google Calendar client: {e}")

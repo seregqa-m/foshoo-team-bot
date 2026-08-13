@@ -38,7 +38,7 @@ class SheetsClient:
         creds = service_account.Credentials.from_service_account_file(
             credentials_path, scopes=SCOPES
         )
-        service = build("sheets", "v4", credentials=creds)
+        service = build("sheets", "v4", credentials=creds, cache_discovery=False)
         self.api = service.spreadsheets()
         self.spreadsheet_id = spreadsheet_id
 
@@ -491,6 +491,27 @@ class SheetsClient:
             row2.append(show_map[match].upper() if match else "")
 
         start_col = last_col + 1
+        needed_col_count = start_col + len(missing) - 1
+
+        meta = self.api.get(
+            spreadsheetId=self.spreadsheet_id,
+            fields="sheets.properties",
+        ).execute()
+        sheet_props = next(
+            s["properties"] for s in meta["sheets"]
+            if s["properties"]["title"] == SCHEDULE_SHEET
+        )
+        if needed_col_count > sheet_props["gridProperties"]["columnCount"]:
+            cols_to_add = needed_col_count - sheet_props["gridProperties"]["columnCount"]
+            self.api.batchUpdate(
+                spreadsheetId=self.spreadsheet_id,
+                body={"requests": [{"appendDimension": {
+                    "sheetId": sheet_props["sheetId"],
+                    "dimension": "COLUMNS",
+                    "length": cols_to_add,
+                }}]},
+            ).execute()
+
         self.api.values().update(
             spreadsheetId=self.spreadsheet_id,
             range=f"{SCHEDULE_SHEET}!R1C{start_col}:R2C{start_col + len(missing) - 1}",

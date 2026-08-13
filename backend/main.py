@@ -143,22 +143,24 @@ async def sync_calendar_background():
     """Периодическая синхронизация с Google Calendar"""
     await asyncio.sleep(10)  # Подождать чтобы приложение запустилось
 
+    if not (os.path.exists(GOOGLE_CALENDAR_JSON) and GOOGLE_CALENDAR_ID):
+        logger.debug("Google Calendar not configured, skipping sync")
+        return
+
+    google_client = GoogleCalendarClient(GOOGLE_CALENDAR_JSON)
+
     while True:
         try:
-            if os.path.exists(GOOGLE_CALENDAR_JSON) and GOOGLE_CALENDAR_ID:
-                google_client = GoogleCalendarClient(GOOGLE_CALENDAR_JSON)
-                events = google_client.get_events(GOOGLE_CALENDAR_ID)
+            events = google_client.get_events(GOOGLE_CALENDAR_ID)
 
-                db = SessionLocal()
-                try:
-                    service = CalendarService(db, google_client)
-                    service.sync_from_google(events)
-                    logger.info(f"✅ Calendar sync completed: {len(events)} events")
-                    _ensure_schedule_columns(db)
-                finally:
-                    db.close()
-            else:
-                logger.debug("Google Calendar not configured, skipping sync")
+            db = SessionLocal()
+            try:
+                service = CalendarService(db, google_client)
+                service.sync_from_google(events)
+                logger.info(f"✅ Calendar sync completed: {len(events)} events")
+                _ensure_schedule_columns(db)
+            finally:
+                db.close()
         except Exception as e:
             logger.error(f"❌ Calendar sync failed: {e}")
 
