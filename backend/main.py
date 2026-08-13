@@ -72,12 +72,17 @@ def run_migrations():
 
 
 async def _run_bot():
-    """Запустить Telegram бота в режиме polling"""
-    try:
-        logger.info("⏱ Bot: calling start_polling (getMe + connect)...")
-        await dp.start_polling(bot, handle_signals=False)
-    except Exception as e:
-        logger.error(f"❌ Bot polling stopped: {e}", exc_info=True)
+    """Запустить Telegram бота в режиме polling с авторестартом"""
+    delay = 5
+    while True:
+        try:
+            logger.info("⏱ Bot: starting polling...")
+            await dp.start_polling(bot, handle_signals=False)
+        except Exception as e:
+            logger.error(f"❌ Bot polling stopped: {e}")
+        logger.info(f"⏱ Bot: restarting in {delay}s...")
+        await asyncio.sleep(delay)
+        delay = min(delay * 2, 60)
 
 
 @dp.startup()

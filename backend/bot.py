@@ -4,6 +4,8 @@ Telegram bot для управления театральной студией
 """
 import logging
 from aiogram import Bot, Dispatcher, F
+from aiogram.client.default import DefaultBotProperties
+from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.types import (
     Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton,
     WebAppInfo, PollAnswer,
@@ -13,7 +15,7 @@ from config import BOT_TOKEN, MINI_APP_URL
 
 logger = logging.getLogger(__name__)
 
-bot = Bot(token=BOT_TOKEN)
+bot = Bot(token=BOT_TOKEN, session=AiohttpSession(timeout=15))
 dp = Dispatcher()
 
 
