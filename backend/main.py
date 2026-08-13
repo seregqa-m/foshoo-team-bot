@@ -74,9 +74,15 @@ def run_migrations():
 async def _run_bot():
     """Запустить Telegram бота в режиме polling"""
     try:
+        logger.info("⏱ Bot: calling start_polling (getMe + connect)...")
         await dp.start_polling(bot, handle_signals=False)
     except Exception as e:
         logger.error(f"❌ Bot polling stopped: {e}", exc_info=True)
+
+
+@dp.startup()
+async def _on_bot_ready():
+    logger.info("✅ Bot polling active")
 
 
 # Background sync task для Google Calendar
@@ -145,10 +151,13 @@ async def sync_calendar_background():
         logger.debug("Google Calendar not configured, skipping sync")
         return
 
+    logger.info("⏱ Calendar: initializing client...")
     google_client = GoogleCalendarClient(GOOGLE_CALENDAR_JSON)
+    logger.info("✅ Calendar: client ready")
 
     while True:
         try:
+            logger.info("⏱ Calendar: fetching events...")
             events = google_client.get_events(GOOGLE_CALENDAR_ID)
 
             db = SessionLocal()
@@ -422,22 +431,27 @@ async def startup():
     logger.info("🚀 Starting application")
     import modules.availability.models  # noqa: ensure tables created
     import modules.assistant.models  # noqa: ensure assistant_action_log table created
+    logger.info("⏱ Running migrations...")
     run_migrations()
+    logger.info("⏱ Initializing DB...")
     init_db()
     logger.info("✅ Database initialized")
 
     # Запустить Telegram бота
     asyncio.create_task(_run_bot())
-    logger.info("🤖 Telegram bot started")
+    logger.info("⏱ Bot task scheduled")
 
     # Запустить background sync task для Google Calendar
     asyncio.create_task(sync_calendar_background())
+    logger.info("⏱ Calendar sync task scheduled")
 
     # Запустить синхронизацию финансов
     asyncio.create_task(sync_finance_background())
+    logger.info("⏱ Finance sync task scheduled")
 
     # Запустить фоновую проверку напоминаний
     asyncio.create_task(poll_reminder_background())
+    logger.info("🚀 All tasks scheduled, startup complete")
 
 
 @app.on_event("shutdown")
