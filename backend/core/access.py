@@ -6,6 +6,7 @@ import json
 import os
 import time
 from dataclasses import dataclass
+from collections import OrderedDict
 from urllib.parse import parse_qsl
 
 from fastapi import HTTPException, Request
@@ -70,24 +71,46 @@ def _known_actor(username: str) -> bool:
         raise HTTPException(503, "Проверка доступа временно недоступна") from None
 
 
+_access_cache = OrderedDict()
+_access_lock = asyncio.Lock()
+
+
+async def _permissions(user):
+    key = (user.id, user.username)
+    async with _access_lock:
+        cached = _access_cache.get(key)
+        if cached and cached[0] > time.monotonic():
+            return cached[1:]
+        admin = await is_admin(user.id)
+        allowed = admin or await asyncio.to_thread(_known_actor, user.username)
+        # Cache only successful checks; failures never reuse expired permissions.
+        _access_cache[key] = (time.monotonic() + 60, allowed, admin)
+        _access_cache.move_to_end(key)
+        while len(_access_cache) > 512:
+            _access_cache.popitem(last=False)
+        return allowed, admin
+
+
 async def authorize_api(request: Request):
     """Applied to every /api router; identity fields cannot override Telegram."""
     user = verify_init_data(request.headers.get("X-Telegram-Init-Data", ""))
-    admin = await is_admin(user.id)
-    if not admin and not await asyncio.to_thread(_known_actor, user.username):
+    allowed, admin = await _permissions(user)
+    if not allowed:
         raise HTTPException(403, "Приложение доступно только участникам труппы")
-    supplied = dict(request.query_params)
+    supplied_sources = [dict(request.query_params)]
     if request.headers.get("content-type", "").startswith("application/json"):
         try:
-            body = await request.json()
+            raw_body = await request.body()
+            body = json.loads(raw_body) if raw_body else None
             if isinstance(body, dict):
-                supplied.update(body)
+                supplied_sources.append(body)
         except ValueError:
             raise HTTPException(400, "Некорректный JSON") from None
-    if "user_id" in supplied and str(supplied["user_id"]) != str(user.id):
-        raise HTTPException(403, "Нельзя действовать от имени другого пользователя")
-    if "username" in supplied and str(supplied["username"]).lower().lstrip("@") != user.username.lower():
-        raise HTTPException(403, "Пользователь не совпадает с данными Telegram")
+    for supplied in supplied_sources:
+        if "user_id" in supplied and str(supplied["user_id"]) != str(user.id):
+            raise HTTPException(403, "Нельзя действовать от имени другого пользователя")
+        if "username" in supplied and str(supplied["username"]).lower().lstrip("@") != user.username.lower():
+            raise HTTPException(403, "Пользователь не совпадает с данными Telegram")
     path = request.url.path.rstrip("/")
     member_writes = {
         "/api/finance/expense", "/api/finance/income",

@@ -273,16 +273,12 @@ def _handle_availability_answer(poll_answer, avail_poll, db):
     from modules.availability.models import AvailabilityPollOption, AvailabilityVote
     from modules.calendar.models import CalendarEvent
 
-    username = poll_answer.user.username
-    if not username:
-        logger.warning(f"Availability poll answer from user without username: {poll_answer.user.id}")
-        return
-
     # Зафиксировать факт голосования (upsert по user_id + poll_id)
     existing_vote = db.query(AvailabilityVote).filter(
         AvailabilityVote.poll_id == avail_poll.id,
         AvailabilityVote.user_id == poll_answer.user.id,
     ).first()
+    username = poll_answer.user.username or (existing_vote.username if existing_vote else None)
     if not poll_answer.option_ids:
         if existing_vote:
             db.delete(existing_vote)
@@ -293,6 +289,12 @@ def _handle_availability_answer(poll_answer, avail_poll, db):
             username=username,
         ))
 
+    if existing_vote and username:
+        existing_vote.username = username
+    db.commit()
+    if not username:
+        logger.warning("Cannot write attendance: Telegram username is missing")
+        return
     selected = set(poll_answer.option_ids)
     options = db.query(AvailabilityPollOption).filter(
         AvailabilityPollOption.poll_id == avail_poll.id

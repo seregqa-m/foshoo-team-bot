@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import client, { assistantApi } from '../api/client';
+import { assistantApi, uploadAfisha } from '../api/client';
 
 const AFISHA_SITE_URL = 'https://foshoo-theatre.ru/afisha';
 
@@ -31,9 +31,7 @@ function AfishaUploadCard({ preview, state, onDone, onCancel }) {
     setUploading(true);
     setError('');
     try {
-      const fd = new FormData();
-      fd.append('file', file);
-      await client.post('/api/afisha/upload', fd, { headers: { 'Content-Type': undefined } });
+      await uploadAfisha(file);
       onDone(true);
       openUrl(AFISHA_SITE_URL);
     } catch (e) {
@@ -150,7 +148,7 @@ function SettingsOverlay({ open, onClose, children }) {
   );
 }
 
-export default function AssistantView({ userId, username, renderSettings }) {
+export default function AssistantView({ userId, username, renderSettings, active = true }) {
   const sessionId = useSessionId();
   const [messages, setMessages] = useState([]); // {role, content, error?}
   const [input, setInput] = useState('');
@@ -173,10 +171,10 @@ export default function AssistantView({ userId, username, renderSettings }) {
 
   // ротация подсказок каждые 6 сек, пока диалог пустой
   useEffect(() => {
-    if (messages.length > 0) return undefined;
+    if (!active || messages.length > 0) return undefined;
     const id = setInterval(loadHints, 6000);
     return () => clearInterval(id);
-  }, [messages.length, loadHints]);
+  }, [active, messages.length, loadHints]);
 
   useEffect(() => {
     if (listRef.current) {
@@ -230,7 +228,7 @@ export default function AssistantView({ userId, username, renderSettings }) {
 
   const confirmAction = async (idx) => {
     const target = messages[idx];
-    if (!target?.pendingAction) return;
+    if (!target?.pendingAction || target.actionState !== 'pending') return;
     setMessages(m => m.map((x, i) => (i === idx ? { ...x, actionState: 'executing' } : x)));
     try {
       const res = await assistantApi.execute({

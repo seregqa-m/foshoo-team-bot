@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 
-import client from '../api/client';
+import client, { uploadAfisha } from '../api/client';
 const AFISHA_SITE_URL = 'https://foshoo-theatre.ru/afisha';
 
 function openUrl(url) {
@@ -108,9 +108,7 @@ function AfishaUpload() {
     setUploading(true);
     setError('');
     try {
-      const fd = new FormData();
-      fd.append('file', file);
-      await client.post('/api/afisha/upload', fd, { headers: { 'Content-Type': undefined } });
+      await uploadAfisha(file);
       setFile(null);
       setDone(true);
       // Открываем сайт автоматически
@@ -243,11 +241,12 @@ function AfishaUpload() {
 export default function LinksView({ isAdmin }) {
   const [blocks, setBlocks] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
 
   useEffect(() => {
     client.get('/api/links')
       .then(({ data }) => { setBlocks(data.blocks || []); setLoading(false); })
-      .catch(() => setLoading(false));
+      .catch(() => { setError('Не удалось загрузить ресурсы'); setLoading(false); });
   }, []);
 
   return (
@@ -255,6 +254,7 @@ export default function LinksView({ isAdmin }) {
       <div className="page-header">
         <div className="page-title">Ресурсы</div>
       </div>
+      {error && <div role="alert" className="alert alert-error">{error}</div>}
       {isAdmin && <AfishaUpload />}
       {loading ? (
         <div className="empty-state">Загрузка...</div>

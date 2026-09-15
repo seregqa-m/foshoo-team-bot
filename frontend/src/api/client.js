@@ -15,6 +15,21 @@ client.interceptors.request.use(config => {
   return config;
 });
 
+export const DATA_CHANGED_EVENT = 'foshoo:data-changed';
+client.interceptors.response.use(response => {
+  const method = response.config.method?.toLowerCase();
+  if (['post', 'put', 'patch', 'delete'].includes(method) && response.config.url !== '/api/assistant/chat') {
+    window.dispatchEvent(new Event(DATA_CHANGED_EVENT));
+  }
+  return response;
+});
+
+export async function uploadAfisha(file) {
+  const form = new FormData();
+  form.append('file', file);
+  return client.post('/api/afisha/upload', form, { headers: { 'Content-Type': undefined } });
+}
+
 export const assistantApi = {
   async chat({ userId, username, sessionId, message, history }) {
     const { data } = await client.post('/api/assistant/chat', {

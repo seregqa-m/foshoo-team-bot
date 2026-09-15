@@ -325,10 +325,9 @@ class AssistantService:
             tool_name=tool_name,
             args_json=json.dumps(args, ensure_ascii=False),
         )
-        self.db.add(log)
-
         try:
             result = await _run_tool(tool, self.db, args, {"user_id": user_id, "username": username})
+            self.db.add(log)
             log.result_json = json.dumps(result, ensure_ascii=False, default=str)
             log.success = True
             response = {"success": True, "result": result}

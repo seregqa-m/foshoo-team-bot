@@ -27,7 +27,7 @@ function AvailabilitySection({ showNames }) {
   const loadCampaign = () => {
     client.get('/api/availability/current')
       .then(r => setCampaign(r.data.campaign || null))
-      .catch(() => setCampaign(null));
+      .catch(() => { setCampaign(null); setFormError('Не удалось загрузить опрос занятости'); });
   };
 
   useEffect(() => { loadCampaign(); }, []);
@@ -48,10 +48,6 @@ function AvailabilitySection({ showNames }) {
   const toggleShow = name => setSelectedShows(s =>
     s.includes(name) ? s.filter(x => x !== name) : [...s, name]
   );
-  const toggleEvent = id => setSelectedEvents(s =>
-    s.includes(id) ? s.filter(x => x !== id) : [...s, id]
-  );
-
   const checkDates = async (ids) => {
     if (!ids.length) { setMissingDates([]); return; }
     try {

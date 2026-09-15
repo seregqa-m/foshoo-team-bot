@@ -213,8 +213,8 @@ async def launch_poll_for_event(
 
     cal_service = CalendarService(db)
     event = cal_service.get_event_by_id(event_id)
-    if not event:
-        raise HTTPException(status_code=404, detail="Event not found")
+    if not event or event.is_cancelled:
+        raise HTTPException(status_code=404, detail="Событие не найдено или отменено")
 
     from babel.dates import format_date
     dt = event.start_time

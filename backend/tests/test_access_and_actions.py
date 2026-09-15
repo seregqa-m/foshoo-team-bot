@@ -33,6 +33,10 @@ def signed_data(token="test-token", user_id=42, auth_date=None):
 
 
 class AccessTests(unittest.TestCase):
+    def setUp(self):
+        from core.access import _access_cache
+        _access_cache.clear()
+
     def test_signature_age_and_tampering(self):
         valid = signed_data(auth_date=1000)
         self.assertEqual(verify_init_data(valid, bot_token="test-token", now=1001).id, 42)
@@ -53,8 +57,12 @@ class AccessTests(unittest.TestCase):
             self.assertEqual(client.get('/api/calendar/events').status_code, 200)
             self.assertEqual(client.post('/api/calendar/events').status_code, 403)
             self.assertEqual(client.post('/api/finance/expense', json={'user_id': 99}).status_code, 403)
+            self.assertEqual(client.post('/api/finance/expense?user_id=99', json={'user_id': 42}).status_code, 403)
             self.assertEqual(client.post('/api/finance/expense', json={'username': 'admin'}).status_code, 403)
             self.assertEqual(client.post('/api/finance/expense', json={'user_id': 42}).status_code, 200)
+            self.assertEqual(client.post('/api/finance/expense', headers={'Content-Type': 'application/json'}).status_code, 200)
+        from core.access import _access_cache
+        _access_cache.clear()
         with patch('core.access.verify_init_data', return_value=TelegramUser(42, 'actor')), patch('core.access.is_admin', AsyncMock(return_value=False)), patch('core.access._known_actor', side_effect=HTTPException(503, 'unavailable')):
             self.assertEqual(client.get('/api/calendar/events').status_code, 503)
 
@@ -90,6 +98,24 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
         answer.option_ids = []
         _handle_availability_answer(answer, poll, self.db)
         self.assertEqual(self.db.query(AvailabilityVote).count(), 0)
+
+    async def test_retraction_clears_sheet_with_previous_username(self):
+        from modules.availability.models import AvailabilityPollOption
+        from datetime import datetime
+        from unittest.mock import MagicMock
+        event = CalendarEvent(start_time=datetime(2026, 10, 1, 19))
+        poll = AvailabilityPoll()
+        self.db.add_all([event, poll]); self.db.commit()
+        self.db.add(AvailabilityPollOption(poll_id=poll.id, option_index=0, calendar_event_id=event.id))
+        self.db.add(AvailabilityVote(poll_id=poll.id, user_id=42, username='actor'))
+        self.db.commit()
+        answer = SimpleNamespace(user=SimpleNamespace(id=42, username=None), option_ids=[])
+        client = MagicMock()
+        with patch('config.GOOGLE_SHEETS_ID', 'test'), patch('os.path.exists', return_value=True), patch('sheets_client.SheetsClient', return_value=client):
+            _handle_availability_answer(answer, poll, self.db)
+        self.assertEqual(self.db.query(AvailabilityVote).count(), 0)
+        self.assertEqual(client.record_poll_answer.call_args.args[0], 'actor')
+        self.assertEqual(client.record_poll_answer.call_args.args[2], 'retracted')
 
     async def test_action_replay_returns_result_across_sessions(self):
         handler = AsyncMock(return_value={'added': True})

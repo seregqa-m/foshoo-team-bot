@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import client from '../api/client';
+import useContainerWidth from './useContainerWidth';
 
 function smoothPath(points) {
   if (points.length === 0) return '';
@@ -22,7 +23,7 @@ function smoothPath(points) {
 function SplineChart({ data }) {
   const [tooltip, setTooltip] = useState(null);
   const h = 180, padL = 44, padB = 28, padT = 16, padR = 8;
-  const totalW = window.innerWidth - 32;
+  const [containerRef, totalW] = useContainerWidth();
   const spacing = (totalW - padL - padR) / Math.max(data.length - 1, 1);
   const chartH = h - padT - padB;
 
@@ -53,7 +54,7 @@ function SplineChart({ data }) {
   const gridVals = [yTop, 0, yBot].filter(v => v >= yBot && v <= yTop);
 
   return (
-    <div style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
+    <div ref={containerRef} style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
       <div style={{ position: 'relative', display: 'inline-block' }}>
         {tooltip && (
           <div style={{
@@ -119,7 +120,7 @@ function SplineChart({ data }) {
 function SimpleBarChart({ data }) {
   const [tooltip, setTooltip] = useState(null);
   const h = 160, padL = 36, padB = 28, padT = 8, padR = 8;
-  const totalW = window.innerWidth - 32;
+  const [containerRef, totalW] = useContainerWidth();
   const max = Math.max(...data.map(d => Math.max(
     d.income,
     (d.expense_foshu || 0) + (d.expense_personal || 0) + (d.expense_donation || 0)
@@ -132,7 +133,7 @@ function SimpleBarChart({ data }) {
   const bottom = padT + chartH;
 
   return (
-    <div style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
+    <div ref={containerRef} style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
       <div style={{ position: 'relative', display: 'inline-block' }}>
         {tooltip && (
           <div style={{
@@ -204,13 +205,16 @@ function SimpleBarChart({ data }) {
   );
 }
 
-const todayISO = () => new Date().toISOString().slice(0, 10);
+const todayISO = () => {
+  const today = new Date();
+  return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+};
 const isoToDMY = iso => { const [y, m, d] = iso.split('-'); return `${d}.${m}.${y}`; };
 
 const EMPTY_EXPENSE = { project: '', amount: '', what: '', expense_type: '', comment: '', who: '', date: todayISO() };
 const EMPTY_INCOME  = { project: '', amount: '', what: '', comment: '', date: todayISO() };
 
-export default function FinanceView({ username, isAdmin }) {
+export default function FinanceView({ username, isAdmin, active = true, dataVersion = 0 }) {
   const [balance, setBalance] = useState(null);
   const [meta, setMeta] = useState({ projects: [], expense_types: [], actors: [] });
   const [modal, setModal] = useState(null); // 'expense' | 'income' | null
@@ -227,30 +231,41 @@ export default function FinanceView({ username, isAdmin }) {
   });
   const [transactions, setTransactions] = useState([]);
 
-  const loadTransactions = () => {
-    client.get('/api/finance/transactions').then(r => setTransactions(r.data.transactions)).catch(() => {});
-  };
+  const [refreshVersion, setRefreshVersion] = useState(0);
+  const savingRef = useRef(false);
+  const refreshFinance = () => setRefreshVersion(v => v + 1);
 
   useEffect(() => {
-    client.get('/api/finance/balance').then(r => setBalance(r.data.balance)).catch(() => {});
-    client.get('/api/finance/meta').then(r => setMeta(r.data)).catch(() => {});
-    loadTransactions();
+    client.get('/api/finance/meta').then(r => setMeta(r.data))
+      .catch(() => setError('Не удалось загрузить справочники финансов'));
   }, []);
 
   useEffect(() => {
+    if (!active) return;
+    setError(null);
+    const controller = new AbortController();
     const [y, m, d] = fromDate.split('-');
-    const params = { period: chartPeriod, from_date: `${d}.${m}.${y}` };
-    client.get('/api/finance/chart', { params })
-      .then(r => setChartData(r.data.data))
-      .catch(() => {});
-  }, [chartPeriod, fromDate]);
+    const params = { period: chartPeriod, from_date: fromDate ? `${d}.${m}.${y}` : undefined };
+    Promise.all([
+      client.get('/api/finance/balance', { signal: controller.signal }),
+      client.get('/api/finance/transactions', { signal: controller.signal }),
+      client.get('/api/finance/chart', { params, signal: controller.signal }),
+    ]).then(([balanceResponse, transactionsResponse, chartResponse]) => {
+      if (controller.signal.aborted) return;
+      setBalance(balanceResponse.data.balance);
+      setTransactions(transactionsResponse.data.transactions);
+      setChartData(chartResponse.data.data);
+    }).catch(e => {
+      if (!controller.signal.aborted) setError(e.response?.data?.detail || 'Не удалось обновить финансы');
+    });
+    return () => controller.abort();
+  }, [active, dataVersion, refreshVersion, chartPeriod, fromDate]);
 
   const deleteTransaction = async (type, id, fingerprint) => {
     if (!window.confirm('Удалить операцию из БД и таблицы?')) return;
     try {
       await client.delete(`/api/finance/transactions/${type}/${id}`, { params: { expected_fingerprint: fingerprint } });
-      loadTransactions();
-      client.get('/api/finance/balance').then(r => setBalance(r.data.balance)).catch(() => {});
+      refreshFinance();
     } catch (e) {
       setError(e.response?.data?.detail || 'Ошибка при удалении');
     }
@@ -259,7 +274,7 @@ export default function FinanceView({ username, isAdmin }) {
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
   const openExpense = () => {
-    setForm({ ...EMPTY_EXPENSE });
+    setForm({ ...EMPTY_EXPENSE, date: todayISO() });
     setModal('expense');
     setError(null);
     if (username) {
@@ -268,11 +283,12 @@ export default function FinanceView({ username, isAdmin }) {
         .catch(() => {});
     }
   };
-  const openIncome  = () => { setForm({ ...EMPTY_INCOME });  setModal('income');  setError(null); };
+  const openIncome  = () => { setForm({ ...EMPTY_INCOME, date: todayISO() });  setModal('income');  setError(null); };
   const closeModal  = () => { setModal(null); setError(null); };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (savingRef.current) return;
     if (!form.project || !form.amount || !form.what) {
       setError('Заполните обязательные поля');
       return;
@@ -282,6 +298,7 @@ export default function FinanceView({ username, isAdmin }) {
       return;
     }
     try {
+      savingRef.current = true;
       setSaving(true);
       setError(null);
       const payload = { ...form, date: isoToDMY(form.date) };
@@ -293,11 +310,11 @@ export default function FinanceView({ username, isAdmin }) {
       setModal(null);
       setSuccess(modal === 'expense' ? 'Расход добавлен' : 'Доход добавлен');
       setTimeout(() => setSuccess(null), 3000);
-      client.get('/api/finance/balance').then(r => setBalance(r.data.balance)).catch(() => {});
-      loadTransactions();
+      refreshFinance();
     } catch (e) {
       setError(e.response?.data?.detail || 'Ошибка при сохранении');
     } finally {
+      savingRef.current = false;
       setSaving(false);
     }
   };
@@ -319,6 +336,7 @@ export default function FinanceView({ username, isAdmin }) {
         )}
       </div>
 
+      {error && !modal && <div role="alert" className="alert alert-error">{error} <button onClick={refreshFinance}>Обновить</button></div>}
       {success && <div className="alert alert-success">{success}</div>}
 
       {/* Копилка */}

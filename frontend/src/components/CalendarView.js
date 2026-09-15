@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import * as calendarApi from '../api/calendar';
 import client from '../api/client';
 
@@ -406,7 +406,7 @@ function EventModal({ event, onClose, onSaved, onDeleted }) {
   );
 }
 
-export default function CalendarView({ userId, isAdmin, trouFilter = 'труппа 1' }) {
+export default function CalendarView({ userId, isAdmin, trouFilter = 'труппа 1', active = true, dataVersion = 0 }) {
   const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -417,17 +417,15 @@ export default function CalendarView({ userId, isAdmin, trouFilter = 'трупп
   const [pollSummary, setPollSummary] = useState({});
 
   useEffect(() => {
-    fetch(`${process.env.REACT_APP_API_URL || 'http://127.0.0.1:8000'}/api/sheets/shows`)
-      .then(r => r.json())
-      .then(data => setShowNames((data.shows || []).map(s => s.toLowerCase())))
+    client.get('/api/sheets/shows')
+      .then(({ data }) => setShowNames((data.shows || []).map(s => s.toLowerCase())))
       .catch(() => {});
-    fetch(`${process.env.REACT_APP_API_URL || 'http://127.0.0.1:8000'}/api/calendar/meta`)
-      .then(r => r.json())
-      .then(data => setCalendarUrl(data.calendar_url || null))
+    client.get('/api/calendar/meta')
+      .then(({ data }) => setCalendarUrl(data.calendar_url || null))
       .catch(() => {});
   }, []);
 
-  const fetchEvents = async () => {
+  const fetchEvents = useCallback(async () => {
     try {
       setLoading(true);
       const res = await calendarApi.getEvents(60);
@@ -438,15 +436,17 @@ export default function CalendarView({ userId, isAdmin, trouFilter = 'трупп
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  const fetchPollSummary = () => {
+  const fetchPollSummary = useCallback(() => {
     client.get('/api/polls/events-summary')
       .then(r => setPollSummary(r.data.summary || {}))
-      .catch(() => {});
-  };
+      .catch(() => setError('Не удалось обновить результаты опросов'));
+  }, []);
 
-  useEffect(() => { fetchEvents(); fetchPollSummary(); }, []);
+  useEffect(() => {
+    if (active) { fetchEvents(); fetchPollSummary(); }
+  }, [active, dataVersion, fetchEvents, fetchPollSummary]);
 
   const handleSaved = () => { setModal(null); fetchEvents(); };
   const handleDeleted = () => { setModal(null); fetchEvents(); };
@@ -468,7 +468,7 @@ export default function CalendarView({ userId, isAdmin, trouFilter = 'трупп
         })
       : events.filter(e => e.title.toLowerCase().includes(filter));
 
-  if (loading) return <div className="empty-state">Загрузка...</div>;
+  if (loading && events.length === 0) return <div className="empty-state">Загрузка...</div>;
 
   return (
     <>

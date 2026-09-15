@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import './index.css';
-import client from './api/client';
+import client, { DATA_CHANGED_EVENT } from './api/client';
 import AssistantView from './components/AssistantView';
 import CalendarView from './components/CalendarView';
 import NotificationsView from './components/NotificationsView';
@@ -9,6 +9,17 @@ import LinksView from './components/LinksView';
 
 function App() {
   const [activeTab, setActiveTab] = useState('assistant');
+  const [visitedTabs, setVisitedTabs] = useState(['assistant']);
+  const [dataVersion, setDataVersion] = useState(0);
+  const selectTab = tab => {
+    setVisitedTabs(tabs => tabs.includes(tab) ? tabs : [...tabs, tab]);
+    setActiveTab(tab);
+  };
+  useEffect(() => {
+    const refresh = () => setDataVersion(version => version + 1);
+    window.addEventListener(DATA_CHANGED_EVENT, refresh);
+    return () => window.removeEventListener(DATA_CHANGED_EVENT, refresh);
+  }, []);
   const [userId, setUserId] = useState(null);
   const [username, setUsername] = useState('');
   const [allowed, setAllowed] = useState(null); // null = проверяем
@@ -36,6 +47,13 @@ function App() {
       });
   }, []);
 
+  useEffect(() => {
+    if (!allowed || !dataVersion) return;
+    client.get('/api/auth/app-config')
+      .then(({ data }) => setTrouFilter(data.troupe_filter))
+      .catch(() => {});
+  }, [allowed, dataVersion]);
+
   if (allowed === null) {
     return <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', fontFamily: 'sans-serif' }}>Загрузка...</div>;
   }
@@ -59,40 +77,47 @@ function App() {
   return (
     <div className="app">
       <main className={`content ${activeTab === 'assistant' ? 'content--assistant' : ''}`}>
-        {activeTab === 'assistant' && (
+        <section hidden={activeTab !== 'assistant'}>
           <AssistantView
+            active={activeTab === 'assistant'}
             userId={userId}
             username={username}
             renderSettings={() => isAdmin ? <NotificationsView userId={userId} /> : <p>Настройки доступны администратору.</p>}
           />
-        )}
-        {activeTab === 'calendar' && <CalendarView userId={userId} isAdmin={isAdmin} trouFilter={trouFilter} />}
-        {activeTab === 'finance' && <FinanceView username={username} isAdmin={isAdmin} />}
-        {activeTab === 'links' && <LinksView isAdmin={isAdmin} />}
+        </section>
+        {visitedTabs.includes('calendar') && <section hidden={activeTab !== 'calendar'}>
+          <CalendarView active={activeTab === 'calendar'} dataVersion={dataVersion} userId={userId} isAdmin={isAdmin} trouFilter={trouFilter} />
+        </section>}
+        {visitedTabs.includes('finance') && <section hidden={activeTab !== 'finance'}>
+          <FinanceView active={activeTab === 'finance'} dataVersion={dataVersion} username={username} isAdmin={isAdmin} />
+        </section>}
+        {visitedTabs.includes('links') && <section hidden={activeTab !== 'links'}>
+          <LinksView isAdmin={isAdmin} />
+        </section>}
       </main>
 
       <nav className="tab-bar">
         <button
           className={activeTab === 'assistant' ? 'active' : ''}
-          onClick={() => setActiveTab('assistant')}
+          onClick={() => selectTab('assistant')}
         >
           🤖<span>Ассистент</span>
         </button>
         <button
           className={activeTab === 'calendar' ? 'active' : ''}
-          onClick={() => setActiveTab('calendar')}
+          onClick={() => selectTab('calendar')}
         >
           📅<span>Расписание</span>
         </button>
         <button
           className={activeTab === 'finance' ? 'active' : ''}
-          onClick={() => setActiveTab('finance')}
+          onClick={() => selectTab('finance')}
         >
           💰<span>Финансы</span>
         </button>
         <button
           className={activeTab === 'links' ? 'active' : ''}
-          onClick={() => setActiveTab('links')}
+          onClick={() => selectTab('links')}
         >
           🗂️<span>Ресурсы</span>
         </button>
