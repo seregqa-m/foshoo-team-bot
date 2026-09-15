@@ -147,15 +147,15 @@ class YandexGPTClient(LLMClient):
             choice = body["choices"][0]
             msg = choice.get("message", {})
             finish_reason = choice.get("finish_reason")
+            # Only content is a public reply. reasoning_content must never be
+            # used as an answer or as the preface to an action confirmation.
             text = msg.get("content") or ""
-            if not text:
-                # reasoning-модели иногда пишут только в reasoning_content
-                text = msg.get("reasoning_content") or ""
-            if not text and not msg.get("tool_calls"):
+            if not text.strip() and not msg.get("tool_calls"):
                 logger.warning(
-                    f"LLM empty content. finish_reason={finish_reason} "
-                    f"msg_keys={list(msg.keys())} body={str(body)[:500]}"
+                    "LLM returned no public answer or tool calls. finish_reason=%s",
+                    finish_reason,
                 )
+                raise LLMProviderError("YandexGPT не вернул готовый ответ или вызов инструмента")
             raw_tool_calls = msg.get("tool_calls") or []
             parsed_tools: list[ToolCall] = []
             for tc in raw_tool_calls:
@@ -181,7 +181,7 @@ class YandexGPTClient(LLMClient):
                 raw=body,
             )
         except (KeyError, IndexError) as e:
-            raise LLMProviderError(f"Неожиданный ответ YandexGPT: {body}") from e
+            raise LLMProviderError("Неожиданный формат ответа YandexGPT") from e
 
 
 def get_llm_client() -> LLMClient:

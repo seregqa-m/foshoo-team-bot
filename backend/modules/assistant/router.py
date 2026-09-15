@@ -129,7 +129,7 @@ async def chat(request: ChatRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=503, detail=str(e))
     except LLMProviderError as e:
         logger.error(f"LLM provider error: {e}")
-        raise HTTPException(status_code=502, detail="Ошибка LLM. Попробуй ещё раз.")
+        raise HTTPException(status_code=502, detail="Ассистент не смог подготовить ответ. Попробуй ещё раз.")
 
     pending = None
     if result.pending_action:
