@@ -12,6 +12,8 @@ Deletions/mass-updates не входят в реестр — LLM их не ви�
 """
 from __future__ import annotations
 
+import asyncio
+import inspect
 import json
 import logging
 import time
@@ -172,6 +174,12 @@ class ChatResult:
     output_tokens: Optional[int] = None
 
 
+async def _run_tool(tool, db, args, context):
+    if inspect.iscoroutinefunction(tool.handler):
+        return await tool.handler(db, args, context)
+    return await asyncio.to_thread(tool.handler, db, args, context)
+
+
 class AssistantService:
     def __init__(self, db: Session, llm: LLMClient | None = None):
         self.db = db
@@ -186,7 +194,7 @@ class AssistantService:
         history: list[dict] | None = None,
         is_admin: bool = False,
     ) -> ChatResult:
-        system_prompt = _build_system_prompt(self.db, user_id, username=username)
+        system_prompt = await asyncio.to_thread(_build_system_prompt, self.db, user_id, username=username)
         messages: list[ChatMessage] = [ChatMessage(role="system", text=system_prompt)]
 
         for h in history or []:
@@ -252,7 +260,7 @@ class AssistantService:
 
             # safety_level == "read": исполняем немедленно, кормим результат обратно
             try:
-                tool_result = await tool.handler(self.db, call.arguments, tool_ctx)
+                tool_result = await _run_tool(tool, self.db, call.arguments, tool_ctx)
             except Exception as e:
                 logger.error(f"read-tool {call.name} failed: {e}", exc_info=True)
                 tool_result = {"error": str(e)[:500]}
@@ -318,10 +326,9 @@ class AssistantService:
             args_json=json.dumps(args, ensure_ascii=False),
         )
         self.db.add(log)
-        self.db.flush()
 
         try:
-            result = await tool.handler(self.db, args, {"user_id": user_id, "username": username})
+            result = await _run_tool(tool, self.db, args, {"user_id": user_id, "username": username})
             log.result_json = json.dumps(result, ensure_ascii=False, default=str)
             log.success = True
             response = {"success": True, "result": result}

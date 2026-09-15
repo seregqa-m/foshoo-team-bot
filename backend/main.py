@@ -8,6 +8,7 @@ import sys
 import os
 from fastapi import FastAPI, Depends
 from core.access import authorize_api
+from core.time import local_now
 from fastapi.middleware.cors import CORSMiddleware
 from core.database import init_db, SessionLocal, engine
 from config import LOG_LEVEL, API_HOST, API_PORT, GOOGLE_CALENDAR_JSON, GOOGLE_CALENDAR_ID, SYNC_INTERVAL_MINUTES
@@ -53,8 +54,8 @@ app.add_middleware(
 
 def run_migrations():
     """Добавить новые колонки если их нет (идемпотентно)"""
-    from sqlalchemy import text
-    with engine.connect() as conn:
+    from sqlalchemy import text, inspect
+    with engine.begin() as conn:
         for stmt in [
             "ALTER TABLE polls ADD COLUMN telegram_poll_id TEXT",
             "ALTER TABLE polls ADD COLUMN telegram_message_id INTEGER",
@@ -65,22 +66,24 @@ def run_migrations():
             "ALTER TABLE notification_settings ADD COLUMN troupe_filter TEXT DEFAULT 'труппа 1'",
             "ALTER TABLE notification_settings ADD COLUMN current_show TEXT",
         ]:
-            try:
+            table, column = stmt.split()[2], stmt.split()[5]
+            if column not in {c["name"] for c in inspect(conn).get_columns(table)}:
                 conn.execute(text(stmt))
-                conn.commit()
-            except Exception:
-                pass  # колонка уже существует
 
 
 async def _run_bot():
     """Запустить Telegram бота в режиме polling с авторестартом"""
     delay = 5
     while True:
+        started = asyncio.get_running_loop().time()
         try:
+            await bot.delete_webhook(drop_pending_updates=False)
             logger.info("⏱ Bot: starting polling...")
-            await dp.start_polling(bot, handle_signals=False)
+            await dp.start_polling(bot, handle_signals=False, close_bot_session=False)
         except Exception as e:
             logger.error(f"❌ Bot polling stopped: {e}")
+        if asyncio.get_running_loop().time() - started >= 60:
+            delay = 5
         logger.info(f"⏱ Bot: restarting in {delay}s...")
         await asyncio.sleep(delay)
         delay = min(delay * 2, 60)
@@ -102,7 +105,7 @@ def _ensure_schedule_columns(db) -> None:
     if not (GOOGLE_SHEETS_ID and os.path.exists(GOOGLE_CALENDAR_JSON)):
         return
 
-    today = date.today()
+    today = local_now().date()
     range_start = dt_cls(today.year, today.month, 1)
     next_month = today.month % 12 + 1
     next_month_year = today.year + (1 if today.month == 12 else 0)
@@ -149,53 +152,60 @@ def _ensure_schedule_columns(db) -> None:
         logger.error(f"❌ ensure_schedule_columns failed: {e}")
 
 
-async def sync_calendar_background():
-    """Периодическая синхронизация с Google Calendar"""
-    await asyncio.sleep(10)  # Подождать чтобы приложение запустилось
-
+def sync_calendar_once():
     if not (os.path.exists(GOOGLE_CALENDAR_JSON) and GOOGLE_CALENDAR_ID):
-        logger.debug("Google Calendar not configured, skipping sync")
         return
-
-    logger.info("⏱ Calendar: initializing client...")
     google_client = GoogleCalendarClient(GOOGLE_CALENDAR_JSON)
-    logger.info("✅ Calendar: client ready")
+    events = google_client.get_events(GOOGLE_CALENDAR_ID)
+    with SessionLocal() as db:
+        CalendarService(db, google_client).sync_from_google(events)
+        _ensure_schedule_columns(db)
+    logger.info("Calendar sync completed: %s events", len(events))
 
+
+def sync_finance_once():
+    from finance_router import sync_finance_from_sheets
+    with SessionLocal() as db:
+        return sync_finance_from_sheets(db)
+
+
+async def _sync_loop(job, initial_delay):
+    await asyncio.sleep(initial_delay)
     while True:
         try:
-            logger.info("⏱ Calendar: fetching events...")
-            events = google_client.get_events(GOOGLE_CALENDAR_ID)
-
-            db = SessionLocal()
-            try:
-                service = CalendarService(db, google_client)
-                service.sync_from_google(events)
-                logger.info(f"✅ Calendar sync completed: {len(events)} events")
-                _ensure_schedule_columns(db)
-            finally:
-                db.close()
-        except Exception as e:
-            logger.error(f"❌ Calendar sync failed: {e}")
-
+            await asyncio.to_thread(job)
+        except Exception:
+            logger.exception("Background sync failed: %s", job.__name__)
         await asyncio.sleep(SYNC_INTERVAL_MINUTES * 60)
+
+
+async def sync_calendar_background():
+    await _sync_loop(sync_calendar_once, 10)
 
 
 async def sync_finance_background():
-    """Периодическая синхронизация финансов из Google Sheets."""
-    await asyncio.sleep(30)
-    while True:
-        try:
-            from finance_router import sync_finance_from_sheets
-            db = SessionLocal()
-            try:
-                result = sync_finance_from_sheets(db)
-                if not result.get("skipped"):
-                    logger.info(f"✅ Finance sync: {result}")
-            finally:
-                db.close()
-        except Exception as e:
-            logger.error(f"❌ Finance sync failed: {e}")
-        await asyncio.sleep(SYNC_INTERVAL_MINUTES * 60)
+    await _sync_loop(sync_finance_once, 30)
+
+
+def _show_names():
+    from config import GOOGLE_SHEETS_ID
+    from sheets_client import SheetsClient
+    if not (GOOGLE_SHEETS_ID and os.path.exists(GOOGLE_CALENDAR_JSON)):
+        return []
+    return [s.lower() for s in SheetsClient(GOOGLE_CALENDAR_JSON, GOOGLE_SHEETS_ID).get_show_names()]
+
+
+def _reminder_usernames(current_show):
+    from config import GOOGLE_SHEETS_ID
+    from sheets_client import SheetsClient
+    if not (GOOGLE_SHEETS_ID and os.path.exists(GOOGLE_CALENDAR_JSON)):
+        raise RuntimeError("Google Sheets is not configured")
+    client = SheetsClient(GOOGLE_CALENDAR_JSON, GOOGLE_SHEETS_ID)
+    mapping = client.get_actor_mapping()
+    if not current_show:
+        return set(mapping)
+    cast = {n.lower() for n in client.get_show_cast(current_show)}
+    return {uname for uname, name in mapping.items() if name.lower() in cast}
 
 
 async def poll_reminder_background():
@@ -224,12 +234,12 @@ async def _cleanup_old_polls():
     from modules.polling.models import Poll, PollVote
     from modules.calendar.models import CalendarEvent
 
-    cutoff = datetime.utcnow() - timedelta(days=1)
+    cutoff = local_now() - timedelta(days=1)
     db = SessionLocal()
     try:
         old_polls = db.query(Poll).join(
             CalendarEvent, Poll.calendar_event_id == CalendarEvent.id
-        ).filter(CalendarEvent.start_time < cutoff).all()
+        ).filter(CalendarEvent.end_time < cutoff).all()
 
         for poll in old_polls:
             db.query(PollVote).filter(PollVote.poll_id == poll.id).delete()
@@ -254,7 +264,7 @@ async def _auto_create_polls():
     if not GROUP_CHAT_ID:
         return
 
-    now = datetime.utcnow()
+    now = local_now()
     db = SessionLocal()
     try:
         settings = db.query(NotificationSetting).filter(
@@ -263,28 +273,22 @@ async def _auto_create_polls():
         if not (settings and settings.poll_reminders_enabled):
             return
 
-        moscow_now = now + timedelta(hours=3)
+        moscow_now = now
         h, m = map(int, settings.reminder_time.split(":"))
         if (moscow_now.hour, moscow_now.minute) < (h, m):
             return
 
         target_date = (now + timedelta(days=settings.reminder_days_before)).date()
 
-        show_names_lower = []
-        if GOOGLE_SHEETS_ID and os.path.exists(GOOGLE_CALENDAR_JSON):
-            try:
-                from sheets_client import SheetsClient as _SC
-                show_names_lower = [s.lower() for s in _SC(GOOGLE_CALENDAR_JSON, GOOGLE_SHEETS_ID).get_show_names()]
-            except Exception:
-                pass
+        show_names_lower = await asyncio.to_thread(_show_names)
 
-        for event in db.query(CalendarEvent).all():
+        for event in db.query(CalendarEvent).filter(CalendarEvent.is_cancelled == False).all():
             if event.start_time.date() != target_date:
                 continue
             if show_names_lower and any(s in event.title.lower() for s in show_names_lower):
                 continue
             from config import TROUPE_FILTER
-            if TROUPE_FILTER not in event.title.lower():
+            if (settings.troupe_filter or TROUPE_FILTER).lower() not in event.title.lower():
                 continue
             existing = db.query(Poll).filter(
                 Poll.calendar_event_id == event.id,
@@ -331,7 +335,7 @@ async def _send_poll_reminders():
     if not GROUP_CHAT_ID:
         return
 
-    now = datetime.utcnow()
+    now = local_now()
     db = SessionLocal()
     try:
         settings = db.query(NotificationSetting).filter(
@@ -341,7 +345,7 @@ async def _send_poll_reminders():
         if not (settings and settings.poll_reminders_enabled):
             return
 
-        moscow_now = now + timedelta(hours=3)
+        moscow_now = now
         h, m = map(int, reminder_time_str.split(":"))
         if (moscow_now.hour, moscow_now.minute) < (h, m):
             return
@@ -356,17 +360,12 @@ async def _send_poll_reminders():
             Poll.reminder_sent_at == None,
         ).all()
 
-        show_names_lower = []
-        if GOOGLE_SHEETS_ID and os.path.exists(GOOGLE_CALENDAR_JSON):
-            try:
-                from sheets_client import SheetsClient as _SC
-                show_names_lower = [s.lower() for s in _SC(GOOGLE_CALENDAR_JSON, GOOGLE_SHEETS_ID).get_show_names()]
-            except Exception:
-                pass
+        show_names_lower = await asyncio.to_thread(_show_names)
+        target_usernames = await asyncio.to_thread(_reminder_usernames, settings.current_show)
 
         for poll in polls:
             event = db.query(CalendarEvent).filter(CalendarEvent.id == poll.calendar_event_id).first()
-            if not event or event.start_time.date() != target_date:
+            if not event or event.is_cancelled or not poll.telegram_message_id or event.start_time.date() != target_date:
                 continue
             if show_names_lower and any(s in event.title.lower() for s in show_names_lower):
                 continue
@@ -381,27 +380,10 @@ async def _send_poll_reminders():
                 if v.username
             }
 
-            unvoted_mentions = []
-            if GOOGLE_SHEETS_ID and os.path.exists(GOOGLE_CALENDAR_JSON):
-                try:
-                    from sheets_client import SheetsClient
-                    client = SheetsClient(GOOGLE_CALENDAR_JSON, GOOGLE_SHEETS_ID)
-                    mapping = client.get_actor_mapping()  # {username: name}
-
-                    target_usernames = set(mapping.keys())
-                    if settings and settings.current_show:
-                        cast_names = {n.lower() for n in client.get_show_cast(settings.current_show)}
-                        name_to_username = {name.lower(): uname for uname, name in mapping.items()}
-                        target_usernames = {name_to_username[n] for n in cast_names if n in name_to_username}
-
-                    for username in target_usernames:
-                        if username not in voted_usernames:
-                            unvoted_mentions.append(f"@{username}")
-                except Exception as e:
-                    logger.error(f"Sheets read for reminder failed: {e}")
+            unvoted_mentions = [f"@{name}" for name in sorted(target_usernames - voted_usernames)]
 
             if not unvoted_mentions:
-                poll.reminder_sent_at = now
+                poll.reminder_sent_at = datetime.utcnow()
                 db.commit()
                 continue
 
@@ -409,7 +391,7 @@ async def _send_poll_reminders():
             mentions = " ".join(unvoted_mentions)
             poll_link = ""
             if poll.telegram_message_id and GROUP_CHAT_ID:
-                group_id = str(GROUP_CHAT_ID).lstrip("-").lstrip("100") if str(GROUP_CHAT_ID).startswith("-100") else str(abs(GROUP_CHAT_ID))
+                group_id = str(GROUP_CHAT_ID)[4:] if str(GROUP_CHAT_ID).startswith("-100") else str(abs(GROUP_CHAT_ID))
                 poll_link = f"\n\nhttps://t.me/c/{group_id}/{poll.telegram_message_id}"
 
             await bot.send_message(chat_id=GROUP_CHAT_ID,
@@ -423,7 +405,7 @@ async def _send_poll_reminders():
                 except Exception as e:
                     logger.warning(f"Pin poll failed: {e}")
 
-            poll.reminder_sent_at = now
+            poll.reminder_sent_at = datetime.utcnow()
             db.commit()
             logger.info(f"✅ Reminder sent for poll {poll.id}, event {event.start_time.date()}")
 
@@ -438,31 +420,36 @@ async def startup():
     import modules.availability.models  # noqa: ensure tables created
     import modules.assistant.models  # noqa: ensure assistant_action_log table created
     logger.info("⏱ Running migrations...")
-    run_migrations()
-    logger.info("⏱ Initializing DB...")
     init_db()
+    run_migrations()
     logger.info("✅ Database initialized")
 
+    app.state.tasks = []
     # Запустить Telegram бота
-    asyncio.create_task(_run_bot())
+    app.state.tasks.append(asyncio.create_task(_run_bot()))
     logger.info("⏱ Bot task scheduled")
 
     # Запустить background sync task для Google Calendar
-    asyncio.create_task(sync_calendar_background())
+    app.state.tasks.append(asyncio.create_task(sync_calendar_background()))
     logger.info("⏱ Calendar sync task scheduled")
 
     # Запустить синхронизацию финансов
-    asyncio.create_task(sync_finance_background())
+    app.state.tasks.append(asyncio.create_task(sync_finance_background()))
     logger.info("⏱ Finance sync task scheduled")
 
     # Запустить фоновую проверку напоминаний
-    asyncio.create_task(poll_reminder_background())
+    app.state.tasks.append(asyncio.create_task(poll_reminder_background()))
     logger.info("🚀 All tasks scheduled, startup complete")
 
 
 @app.on_event("shutdown")
 async def shutdown():
     logger.info("🛑 Shutting down application")
+    tasks = getattr(app.state, "tasks", [])
+    for task in tasks:
+        task.cancel()
+    await asyncio.gather(*tasks, return_exceptions=True)
+    await bot.session.close()
 
 
 # Регистрировать маршруты
@@ -501,6 +488,6 @@ if __name__ == "__main__":
         "main:app",
         host=API_HOST,
         port=API_PORT,
-        reload=True,
+        reload=os.getenv("API_RELOAD", "false").lower() == "true",
         log_level=LOG_LEVEL.lower()
     )

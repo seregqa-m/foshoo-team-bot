@@ -1,4 +1,6 @@
+import asyncio
 import json
+from core.time import local_now
 import logging
 import os
 from datetime import datetime, timedelta
@@ -29,9 +31,9 @@ def _get_troupe_filter(db: Session) -> str:
 
 
 @router.get("/next-month-events")
-async def get_next_month_events(db: Session = Depends(get_db)):
+def get_next_month_events(db: Session = Depends(get_db)):
     """События следующего месяца для труппы (не спектакли)."""
-    today = datetime.utcnow().date()
+    today = local_now().date()
     first_next = (today.replace(day=1) + timedelta(days=32)).replace(day=1)
     last_next = (first_next + timedelta(days=32)).replace(day=1) - timedelta(days=1)
 
@@ -48,6 +50,7 @@ async def get_next_month_events(db: Session = Depends(get_db)):
             pass
 
     events = db.query(CalendarEvent).filter(
+        CalendarEvent.is_cancelled == False,
         CalendarEvent.start_time >= datetime.combine(first_next, datetime.min.time()),
         CalendarEvent.start_time <= datetime.combine(last_next, datetime.max.time()),
     ).order_by(CalendarEvent.start_time).all()
@@ -69,7 +72,7 @@ async def get_next_month_events(db: Session = Depends(get_db)):
 
 
 @router.get("/check-dates")
-async def check_dates(event_ids: str, db: Session = Depends(get_db)):
+def check_dates(event_ids: str, db: Session = Depends(get_db)):
     """Проверить что для переданных event_ids есть столбцы в таблице занятости.
     event_ids — строка с id через запятую."""
     if not GOOGLE_SHEETS_ID or not os.path.exists(GOOGLE_CALENDAR_JSON):
@@ -91,7 +94,7 @@ async def check_dates(event_ids: str, db: Session = Depends(get_db)):
 
 
 @router.get("/current")
-async def get_current(db: Session = Depends(get_db)):
+def get_current(db: Session = Depends(get_db)):
     """Текущая кампания с опросами и количеством проголосовавших."""
     campaign = db.query(AvailabilityCampaign).order_by(
         AvailabilityCampaign.id.desc()
@@ -126,7 +129,7 @@ async def get_current(db: Session = Depends(get_db)):
 
 
 @router.get("/non-voters")
-async def get_non_voters(db: Session = Depends(get_db)):
+def get_non_voters(db: Session = Depends(get_db)):
     """Список usernames из состава выбранных спектаклей, кто не ответил хотя бы на один опрос."""
     campaign = db.query(AvailabilityCampaign).order_by(
         AvailabilityCampaign.id.desc()
@@ -137,7 +140,7 @@ async def get_non_voters(db: Session = Depends(get_db)):
     show_names = json.loads(campaign.show_names)
 
     if not GOOGLE_SHEETS_ID or not os.path.exists(GOOGLE_CALENDAR_JSON):
-        return {"non_voters": []}
+        raise HTTPException(503, "Google Sheets не настроен")
 
     try:
         from sheets_client import SheetsClient
@@ -150,7 +153,7 @@ async def get_non_voters(db: Session = Depends(get_db)):
             cast_usernames |= {name_to_uname[n] for n in cast_names if n in name_to_uname}
     except Exception as e:
         logger.error(f"non_voters cast lookup failed: {e}")
-        return {"non_voters": []}
+        raise HTTPException(502, "Не удалось прочитать состав") from e
 
     non_voters = []
     for uname in cast_usernames:
@@ -178,29 +181,7 @@ async def ping_non_voters(db: Session = Depends(get_db)):
     if not campaign:
         raise HTTPException(status_code=404, detail="Нет активного опроса")
 
-    show_names = json.loads(campaign.show_names)
-    if not GOOGLE_SHEETS_ID or not os.path.exists(GOOGLE_CALENDAR_JSON):
-        raise HTTPException(status_code=503, detail="Google Sheets не настроен")
-
-    try:
-        from sheets_client import SheetsClient
-        client = SheetsClient(GOOGLE_CALENDAR_JSON, GOOGLE_SHEETS_ID)
-        mapping = client.get_actor_mapping()
-        cast_usernames: set[str] = set()
-        for show in show_names:
-            cast_names = {n.lower() for n in client.get_show_cast(show)}
-            name_to_uname = {name.lower(): uname for uname, name in mapping.items()}
-            cast_usernames |= {name_to_uname[n] for n in cast_names if n in name_to_uname}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Ошибка чтения состава: {e}")
-
-    non_voters = []
-    for uname in cast_usernames:
-        for poll in campaign.polls:
-            voted = any(v.username and v.username.lower() == uname for v in poll.votes)
-            if not voted:
-                non_voters.append(uname)
-                break
+    non_voters = (await asyncio.to_thread(get_non_voters, db))["non_voters"]
 
     if not non_voters:
         return {"status": "all_answered", "count": 0}
@@ -216,7 +197,7 @@ async def ping_non_voters(db: Session = Depends(get_db)):
     poll_links = []
     for poll in campaign.polls:
         if poll.telegram_message_id:
-            group_id = str(GROUP_CHAT_ID).lstrip("-100") if str(GROUP_CHAT_ID).startswith("-100") \
+            group_id = str(GROUP_CHAT_ID)[4:] if str(GROUP_CHAT_ID).startswith("-100") \
                 else str(abs(GROUP_CHAT_ID))
             poll_links.append(f"https://t.me/c/{group_id}/{poll.telegram_message_id}")
 
@@ -249,26 +230,14 @@ async def create_campaign(req: CreateCampaignRequest, db: Session = Depends(get_
         raise HTTPException(status_code=400, detail="Слишком много дат (максимум 20)")
 
     events = db.query(CalendarEvent).filter(
-        CalendarEvent.id.in_(req.event_ids)
+        CalendarEvent.id.in_(req.event_ids), CalendarEvent.is_cancelled == False,
     ).order_by(CalendarEvent.start_time).all()
 
-    if not events:
-        raise HTTPException(status_code=404, detail="События не найдены")
+    if len(events) != len(set(req.event_ids)):
+        raise HTTPException(status_code=409, detail="Некоторые события удалены или отменены")
 
-    # Убедиться что в «График [составы]» есть столбцы для всех выбранных дат
-    if GOOGLE_SHEETS_ID and os.path.exists(GOOGLE_CALENDAR_JSON):
-        try:
-            from sheets_client import SheetsClient
-            sc = SheetsClient(GOOGLE_CALENDAR_JSON, GOOGLE_SHEETS_ID)
-            sc.ensure_schedule_columns([(e.start_time, e.title) for e in events])
-        except Exception as _e:
-            logger.warning(f"ensure_schedule_columns before campaign: {_e}")
-
-    # Удалить старую кампанию
-    old = db.query(AvailabilityCampaign).order_by(AvailabilityCampaign.id.desc()).first()
-    if old:
-        db.delete(old)
-        db.flush()
+    await asyncio.to_thread(_ensure_campaign_columns, [(e.start_time, e.title) for e in events])
+    old_ids = [c.id for c in db.query(AvailabilityCampaign).all()]
 
     month = events[0].start_time.strftime("%Y-%m")
     month_label = format_date(events[0].start_time, "MMMM yyyy", locale="ru_RU")
@@ -280,8 +249,9 @@ async def create_campaign(req: CreateCampaignRequest, db: Session = Depends(get_
     db.add(campaign)
     db.flush()
 
-    # Разбить на батчи по 10 (Telegram poll limit)
-    batches = [events[i:i+10] for i in range(0, len(events), 10)]
+    db.commit()
+    # Reserve an option for actors unavailable on every date. Empty options mean retraction.
+    batches = [events[i:i+9] for i in range(0, len(events), 9)]
     poll_suffix = f" (часть {{}}/{len(batches)})" if len(batches) > 1 else ""
 
     for batch_idx, batch in enumerate(batches):
@@ -294,7 +264,7 @@ async def create_campaign(req: CreateCampaignRequest, db: Session = Depends(get_
             message = await bot.send_poll(
                 chat_id=GROUP_CHAT_ID,
                 question=question,
-                options=options,
+                options=options + ["Ни одна из дат"],
                 is_anonymous=False,
                 allows_multiple_answers=True,
             )
@@ -317,6 +287,16 @@ async def create_campaign(req: CreateCampaignRequest, db: Session = Depends(get_
                 calendar_event_id=event.id,
                 date_label=_date_label(event.start_time),
             ))
+        db.commit()  # Preserve the mapping if sending a later poll fails.
 
+    for old in db.query(AvailabilityCampaign).filter(AvailabilityCampaign.id.in_(old_ids)).all():
+        db.delete(old)
     db.commit()
-    return {"status": "sent", "month": month, "polls_count": len(batches)}
+    return {"status": "sent", "month": month, "polls_count": len(batches), "events_count": len(events)}
+
+
+def _ensure_campaign_columns(events):
+    if not GOOGLE_SHEETS_ID or not os.path.exists(GOOGLE_CALENDAR_JSON):
+        raise HTTPException(503, "Google Sheets не настроен")
+    from sheets_client import SheetsClient
+    SheetsClient(GOOGLE_CALENDAR_JSON, GOOGLE_SHEETS_ID).ensure_schedule_columns(events)

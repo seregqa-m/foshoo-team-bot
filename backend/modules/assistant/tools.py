@@ -13,6 +13,7 @@ Deletions/mass-updates отсутствуют в реестре.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
@@ -92,7 +93,7 @@ async def _add_expense_handler(db: Session, args: dict, ctx: dict) -> dict:
         who=who,
         date=str(args.get("date", "")).strip(),
     )
-    return await add_expense_ep(req, db)
+    return await asyncio.to_thread(add_expense_ep, req, db)
 
 
 async def _add_income_handler(db: Session, args: dict, ctx: dict) -> dict:
@@ -108,7 +109,7 @@ async def _add_income_handler(db: Session, args: dict, ctx: dict) -> dict:
         comment=str(args.get("comment", "")).strip(),
         date=str(args.get("date", "")).strip(),
     )
-    return await add_income_ep(req, db)
+    return await asyncio.to_thread(add_income_ep, req, db)
 
 
 ADD_EXPENSE = Tool(
@@ -230,7 +231,7 @@ def _google_client() -> Optional[GoogleCalendarClient]:
         return None
 
 
-async def _create_event_handler(db: Session, args: dict, ctx: dict) -> dict:
+def _create_event_handler(db: Session, args: dict, ctx: dict) -> dict:
     gc = _google_client()
     if not gc:
         raise HTTPException(status_code=503, detail="Google Calendar не настроен")
@@ -251,7 +252,7 @@ async def _create_event_handler(db: Session, args: dict, ctx: dict) -> dict:
     )
 
 
-async def _update_event_handler(db: Session, args: dict, ctx: dict) -> dict:
+def _update_event_handler(db: Session, args: dict, ctx: dict) -> dict:
     gc = _google_client()
     if not gc:
         raise HTTPException(status_code=503, detail="Google Calendar не настроен")
@@ -347,7 +348,7 @@ UPDATE_EVENT = Tool(
 # ----------------------- READ TOOLS ----------------------- #
 # Исполняются немедленно, результат идёт обратно в модель tool-turn'ом.
 
-async def _search_expenses_handler(db: Session, args: dict, ctx: dict) -> dict:
+def _search_expenses_handler(db: Session, args: dict, ctx: dict) -> dict:
     from modules.finance.models import ExpenseLog
     from sqlalchemy import or_, func as sqlfunc
     q = (args.get("query") or "").strip().lower()
@@ -418,7 +419,7 @@ SEARCH_EXPENSES = Tool(
 )
 
 
-async def _search_income_handler(db: Session, args: dict, ctx: dict) -> dict:
+def _search_income_handler(db: Session, args: dict, ctx: dict) -> dict:
     from modules.finance.models import IncomeLog
     from sqlalchemy import func as sqlfunc
     q = (args.get("query") or "").strip().lower()
@@ -482,7 +483,7 @@ SEARCH_INCOME = Tool(
 )
 
 
-async def _get_events_in_range_handler(db: Session, args: dict, ctx: dict) -> dict:
+def _get_events_in_range_handler(db: Session, args: dict, ctx: dict) -> dict:
     from_iso = args.get("from_date")
     to_iso = args.get("to_date")
     title_q = (args.get("title_contains") or "").strip().lower()
@@ -547,7 +548,7 @@ GET_EVENTS_IN_RANGE = Tool(
 )
 
 
-async def _get_show_cast_handler(db: Session, args: dict, ctx: dict) -> dict:
+def _get_show_cast_handler(db: Session, args: dict, ctx: dict) -> dict:
     from config import GOOGLE_CALENDAR_JSON, GOOGLE_SHEETS_ID
     import os
     show_name = (args.get("show_name") or "").strip()
@@ -814,7 +815,7 @@ UPDATE_SETTINGS = Tool(
 
 # ----------------------- REGISTRY ----------------------- #
 
-async def _upload_afisha_handler(db: Session, args: dict, ctx: dict) -> dict:
+def _upload_afisha_handler(db: Session, args: dict, ctx: dict) -> dict:
     # Загрузка файла происходит на фронте напрямую в /api/afisha/upload.
     # Этот путь не должен вызываться через /execute.
     return {"message": "Загрузи файл через карточку выше"}

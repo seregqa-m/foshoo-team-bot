@@ -85,10 +85,10 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.db.add(poll)
         self.db.commit()
         answer = SimpleNamespace(user=SimpleNamespace(id=42, username='actor'), option_ids=[0])
-        await _handle_availability_answer(answer, poll, self.db)
+        _handle_availability_answer(answer, poll, self.db)
         self.assertEqual(self.db.query(AvailabilityVote).count(), 1)
         answer.option_ids = []
-        await _handle_availability_answer(answer, poll, self.db)
+        _handle_availability_answer(answer, poll, self.db)
         self.assertEqual(self.db.query(AvailabilityVote).count(), 0)
 
     async def test_action_replay_returns_result_across_sessions(self):

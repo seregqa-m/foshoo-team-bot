@@ -208,7 +208,7 @@ class SheetsClient:
         # сдвигают смежные таблицы на том же листе)
         existing = self.api.values().get(
             spreadsheetId=self.spreadsheet_id,
-            range=f"{self.FINANCE_SHEET}!A{header_row + 1}:G1000",
+            range=f"{self.FINANCE_SHEET}!A{header_row + 1}:G",
         ).execute().get("values", [])
         new_row = header_row + 1 + len(existing)
         row_data = [project, date, who, amount, what, expense_type, comment]
@@ -232,7 +232,7 @@ class SheetsClient:
         # Найти первую пустую строку без вставки строк
         existing = self.api.values().get(
             spreadsheetId=self.spreadsheet_id,
-            range=f"{self.FINANCE_SHEET}!{income_col_start}{header_row + 1}:{end_col}1000",
+            range=f"{self.FINANCE_SHEET}!{income_col_start}{header_row + 1}:{end_col}",
         ).execute().get("values", [])
         new_row = header_row + 1 + len(existing)
         row_data = [project, amount, what, date, comment]
@@ -265,42 +265,46 @@ class SheetsClient:
             }}]}
         ).execute()
 
-    def delete_expense_row(self, date_str: str, what: str) -> bool:
-        """Найти строку расхода по дате и описанию и удалить её (только столбцы A–G)."""
-        header_row = (self._find_table_header_row(self.FINANCE_SHEET, "Расходы")
-                      or self._find_header_row(f"{self.FINANCE_SHEET}!C:C", "Кто?"))
-        result = self.api.values().get(
+    def _delete_finance_row(self, expected, *, expense):
+        """Delete only a unique full-row match; never guess by date/description."""
+        from decimal import Decimal
+        title, fallback = ("Расходы", "C:C") if expense else ("Доходы", "Q:Q")
+        header = "Кто?" if expense else "За что?"
+        header_row = (self._find_table_header_row(self.FINANCE_SHEET, title)
+                      or self._find_header_row(f"{self.FINANCE_SHEET}!{fallback}", header))
+        fields = ('project', 'date', 'who', 'amount', 'what', 'expense_type', 'comment') if expense else ('project', 'amount', 'what', 'date', 'comment')
+        first, last = ('A', 'G') if expense else ('O', 'S')
+        rows = self.api.values().get(
             spreadsheetId=self.spreadsheet_id,
-            range=f"{self.FINANCE_SHEET}!A{header_row + 1}:G1000",
-        ).execute()
-        for i, row in enumerate(result.get("values", [])):
-            row_date = row[1].strip() if len(row) > 1 else ""
-            row_what = row[4].strip() if len(row) > 4 else ""
-            if row_date == date_str and row_what == what:
-                sheet_id = self._get_sheet_id(self.FINANCE_SHEET)
-                self._delete_range_row(sheet_id, header_row + i, col_start=0, col_end=7)
-                logger.info(f"Sheets: deleted expense row at sheet row {header_row + i + 1}")
-                return True
-        return False
+            range=f"{self.FINANCE_SHEET}!{first}{header_row + 1}:{last}",
+        ).execute().get('values', [])
 
-    def delete_income_row(self, date_str: str, what: str) -> bool:
-        """Найти строку дохода по дате и описанию и удалить её (только столбцы O–S)."""
-        header_row = (self._find_table_header_row(self.FINANCE_SHEET, "Доходы")
-                      or self._find_header_row(f"{self.FINANCE_SHEET}!Q:Q", "За что?"))
-        result = self.api.values().get(
-            spreadsheetId=self.spreadsheet_id,
-            range=f"{self.FINANCE_SHEET}!O{header_row + 1}:S1000",
-        ).execute()
-        for i, row in enumerate(result.get("values", [])):
-            row_what = row[2].strip() if len(row) > 2 else ""
-            row_date = row[3].strip() if len(row) > 3 else ""
-            if row_date == date_str and row_what == what:
-                sheet_id = self._get_sheet_id(self.FINANCE_SHEET)
-                # O=14, S=18 → endColumnIndex=19
-                self._delete_range_row(sheet_id, header_row + i, col_start=14, col_end=19)
-                logger.info(f"Sheets: deleted income row at sheet row {header_row + i + 1}")
-                return True
-        return False
+        def normalized(values):
+            result = []
+            for field in fields:
+                value = str(values.get(field) or '').strip()
+                if field == 'amount':
+                    value = value.replace('р.', '').replace('₽', '').replace('\xa0', '').replace(' ', '').replace(',', '.')
+                    value = round(Decimal(value)) if value else 0
+                result.append(value)
+            return result
+
+        target = normalized(expected)
+        matches = [header_row + i for i, row in enumerate(rows)
+                   if normalized(dict(zip(fields, row))) == target]
+        if len(matches) > 1:
+            raise ValueError("В таблице несколько одинаковых операций. Удали нужную строку вручную.")
+        if not matches:
+            return False
+        self._delete_range_row(self._get_sheet_id(self.FINANCE_SHEET), matches[0],
+                               col_start=0 if expense else 14, col_end=7 if expense else 19)
+        return True
+
+    def delete_expense_row(self, expected: dict) -> bool:
+        return self._delete_finance_row(expected, expense=True)
+
+    def delete_income_row(self, expected: dict) -> bool:
+        return self._delete_finance_row(expected, expense=False)
 
     def get_returns(self) -> list[dict]:
         """Прочитать таблицу Возвраты (Откуда, Кому, Сколько, Дата)."""
@@ -357,7 +361,7 @@ class SheetsClient:
                       or self._find_header_row(f"{self.FINANCE_SHEET}!C:C", "Кто?"))
         result = self.api.values().get(
             spreadsheetId=self.spreadsheet_id,
-            range=f"{self.FINANCE_SHEET}!A{header_row + 1}:G1000",
+            range=f"{self.FINANCE_SHEET}!A{header_row + 1}:G",
         ).execute()
         items = []
         for row in result.get("values", []):
@@ -382,7 +386,7 @@ class SheetsClient:
                       or self._find_header_row(f"{self.FINANCE_SHEET}!Q:Q", "За что?"))
         result = self.api.values().get(
             spreadsheetId=self.spreadsheet_id,
-            range=f"{self.FINANCE_SHEET}!{income_col_start}{header_row + 1}:{end_col}1000",
+            range=f"{self.FINANCE_SHEET}!{income_col_start}{header_row + 1}:{end_col}",
         ).execute()
         items = []
         for row in result.get("values", []):

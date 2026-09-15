@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from .models import CalendarEvent
 from .google_client import GoogleCalendarClient
 from config import TIMEZONE
+from core.time import local_now, as_local
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +21,7 @@ class CalendarService:
 
     def get_upcoming_events(self, days: int = 30) -> list[CalendarEvent]:
         """Получить предстоящие события"""
-        now = datetime.utcnow()
+        now = local_now()
         future = now + timedelta(days=days)
 
         return self.db.query(CalendarEvent).filter(
@@ -37,7 +38,7 @@ class CalendarService:
 
     def get_next_event(self) -> CalendarEvent:
         """Получить следующее событие"""
-        now = datetime.utcnow()
+        now = local_now()
         return self.db.query(CalendarEvent).filter(
             CalendarEvent.start_time > now,
             CalendarEvent.is_cancelled == False
@@ -49,12 +50,13 @@ class CalendarService:
         s = dt_obj.get("dateTime") or dt_obj.get("date", "")
         if not s:
             raise ValueError(f"Empty start/end time in Google Calendar event: {dt_obj}")
-        return datetime.fromisoformat(s.replace("Z", "+00:00"))
+        return as_local(datetime.fromisoformat(s.replace("Z", "+00:00")))
 
     def sync_from_google(self, events_data: list[dict], days: int = 90) -> None:
         """Синхронизировать события из Google Calendar"""
-        now = datetime.utcnow()
-        window_end = now + timedelta(days=days)
+        now = local_now()
+        window = getattr(self.google_client, "sync_window", None)
+        window_start, window_end = window if window else (now, now)
         synced_ids: set[str] = set()
 
         for event_data in events_data:
@@ -62,12 +64,16 @@ class CalendarService:
             if not google_event_id:
                 continue
             synced_ids.add(google_event_id)
+            if event_data.get("status") == "cancelled":
+                cancelled = self.db.query(CalendarEvent).filter_by(google_event_id=google_event_id).first()
+                if cancelled:
+                    self._cancel_event(cancelled)
+                continue
             try:
                 start_time = self._parse_dt(event_data.get("start", {}))
                 end_time = self._parse_dt(event_data.get("end", {}))
             except ValueError as e:
-                logger.warning(f"Skipping event {google_event_id}: {e}")
-                continue
+                raise ValueError(f"Invalid event {google_event_id}; sync aborted") from e
 
             existing = self.db.query(CalendarEvent).filter(
                 CalendarEvent.google_event_id == google_event_id
@@ -95,25 +101,21 @@ class CalendarService:
         # Отменить события в окне синхронизации которых нет в ответе Google
         stale = self.db.query(CalendarEvent).filter(
             CalendarEvent.is_cancelled == False,
-            CalendarEvent.start_time >= now,
-            CalendarEvent.start_time <= window_end,
+            CalendarEvent.start_time >= window_start,
+            CalendarEvent.start_time < window_end,
             CalendarEvent.google_event_id.isnot(None),
             CalendarEvent.google_event_id.notin_(synced_ids),
         ).all()
         for event in stale:
-            event.is_cancelled = True
-            logger.info(f"Cancelled stale event: id={event.id} '{event.title}' {event.start_time.date()}")
-            try:
-                from modules.polling.models import Poll
-                self.db.query(Poll).filter(
-                    Poll.calendar_event_id == event.id,
-                    Poll.is_active == True,
-                ).update({"is_active": False})
-            except Exception as e:
-                logger.warning(f"Failed to deactivate polls for event {event.id}: {e}")
+            self._cancel_event(event)
 
         self.db.commit()
         logger.info(f"Synced {len(events_data)} events, cancelled {len(stale)} stale")
+
+    def _cancel_event(self, event):
+        from modules.polling.models import Poll
+        event.is_cancelled = True
+        self.db.query(Poll).filter(Poll.calendar_event_id == event.id).update({"is_active": False})
 
     def create_event(
         self,
@@ -128,6 +130,9 @@ class CalendarService:
         if not self.google_client:
             raise ValueError("Google client not available")
 
+        start_time, end_time = as_local(start_time), as_local(end_time)
+        if end_time <= start_time:
+            raise ValueError("Event end must be after start")
         event_data = {
             "summary": title,
             "start": {"dateTime": start_time.isoformat(), "timeZone": TIMEZONE},
@@ -180,6 +185,10 @@ class CalendarService:
         if not db_event:
             raise ValueError(f"Event {event_id} not found")
 
+        start_time = as_local(start_time or db_event.start_time)
+        end_time = as_local(end_time or db_event.end_time)
+        if end_time <= start_time:
+            raise ValueError("Event end must be after start")
         # Подготовить данные для Google
         event_data = {
             "summary": title or db_event.title,
@@ -230,7 +239,7 @@ class CalendarService:
         self.google_client.delete_event(calendar_id, db_event.google_event_id)
 
         # Пометить как отменённое в БД (мягкое удаление)
-        db_event.is_cancelled = True
+        self._cancel_event(db_event)
         self.db.commit()
 
         logger.info(f"Deleted event: {event_id}")

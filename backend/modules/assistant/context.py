@@ -15,6 +15,7 @@ build_context — снимок состояния приложения для и
 """
 from __future__ import annotations
 
+from core.time import local_now
 import logging
 import os
 import time
@@ -78,7 +79,7 @@ def _sheets_client():
 
 
 def _collect_upcoming_events(db: Session, days: int = 14, limit: int = 20) -> list[dict]:
-    now = datetime.utcnow()
+    now = local_now()
     horizon = now + timedelta(days=days)
     events = (
         db.query(CalendarEvent)
@@ -330,7 +331,7 @@ def build_context(
     не пробрасываем.
     """
     now_utc = datetime.utcnow()
-    now_msk = now_utc + timedelta(hours=3)
+    now_msk = local_now()
     today_ru = format_date(now_msk, "EEEE, d MMMM y", locale="ru_RU")
 
     sc = _sheets_client()

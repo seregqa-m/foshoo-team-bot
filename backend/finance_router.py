@@ -5,6 +5,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from core.database import get_db
+from modules.finance.reconciliation import serialized_finance, reconcile, fingerprint, row_values
+from core.time import local_now
 from modules.finance.models import ExpenseLog, IncomeLog, ReturnsLog  # noqa: F401 — ensure tables are created on init_db()
 
 router = APIRouter(prefix="/api/finance", tags=["finance"])
@@ -19,7 +21,14 @@ PROJECTS = ["Театр", "Любовь Громова", "Урод", "Слепы
 def _parse_amount(s) -> int:
     """'р.30 000,00' → 30000"""
     cleaned = str(s).replace('р.', '').replace('₽', '').replace('\xa0', '').replace(' ', '').replace(',', '.')
-    return round(float(cleaned))
+    from decimal import Decimal, InvalidOperation
+    try:
+        value = Decimal(cleaned)
+        if not value.is_finite():
+            raise ValueError("Некорректная сумма")
+        return round(value)
+    except InvalidOperation:
+        raise ValueError("Некорректная сумма") from None
 
 
 def _amt(v) -> int:
@@ -48,8 +57,8 @@ def _safe_date(s) -> str | None:
 
 def _dmy_to_iso(s: str) -> str:
     """'15.01.2024' → '2024-01-15'"""
-    d, m, y = s.strip().split('.')
-    return f"{y}-{m.zfill(2)}-{d.zfill(2)}"
+    from datetime import datetime
+    return datetime.strptime(s.strip(), "%d.%m.%Y").date().isoformat()
 
 
 def _iso_to_dmy(s: str) -> str:
@@ -81,7 +90,7 @@ def _resolve_name(username: str) -> str:
 # ── Эндпоинты ────────────────────────────────────────────────────────────────
 
 @router.get("/balance")
-async def get_balance():
+def get_balance():
     try:
         client = _get_client()
         return {"balance": client.get_balance()}
@@ -93,7 +102,7 @@ async def get_balance():
 
 
 @router.get("/meta")
-async def get_meta():
+def get_meta():
     """Вернуть списки проектов, типов трат и актёров для форм."""
     from config import GOOGLE_SHEETS_ID
     actors = []
@@ -114,7 +123,7 @@ async def get_meta():
 
 
 @router.get("/whoami")
-async def whoami(username: str = ""):
+def whoami(username: str = ""):
     """Вернуть полное имя актёра по Telegram username."""
     return {"name": _resolve_name(username) if username else ""}
 
@@ -139,15 +148,22 @@ class IncomeRequest(BaseModel):
 
 
 @router.post("/expense")
-async def add_expense(req: ExpenseRequest, db: Session = Depends(get_db)):
+@serialized_finance
+def add_expense(req: ExpenseRequest, db: Session = Depends(get_db)):
     if req.project not in PROJECTS:
         raise HTTPException(status_code=400, detail="Неверный проект")
     if req.expense_type not in EXPENSE_TYPES:
         raise HTTPException(status_code=400, detail="Неверный тип траты")
 
     who = req.who.strip() if req.who.strip() else (_resolve_name(req.username) if req.username else "—")
-    today_dmy = req.date.strip() if req.date.strip() else date.today().strftime("%d.%m.%Y")
-    today_iso = _dmy_to_iso(today_dmy)
+    today_dmy = req.date.strip() if req.date.strip() else local_now().date().strftime("%d.%m.%Y")
+    try:
+        today_iso = _dmy_to_iso(today_dmy)
+        amount = _parse_amount(req.amount)
+        if amount <= 0 or not req.what.strip():
+            raise ValueError("Укажи положительную сумму и описание")
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from None
 
     try:
         client = _get_client()
@@ -160,7 +176,7 @@ async def add_expense(req: ExpenseRequest, db: Session = Depends(get_db)):
 
     db.add(ExpenseLog(
         project=req.project, date=today_iso, who=who,
-        amount=_parse_amount(req.amount),
+        amount=amount,
         what=req.what, expense_type=req.expense_type, comment=req.comment,
     ))
     db.commit()
@@ -168,7 +184,7 @@ async def add_expense(req: ExpenseRequest, db: Session = Depends(get_db)):
 
 
 @router.get("/chart")
-async def get_chart(period: str = "month", from_date: str = None, db: Session = Depends(get_db)):
+def get_chart(period: str = "month", from_date: str = None, db: Session = Depends(get_db)):
     """
     period=month: доходы/расходы по месяцам с разбивкой по типу расхода.
     period=day:   P&L — ФоШу-траты + Возвраты, полный период, нарастающим итогом.
@@ -195,7 +211,7 @@ async def get_chart(period: str = "month", from_date: str = None, db: Session = 
 
         valid = sorted(d for d in all_dates if d)
         start = date.fromisoformat(valid[0])
-        today_date = date.today()
+        today_date = local_now().date()
         all_keys, cur = [], start
         while cur <= today_date:
             all_keys.append(cur.isoformat())
@@ -272,8 +288,9 @@ async def get_chart(period: str = "month", from_date: str = None, db: Session = 
     return {"data": data}
 
 
+@serialized_finance
 def sync_finance_from_sheets(db: Session) -> dict:
-    """Полная замена данных в БД из Google Sheets (расходы + доходы + возвраты)."""
+    """Сверить локальные расходы и доходы с полным снимком Google Sheets."""
     from config import GOOGLE_CALENDAR_JSON, GOOGLE_SHEETS_ID
     from sheets_client import SheetsClient
     import os
@@ -284,28 +301,26 @@ def sync_finance_from_sheets(db: Session) -> dict:
     expenses = client.get_expenses()
     incomes  = client.get_incomes()
 
-    db.query(ExpenseLog).delete()
-    for e in expenses:
-        db.add(ExpenseLog(
-            project=e["project"], date=_safe_date(e["date"]), who=e["who"],
-            amount=_parse_amount(e["amount"]) if e["amount"] else 0,
-            what=e["what"], expense_type=e["expense_type"], comment=e["comment"],
-        ))
-
-    db.query(IncomeLog).delete()
-    for i in incomes:
-        db.add(IncomeLog(
-            project=i["project"],
-            amount=_parse_amount(i["amount"]) if i["amount"] else 0,
-            what=i["what"], date=_safe_date(i["date"]), comment=i["comment"],
-        ))
+    # Parse the entire snapshot before changing the cache.
+    expense_rows = [dict(
+        project=e["project"], date=_safe_date(e["date"]), who=e["who"],
+        amount=_parse_amount(e["amount"]) if e["amount"] else 0,
+        what=e["what"], expense_type=e["expense_type"], comment=e["comment"],
+    ) for e in expenses]
+    income_rows = [dict(
+        project=i["project"], date=_safe_date(i["date"]),
+        amount=_parse_amount(i["amount"]) if i["amount"] else 0,
+        what=i["what"], comment=i["comment"],
+    ) for i in incomes]
+    reconcile(db, ExpenseLog, expense_rows)
+    reconcile(db, IncomeLog, income_rows)
 
     db.commit()
     return {"expenses": len(expenses), "incomes": len(incomes)}
 
 
 @router.post("/sync")
-async def sync_all(db: Session = Depends(get_db)):
+def sync_all(db: Session = Depends(get_db)):
     """Синхронизировать расходы, доходы и возвраты из Google Sheets → БД."""
     try:
         result = sync_finance_from_sheets(db)
@@ -318,12 +333,12 @@ async def sync_all(db: Session = Depends(get_db)):
 
 
 @router.get("/transactions")
-async def get_transactions(limit: int = 10, db: Session = Depends(get_db)):
+def get_transactions(limit: int = 10, db: Session = Depends(get_db)):
     """Последние N операций (доходы + расходы) из БД, отсортированные по дате."""
     items = []
     for e in db.query(ExpenseLog).all():
         items.append({
-            "id": e.id, "type": "expense",
+            "id": e.id, "type": "expense", "fingerprint": fingerprint(e),
             "date": _iso_to_dmy(e.date) if e.date else "",
             "_iso": e.date or "",
             "amount": str(e.amount) if e.amount is not None else "0",
@@ -333,7 +348,7 @@ async def get_transactions(limit: int = 10, db: Session = Depends(get_db)):
         })
     for i in db.query(IncomeLog).all():
         items.append({
-            "id": i.id, "type": "income",
+            "id": i.id, "type": "income", "fingerprint": fingerprint(i),
             "date": _iso_to_dmy(i.date) if i.date else "",
             "_iso": i.date or "",
             "amount": str(i.amount) if i.amount is not None else "0",
@@ -349,39 +364,50 @@ async def get_transactions(limit: int = 10, db: Session = Depends(get_db)):
 
 
 @router.delete("/transactions/{tx_type}/{tx_id}")
-async def delete_transaction(tx_type: str, tx_id: int, db: Session = Depends(get_db)):
-    """Удалить операцию из БД и Google Sheets."""
-    if tx_type == "expense":
-        row = db.query(ExpenseLog).filter(ExpenseLog.id == tx_id).first()
-        if not row:
-            raise HTTPException(status_code=404, detail="Not found")
-        try:
-            _get_client().delete_expense_row(_iso_to_dmy(row.date) if row.date else "", row.what)
-        except Exception as e:
-            logger.warning(f"Sheets delete expense failed: {e}")
-        db.delete(row)
-    elif tx_type == "income":
-        row = db.query(IncomeLog).filter(IncomeLog.id == tx_id).first()
-        if not row:
-            raise HTTPException(status_code=404, detail="Not found")
-        try:
-            _get_client().delete_income_row(_iso_to_dmy(row.date) if row.date else "", row.what)
-        except Exception as e:
-            logger.warning(f"Sheets delete income failed: {e}")
-        db.delete(row)
-    else:
-        raise HTTPException(status_code=400, detail="Invalid type")
+@serialized_finance
+def delete_transaction(tx_type: str, tx_id: int, expected_fingerprint: str, db: Session = Depends(get_db)):
+    model = {"expense": ExpenseLog, "income": IncomeLog}.get(tx_type)
+    if model is None:
+        raise HTTPException(400, "Invalid type")
+    row = db.get(model, tx_id)
+    if row is None:
+        raise HTTPException(404, "Операция не найдена. Обнови список.")
+    if fingerprint(row) != expected_fingerprint:
+        raise HTTPException(409, "Операция изменилась. Обнови список перед удалением.")
+    expected = row_values(row)
+    expected['date'] = _iso_to_dmy(row.date) if row.date else ''
+    try:
+        client = _get_client()
+        deleted = (client.delete_expense_row(expected) if tx_type == 'expense'
+                   else client.delete_income_row(expected))
+    except ValueError as e:
+        raise HTTPException(409, str(e)) from None
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Sheets delete failed; local row retained")
+        raise HTTPException(502, "Не удалось подтвердить удаление в таблице. Обнови данные перед повтором.") from None
+    if not deleted:
+        raise HTTPException(409, "Операция в таблице изменилась или удалена. Сначала синхронизируй данные.")
+    db.delete(row)
     db.commit()
     return {"status": "deleted"}
 
 
 @router.post("/income")
-async def add_income(req: IncomeRequest, db: Session = Depends(get_db)):
+@serialized_finance
+def add_income(req: IncomeRequest, db: Session = Depends(get_db)):
     if req.project not in PROJECTS:
         raise HTTPException(status_code=400, detail="Неверный проект")
 
-    today_dmy = req.date.strip() if req.date.strip() else date.today().strftime("%d.%m.%Y")
-    today_iso = _dmy_to_iso(today_dmy)
+    today_dmy = req.date.strip() if req.date.strip() else local_now().date().strftime("%d.%m.%Y")
+    try:
+        today_iso = _dmy_to_iso(today_dmy)
+        amount = _parse_amount(req.amount)
+        if amount <= 0 or not req.what.strip():
+            raise ValueError("Укажи положительную сумму и описание")
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from None
 
     try:
         client = _get_client()
@@ -393,7 +419,7 @@ async def add_income(req: IncomeRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=str(e))
 
     db.add(IncomeLog(
-        project=req.project, amount=_parse_amount(req.amount),
+        project=req.project, amount=amount,
         what=req.what, date=today_iso, comment=req.comment,
     ))
     db.commit()

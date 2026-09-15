@@ -44,7 +44,7 @@ def get_google_client():
 
 
 @router.get("/meta")
-async def get_calendar_meta():
+def get_calendar_meta():
     """Вернуть ссылку на Google Calendar."""
     url = None
     if GOOGLE_CALENDAR_ID:
@@ -54,7 +54,7 @@ async def get_calendar_meta():
 
 
 @router.get("/events")
-async def get_events(days: int = 30, db: Session = Depends(get_db)):
+def get_events(days: int = 30, db: Session = Depends(get_db)):
     """Получить предстоящие события"""
     service = CalendarService(db)
     events = service.get_upcoming_events(days)
@@ -74,7 +74,7 @@ async def get_events(days: int = 30, db: Session = Depends(get_db)):
 
 
 @router.get("/events/next")
-async def get_next_event(db: Session = Depends(get_db)):
+def get_next_event(db: Session = Depends(get_db)):
     """Получить следующее событие"""
     service = CalendarService(db)
     event = service.get_next_event()
@@ -95,7 +95,7 @@ async def get_next_event(db: Session = Depends(get_db)):
 
 
 @router.post("/sync")
-async def sync_calendar(db: Session = Depends(get_db)):
+def sync_calendar(db: Session = Depends(get_db)):
     """Синхронизировать с Google Calendar"""
     google_client = get_google_client()
     if not google_client:
@@ -118,7 +118,7 @@ async def sync_calendar(db: Session = Depends(get_db)):
 
 
 @router.post("/events")
-async def create_event(
+def create_event(
     request: CreateEventRequest,
     db: Session = Depends(get_db)
 ):
@@ -152,7 +152,7 @@ async def create_event(
 
 
 @router.put("/events/{event_id}")
-async def update_event(
+def update_event(
     event_id: int,
     request: UpdateEventRequest,
     db: Session = Depends(get_db)
@@ -259,7 +259,7 @@ async def launch_poll_for_event(
 
 
 @router.delete("/events/{event_id}")
-async def delete_event(
+def delete_event(
     event_id: int,
     db: Session = Depends(get_db)
 ):

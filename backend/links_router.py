@@ -8,7 +8,7 @@ LINKS_FILE = os.path.join(os.path.dirname(__file__), "links.json")
 
 
 @router.get("")
-async def get_links():
+def get_links():
     """Вернуть блоки ссылок из links.json."""
     if not os.path.exists(LINKS_FILE):
         return {"blocks": []}

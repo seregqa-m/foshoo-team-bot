@@ -245,14 +245,14 @@ export default function FinanceView({ username, isAdmin }) {
       .catch(() => {});
   }, [chartPeriod, fromDate]);
 
-  const deleteTransaction = async (type, id) => {
+  const deleteTransaction = async (type, id, fingerprint) => {
     if (!window.confirm('Удалить операцию из БД и таблицы?')) return;
     try {
-      await client.delete(`/api/finance/transactions/${type}/${id}`);
+      await client.delete(`/api/finance/transactions/${type}/${id}`, { params: { expected_fingerprint: fingerprint } });
       loadTransactions();
       client.get('/api/finance/balance').then(r => setBalance(r.data.balance)).catch(() => {});
     } catch (e) {
-      alert('Ошибка при удалении');
+      setError(e.response?.data?.detail || 'Ошибка при удалении');
     }
   };
 
@@ -400,7 +400,7 @@ export default function FinanceView({ username, isAdmin }) {
                 })()}
               </div>
               {isAdmin && <button
-                onClick={() => deleteTransaction(tx.type, tx.id)}
+                onClick={() => deleteTransaction(tx.type, tx.id, tx.fingerprint)}
                 style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ccc', fontSize: 18, padding: '0 0 0 4px', flexShrink: 0 }}
               >×</button>}
             </div>

@@ -1,3 +1,4 @@
+import asyncio
 import io
 import logging
 
@@ -45,21 +46,25 @@ async def upload_afisha(file: UploadFile = File(...)):
     if not AFISHA_NEW_DRIVE_FILE_ID or not AFISHA_OLD_DRIVE_FILE_ID:
         raise HTTPException(status_code=503, detail="AFISHA_*_DRIVE_FILE_ID не задан в .env")
 
-    content = await file.read()
+    content = await file.read(_MAX_FILE_BYTES + 1)
     if len(content) > _MAX_FILE_BYTES:
         raise HTTPException(status_code=413, detail="Файл слишком большой (максимум 20 МБ)")
 
     mimetype = file.content_type or "application/octet-stream"
 
     try:
-        svc = _drive_service()
-        # Сдвиг: afisha-new → afisha-old
-        old_content, old_mime = _download_file(svc, AFISHA_NEW_DRIVE_FILE_ID)
-        _upload_bytes(svc, AFISHA_OLD_DRIVE_FILE_ID, old_content, old_mime)
-        # Новый файл → afisha-new
-        _upload_bytes(svc, AFISHA_NEW_DRIVE_FILE_ID, content, mimetype)
+        await asyncio.to_thread(_replace_afisha, content, mimetype)
     except Exception as e:
         logger.error("Drive upload failed: %s", e, exc_info=True)
         raise HTTPException(status_code=502, detail=f"Ошибка при загрузке: {e}")
 
     return {"success": True, "afisha_url": "https://foshoo-theatre.ru/afisha"}
+
+
+def _replace_afisha(content, mimetype):
+    svc = _drive_service()
+    # Сдвиг: afisha-new → afisha-old
+    old_content, old_mime = _download_file(svc, AFISHA_NEW_DRIVE_FILE_ID)
+    _upload_bytes(svc, AFISHA_OLD_DRIVE_FILE_ID, old_content, old_mime)
+    # Новый файл → afisha-new
+    _upload_bytes(svc, AFISHA_NEW_DRIVE_FILE_ID, content, mimetype)

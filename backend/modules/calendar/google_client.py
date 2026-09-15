@@ -2,7 +2,7 @@
 Google Calendar API wrapper
 """
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 
@@ -38,18 +38,22 @@ class GoogleCalendarClient:
             Список событий
         """
         try:
-            now = datetime.utcnow().isoformat() + 'Z'
-            future = (datetime.utcnow() + timedelta(days=days)).isoformat() + 'Z'
-
-            result = self.service.events().list(
-                calendarId=calendar_id,
-                timeMin=now,
-                timeMax=future,
-                singleEvents=True,
-                orderBy='startTime'
-            ).execute()
-
-            events = result.get('items', [])
+            now = datetime.now(timezone.utc)
+            future = now + timedelta(days=days)
+            events = []
+            page_token = None
+            while True:
+                result = self.service.events().list(
+                    calendarId=calendar_id,
+                    timeMin=now.isoformat(), timeMax=future.isoformat(),
+                    singleEvents=True, orderBy='startTime', pageToken=page_token,
+                ).execute()
+                events.extend(result.get('items', []))
+                page_token = result.get('nextPageToken')
+                if not page_token:
+                    break
+            # A cancellation pass is allowed only after every page succeeded.
+            self.sync_window = (now, future)
             logger.info(f"Fetched {len(events)} events from Google Calendar")
             return events
         except Exception as e:

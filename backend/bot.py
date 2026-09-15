@@ -2,6 +2,8 @@
 Telegram bot для управления театральной студией
 Показывает кнопку для открытия Mini App
 """
+import asyncio
+from core.time import local_now
 import logging
 from aiogram import Bot, Dispatcher, F
 from aiogram.client.session.aiohttp import AiohttpSession
@@ -61,8 +63,16 @@ async def cmd_help(message: Message):
 _POLL_ANSWER_MAP = {0: "yes", 1: "no", 2: "yes", 3: "unknown"}
 
 
+_vote_lock = asyncio.Lock()
+
+
 @dp.poll_answer()
 async def handle_poll_answer(poll_answer: PollAnswer):
+    async with _vote_lock:
+        await asyncio.to_thread(_process_poll_answer, poll_answer)
+
+
+def _process_poll_answer(poll_answer: PollAnswer):
     """Сохранить ответ на Telegram-опрос в БД и записать явку в Google Sheets"""
     from core.database import SessionLocal
     from modules.polling.services import PollingService
@@ -78,7 +88,7 @@ async def handle_poll_answer(poll_answer: PollAnswer):
             AvailPoll.telegram_poll_id == poll_answer.poll_id
         ).first()
         if avail_poll:
-            await _handle_availability_answer(poll_answer, avail_poll, db)
+            _handle_availability_answer(poll_answer, avail_poll, db)
             return
 
         answer = "retracted" if not poll_answer.option_ids else _POLL_ANSWER_MAP.get(poll_answer.option_ids[0])
@@ -145,7 +155,7 @@ def _detect_availability_intent(text: str) -> tuple[int, int, str] | None:
     low = text.lower()
     if not any(t in low for t in _AVAILABILITY_TRIGGERS):
         return None
-    now = datetime.utcnow()
+    now = local_now()
     for key, (month_num, label) in _MONTH_MAP.items():
         if key in low:
             year = now.year if month_num >= now.month else now.year + 1
@@ -190,136 +200,39 @@ async def handle_group_message(message: Message):
     await message.reply(f"Запустить опрос занятости на {month_label}?", reply_markup=kb)
 
 
-def _date_label(dt) -> str:
-    from babel.dates import format_date
-    return f"{format_date(dt, 'EE', locale='ru_RU').rstrip('.')} {format_date(dt, 'd MMM', locale='ru_RU')}"
+def _prepare_campaign(year, month_num):
+    import calendar
+    from datetime import datetime
+    from core.database import SessionLocal
+    from modules.calendar.models import CalendarEvent
+    from modules.notifications.models import NotificationSetting
+    from modules.availability.router import CreateCampaignRequest
+    from config import ADMIN_ID, GOOGLE_CALENDAR_JSON, GOOGLE_SHEETS_ID, TROUPE_FILTER
+    from sheets_client import SheetsClient
+    shows = SheetsClient(GOOGLE_CALENDAR_JSON, GOOGLE_SHEETS_ID).get_show_names()
+    first = datetime(year, month_num, 1)
+    last = datetime(year, month_num, calendar.monthrange(year, month_num)[1], 23, 59, 59)
+    with SessionLocal() as db:
+        settings = db.query(NotificationSetting).filter_by(user_id=ADMIN_ID).first()
+        troupe = ((settings.troupe_filter if settings else None) or TROUPE_FILTER).lower()
+        events = db.query(CalendarEvent).filter(
+            CalendarEvent.start_time >= first, CalendarEvent.start_time <= last,
+            CalendarEvent.is_cancelled == False,
+        ).order_by(CalendarEvent.start_time).all()
+        return CreateCampaignRequest(
+            show_names=[settings.current_show] if settings and settings.current_show else shows,
+            event_ids=[e.id for e in events if troupe in e.title.lower()
+                       and not any(show.lower() in e.title.lower() for show in shows)],
+        )
 
 
 async def _launch_campaign_for_month(year: int, month_num: int) -> dict:
-    """Создать кампанию занятости, отправить опросы в группу. Возвращает результат."""
-    import calendar as cal_mod
-    import json
-    import os
-    from datetime import datetime
-    from babel.dates import format_date
     from core.database import SessionLocal
-    from modules.calendar.models import CalendarEvent
-    from modules.availability.models import (
-        AvailabilityCampaign, AvailabilityPoll, AvailabilityPollOption,
-    )
-    from modules.notifications.models import NotificationSetting
-    from config import (
-        ADMIN_ID, GROUP_CHAT_ID, GOOGLE_CALENDAR_JSON, GOOGLE_SHEETS_ID, TROUPE_FILTER,
-    )
-
-    if not GROUP_CHAT_ID:
-        return {"ok": False, "error": "GROUP_CHAT_ID не настроен"}
-
-    first_day = datetime(year, month_num, 1)
-    last_day = datetime(year, month_num, cal_mod.monthrange(year, month_num)[1], 23, 59, 59)
-    month_label = format_date(first_day, "MMMM yyyy", locale="ru_RU")
-
-    db = SessionLocal()
-    try:
-        settings = db.query(NotificationSetting).filter(
-            NotificationSetting.user_id == ADMIN_ID
-        ).first()
-        troupe_filter = (
-            settings.troupe_filter if settings and settings.troupe_filter else TROUPE_FILTER
-        ).lower()
-
-        show_names_lower: list[str] = []
-        show_names: list[str] = []
-        if GOOGLE_SHEETS_ID and os.path.exists(GOOGLE_CALENDAR_JSON):
-            try:
-                from sheets_client import SheetsClient
-                sc = SheetsClient(GOOGLE_CALENDAR_JSON, GOOGLE_SHEETS_ID)
-                all_shows = sc.get_show_names() or []
-                show_names_lower = [s.lower() for s in all_shows]
-                show_names = ([settings.current_show] if settings and settings.current_show
-                              else all_shows)
-                sc.ensure_schedule_columns([
-                    (e.start_time, e.title)
-                    for e in db.query(CalendarEvent).filter(
-                        CalendarEvent.start_time >= first_day,
-                        CalendarEvent.start_time <= last_day,
-                        CalendarEvent.is_cancelled == False,  # noqa: E712
-                    ).all()
-                ])
-            except Exception as e:
-                logger.warning(f"Sheets prep failed: {e}")
-
-        events = (
-            db.query(CalendarEvent)
-            .filter(
-                CalendarEvent.start_time >= first_day,
-                CalendarEvent.start_time <= last_day,
-                CalendarEvent.is_cancelled == False,  # noqa: E712
-            )
-            .order_by(CalendarEvent.start_time)
-            .all()
-        )
-        filtered = [
-            e for e in events
-            if troupe_filter in e.title.lower()
-            and not any(s in e.title.lower() for s in show_names_lower)
-        ]
-
-        if not filtered:
-            return {"ok": False, "error": f"Нет событий для труппы в {month_label}"}
-        if len(filtered) > 20:
-            return {"ok": False, "error": "Слишком много дат (максимум 20)"}
-
-        # Удалить старую кампанию
-        old = db.query(AvailabilityCampaign).order_by(AvailabilityCampaign.id.desc()).first()
-        if old:
-            db.delete(old)
-            db.flush()
-
-        campaign = AvailabilityCampaign(
-            month=first_day.strftime("%Y-%m"),
-            show_names=json.dumps(show_names, ensure_ascii=False),
-        )
-        db.add(campaign)
-        db.flush()
-
-        batches = [filtered[i:i + 10] for i in range(0, len(filtered), 10)]
-        suffix = f" (часть {{}}/{len(batches)})" if len(batches) > 1 else ""
-
-        for idx, batch in enumerate(batches):
-            question = f"Отметьте даты когда вы свободны для спектаклей — {month_label}" + (
-                suffix.format(idx + 1) if suffix else ""
-            )
-            msg = await bot.send_poll(
-                chat_id=GROUP_CHAT_ID,
-                question=question,
-                options=[_date_label(e.start_time) for e in batch],
-                is_anonymous=False,
-                allows_multiple_answers=True,
-            )
-            poll = AvailabilityPoll(
-                campaign_id=campaign.id,
-                telegram_poll_id=msg.poll.id,
-                telegram_message_id=msg.message_id,
-            )
-            db.add(poll)
-            db.flush()
-            for i, event in enumerate(batch):
-                db.add(AvailabilityPollOption(
-                    poll_id=poll.id,
-                    option_index=i,
-                    calendar_event_id=event.id,
-                    date_label=_date_label(event.start_time),
-                ))
-
-        db.commit()
-        return {"ok": True, "polls_count": len(batches), "events_count": len(filtered)}
-
-    except Exception as e:
-        db.rollback()
-        raise
-    finally:
-        db.close()
+    from modules.availability.router import create_campaign
+    req = await asyncio.to_thread(_prepare_campaign, year, month_num)
+    with SessionLocal() as db:
+        result = await create_campaign(req, db)
+    return {"ok": True, **result}
 
 
 @dp.callback_query(F.data.startswith("avail_start_"))
@@ -355,7 +268,7 @@ async def on_avail_cancel(callback: CallbackQuery):
     await callback.message.edit_reply_markup(reply_markup=None)
 
 
-async def _handle_availability_answer(poll_answer, avail_poll, db):
+def _handle_availability_answer(poll_answer, avail_poll, db):
     """Обработать ответ на опрос занятости: записать да/нет в Google Sheets."""
     from modules.availability.models import AvailabilityPollOption, AvailabilityVote
     from modules.calendar.models import CalendarEvent
