@@ -9,6 +9,7 @@ services:
       - "8000:8000"
     environment:
       - BOT_TOKEN=${BOT_TOKEN}
+      - TELEGRAM_PROXY_URL=${TELEGRAM_PROXY_URL:-}
       - API_HOST=0.0.0.0
       - API_PORT=8000
       - DATABASE_URL=sqlite:///./theater_bot.db

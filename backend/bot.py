@@ -4,18 +4,20 @@ Telegram bot для управления театральной студией
 """
 import logging
 from aiogram import Bot, Dispatcher, F
-from aiogram.client.default import DefaultBotProperties
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.types import (
     Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton,
     WebAppInfo, PollAnswer,
 )
 from aiogram.filters import Command
-from config import BOT_TOKEN, MINI_APP_URL
+from config import BOT_TOKEN, MINI_APP_URL, TELEGRAM_PROXY_URL
 
 logger = logging.getLogger(__name__)
 
-bot = Bot(token=BOT_TOKEN, session=AiohttpSession(timeout=15))
+bot = Bot(
+    token=BOT_TOKEN,
+    session=AiohttpSession(timeout=15, proxy=TELEGRAM_PROXY_URL),
+)
 dp = Dispatcher()
 
 
@@ -403,4 +405,3 @@ async def _handle_availability_answer(poll_answer, avail_poll, db):
     db.commit()
     logger.info(f"Availability vote saved: poll={avail_poll.id} user=@{username} "
                 f"selected={list(selected)}")
-

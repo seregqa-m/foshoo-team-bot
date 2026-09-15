@@ -5,6 +5,7 @@ load_dotenv()
 
 # Bot
 BOT_TOKEN = os.getenv("BOT_TOKEN")
+TELEGRAM_PROXY_URL = os.getenv("TELEGRAM_PROXY_URL", "").strip() or None
 if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN не установлен в .env")
 

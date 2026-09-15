@@ -15,6 +15,7 @@ Telegram Mini App для управления театральной студи�
 ```env
 # Telegram
 BOT_TOKEN=                  # токен от @BotFather
+TELEGRAM_PROXY_URL=         # необязательно: socks5://login:password@host:port
 ADMIN_ID=                   # ваш Telegram ID (@userinfobot)
 MINI_APP_URL=               # HTTPS URL фронтенда (например https://app.example.com)
 GROUP_CHAT_ID=              # ID группы для отправки опросов (отрицательное число)
@@ -71,6 +72,30 @@ cd frontend
 REACT_APP_API_URL=https://ваш-домен.com npm run build
 # Статика раздаётся через nginx из папки frontend/build/
 ```
+
+### Подключение Telegram через прокси
+
+Если сервер не может подключиться к Telegram напрямую, добавьте в серверный `.env`:
+
+```dotenv
+TELEGRAM_PROXY_URL=socks5://LOGIN:PASSWORD@HOST:PORT
+```
+
+Для HTTP CONNECT используйте `http://LOGIN:PASSWORD@HOST:PORT` (даже если
+провайдер называет услугу HTTPS-прокси). Спецсимволы в логине и пароле нужно
+percent-encode, например `@` → `%40`, `#` → `%23`. MTProto не поддерживается.
+Без переменной или с пустым значением бот подключается напрямую.
+
+После `git pull` установите зависимости в виртуальное окружение приложения
+командой `python -m pip install -r backend/requirements.txt` из корня проекта
+и перезапустите backend своим менеджером процессов. Для Docker Compose:
+`docker compose up -d --build backend` — переменная передаётся в контейнер.
+
+Прокси используется общей сессией бота: для получения голосов, отправки опросов,
+сообщений и закреплений. Google-интеграции работают как раньше.
+Проверьте на сервере появление в логах `Bot polling active`, затем создание
+тестового опроса и сохранение голоса в приложении. Один лог запуска сам по себе
+не подтверждает доступность Telegram. `.env` с паролем прокси не коммитьте.
 
 ### Пример nginx конфига
 
