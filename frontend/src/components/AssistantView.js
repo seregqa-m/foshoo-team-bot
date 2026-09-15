@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { assistantApi } from '../api/client';
+import client, { assistantApi } from '../api/client';
 
-const API_BASE = process.env.REACT_APP_API_URL || 'http://127.0.0.1:8000';
 const AFISHA_SITE_URL = 'https://foshoo-theatre.ru/afisha';
 
 function openUrl(url) {
@@ -34,15 +33,11 @@ function AfishaUploadCard({ preview, state, onDone, onCancel }) {
     try {
       const fd = new FormData();
       fd.append('file', file);
-      const res = await fetch(`${API_BASE}/api/afisha/upload`, { method: 'POST', body: fd });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.detail || `Ошибка ${res.status}`);
-      }
+      await client.post('/api/afisha/upload', fd, { headers: { 'Content-Type': undefined } });
       onDone(true);
       openUrl(AFISHA_SITE_URL);
     } catch (e) {
-      setError(e.message);
+      setError(e.response?.data?.detail || e.message);
       onDone(false);
     } finally {
       setUploading(false);

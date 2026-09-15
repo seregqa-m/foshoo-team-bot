@@ -2,7 +2,8 @@
 FastAPI router для уведомлений
 """
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from config import ADMIN_ID
 from sqlalchemy.orm import Session
 from core.database import get_db
 from .services import NotificationService
@@ -12,8 +13,8 @@ class UpdateSettingsRequest(BaseModel):
     poll_reminders_enabled: bool = None
     payment_reminders_enabled: bool = None
     event_reminders_enabled: bool = None
-    reminder_days_before: int = None
-    reminder_time: str = None
+    reminder_days_before: int = Field(default=None, ge=1, le=60)
+    reminder_time: str = Field(default=None, pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
     troupe_filter: str = None
     current_show: str = None
 
@@ -31,7 +32,7 @@ async def get_notification_settings(
         raise HTTPException(status_code=400, detail="user_id required")
 
     service = NotificationService(db)
-    settings = service.get_user_settings(user_id)
+    settings = service.get_user_settings(ADMIN_ID)
 
     return {
         "poll_reminders_enabled": settings.poll_reminders_enabled,
@@ -56,7 +57,7 @@ async def update_notification_settings(
 
     service = NotificationService(db)
     service.update_user_settings(
-        user_id,
+        ADMIN_ID,
         poll_reminders_enabled=request.poll_reminders_enabled,
         payment_reminders_enabled=request.payment_reminders_enabled,
         event_reminders_enabled=request.event_reminders_enabled,

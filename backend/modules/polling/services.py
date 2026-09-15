@@ -56,6 +56,13 @@ class PollingService:
             PollVote.user_id == user_id
         ).first()
 
+        if answer == "retracted":
+            if existing_vote:
+                self.db.delete(existing_vote)
+            self.db.commit()
+            return None
+        if answer not in {"yes", "no", "maybe", "unknown"}:
+            raise ValueError("Unknown poll answer")
         if existing_vote:
             existing_vote.answer = answer
             if username:

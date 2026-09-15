@@ -6,7 +6,8 @@ import asyncio
 import logging
 import sys
 import os
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends
+from core.access import authorize_api
 from fastapi.middleware.cors import CORSMiddleware
 from core.database import init_db, SessionLocal, engine
 from config import LOG_LEVEL, API_HOST, API_PORT, GOOGLE_CALENDAR_JSON, GOOGLE_CALENDAR_ID, SYNC_INTERVAL_MINUTES
@@ -465,16 +466,16 @@ async def shutdown():
 
 
 # Регистрировать маршруты
-app.include_router(auth_router)
-app.include_router(sheets_router)
-app.include_router(finance_router)
-app.include_router(calendar_router)
-app.include_router(polling_router)
-app.include_router(notifications_router)
-app.include_router(availability_router)
-app.include_router(assistant_router)
-app.include_router(links_router)
-app.include_router(afisha_router)
+app.include_router(auth_router, dependencies=[Depends(authorize_api)])
+app.include_router(sheets_router, dependencies=[Depends(authorize_api)])
+app.include_router(finance_router, dependencies=[Depends(authorize_api)])
+app.include_router(calendar_router, dependencies=[Depends(authorize_api)])
+app.include_router(polling_router, dependencies=[Depends(authorize_api)])
+app.include_router(notifications_router, dependencies=[Depends(authorize_api)])
+app.include_router(availability_router, dependencies=[Depends(authorize_api)])
+app.include_router(assistant_router, dependencies=[Depends(authorize_api)])
+app.include_router(links_router, dependencies=[Depends(authorize_api)])
+app.include_router(afisha_router, dependencies=[Depends(authorize_api)])
 
 
 @app.get("/")

@@ -18,3 +18,14 @@ class AssistantActionLog(Base):
     input_tokens = Column(Integer, nullable=True)
     output_tokens = Column(Integer, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+
+class AssistantExecution(Base):
+    """Durable claim before external effects; an uncertain outcome is never retried."""
+    __tablename__ = "assistant_executions"
+
+    jti = Column(String, primary_key=True)
+    user_id = Column(Integer, nullable=False)
+    status = Column(String, nullable=False, default="running")
+    result_json = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)

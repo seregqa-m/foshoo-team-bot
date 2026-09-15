@@ -1,6 +1,11 @@
 """
 FastAPI router для опросов
 """
+import logging
+from typing import Literal
+
+logger = logging.getLogger(__name__)
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -16,7 +21,7 @@ class CreatePollRequest(BaseModel):
 
 
 class VoteRequest(BaseModel):
-    answer: str  # "yes", "no", "maybe"
+    answer: Literal["yes", "no", "maybe", "retracted"]
 
 
 router = APIRouter(prefix="/api/polls", tags=["polls"])
@@ -182,6 +187,10 @@ async def vote(
         raise HTTPException(status_code=400, detail="user_id required")
 
     service = PollingService(db)
+    poll = service.get_poll(poll_id)
+    from datetime import datetime
+    if not poll or not poll.is_active or poll.expires_at <= datetime.utcnow():
+        raise HTTPException(409, "Опрос закрыт или не существует")
     vote_result = service.vote(poll_id, user_id, request.answer)
 
-    return {"status": "voted", "answer": vote_result.answer}
+    return {"status": "voted", "answer": vote_result.answer if vote_result else "retracted"}

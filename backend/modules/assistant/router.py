@@ -11,7 +11,7 @@ import random
 import time
 from typing import Any, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -107,7 +107,7 @@ async def get_hints():
 
 
 @router.post("/chat", response_model=ChatResponse)
-async def chat(request: ChatRequest, db: Session = Depends(get_db)):
+async def chat(request: ChatRequest, http_request: Request, db: Session = Depends(get_db)):
     if not ASSISTANT_ENABLED:
         raise HTTPException(status_code=503, detail="Ассистент отключён")
 
@@ -124,6 +124,7 @@ async def chat(request: ChatRequest, db: Session = Depends(get_db)):
             username=request.username or "",
             message=request.message,
             history=[h.dict() for h in request.history],
+            is_admin=http_request.state.is_admin,
         )
     except LLMConfigurationError as e:
         raise HTTPException(status_code=503, detail=str(e))
@@ -148,14 +149,14 @@ async def chat(request: ChatRequest, db: Session = Depends(get_db)):
 
 
 @router.post("/execute", response_model=ExecuteResponse)
-async def execute(request: ExecuteRequest, db: Session = Depends(get_db)):
+async def execute(request: ExecuteRequest, http_request: Request, db: Session = Depends(get_db)):
     """Выполнить отложенное действие по action_token, полученному от /chat."""
     if not ASSISTANT_ENABLED:
         raise HTTPException(status_code=503, detail="Ассистент отключён")
 
     service = AssistantService(db)
     try:
-        result = await service.execute_pending(user_id=request.user_id, action_token=request.action_token)
+        result = await service.execute_pending(user_id=request.user_id, action_token=request.action_token, is_admin=http_request.state.is_admin)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except HTTPException:

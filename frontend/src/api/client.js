@@ -9,6 +9,12 @@ const client = axios.create({
   },
 });
 
+client.interceptors.request.use(config => {
+  const initData = window.Telegram?.WebApp?.initData;
+  if (initData) config.headers['X-Telegram-Init-Data'] = initData;
+  return config;
+});
+
 export const assistantApi = {
   async chat({ userId, username, sessionId, message, history }) {
     const { data } = await client.post('/api/assistant/chat', {

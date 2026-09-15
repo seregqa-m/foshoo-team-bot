@@ -21,9 +21,11 @@ from typing import Any, Optional
 
 from jose import ExpiredSignatureError, JWTError, jwt
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
+from fastapi import HTTPException
 
 from config import SECRET_KEY
-from modules.assistant.models import AssistantActionLog
+from modules.assistant.models import AssistantActionLog, AssistantExecution
 
 from .context import build_context
 from .llm_client import ChatMessage, LLMClient, LLMResponse, get_llm_client
@@ -173,7 +175,7 @@ class ChatResult:
 class AssistantService:
     def __init__(self, db: Session, llm: LLMClient | None = None):
         self.db = db
-        self.llm = llm or get_llm_client()
+        self.llm = llm
 
     async def chat(
         self,
@@ -182,6 +184,7 @@ class AssistantService:
         username: str = "",
         message: str,
         history: list[dict] | None = None,
+        is_admin: bool = False,
     ) -> ChatResult:
         system_prompt = _build_system_prompt(self.db, user_id, username=username)
         messages: list[ChatMessage] = [ChatMessage(role="system", text=system_prompt)]
@@ -199,7 +202,7 @@ class AssistantService:
         tool_ctx = {"user_id": user_id, "username": username}
 
         for hop in range(MAX_TOOL_HOPS):
-            response: LLMResponse = await self.llm.chat(
+            response: LLMResponse = await (self.llm or get_llm_client()).chat(
                 messages,
                 tools=get_tool_schemas(),
                 tool_choice="auto",
@@ -225,6 +228,8 @@ class AssistantService:
                 )
 
             if tool.safety_level == "confirm":
+                if call.name not in {"add_expense", "add_income"} and not is_admin:
+                    return ChatResult(reply="Это действие доступно только администратору.")
                 if tool.preview_builder is None:
                     return ChatResult(
                         reply=f"У инструмента «{call.name}» не настроен preview. Обратись к разработчику.",
@@ -275,10 +280,10 @@ class AssistantService:
             output_tokens=total_out or None,
         )
 
-    async def execute_pending(self, *, user_id: int, action_token: str) -> dict:
+    async def execute_pending(self, *, user_id: int, action_token: str, is_admin: bool = False) -> dict:
         payload = _decode_action_token(action_token)
         token_user = int(payload.get("sub", 0))
-        if token_user and token_user != user_id:
+        if token_user != user_id:
             raise ValueError("action_token принадлежит другому пользователю")
 
         tool_name = payload.get("tool")
@@ -287,6 +292,24 @@ class AssistantService:
         tool = get_tool(tool_name)
         if tool is None:
             raise ValueError(f"неизвестный инструмент: {tool_name}")
+
+        if tool.safety_level != "confirm":
+            raise ValueError("Этот инструмент не требует выполнения по токену")
+        if tool_name not in {"add_expense", "add_income"} and not is_admin:
+            raise HTTPException(403, "Это действие доступно только администратору")
+        jti = payload.get("jti")
+        if not isinstance(jti, str) or not jti:
+            raise ValueError("В токене отсутствует идентификатор действия")
+        execution = AssistantExecution(jti=jti, user_id=user_id, status="running")
+        self.db.add(execution)
+        try:
+            self.db.commit()  # Must survive a crash during a remote write.
+        except IntegrityError:
+            self.db.rollback()
+            previous = self.db.get(AssistantExecution, jti)
+            if previous and previous.user_id == user_id and previous.status == "completed":
+                return json.loads(previous.result_json)
+            raise HTTPException(409, "Действие уже запускалось. Проверь результат перед новой операцией.")
 
         log = AssistantActionLog(
             user_id=user_id,
@@ -301,9 +324,18 @@ class AssistantService:
             result = await tool.handler(self.db, args, {"user_id": user_id, "username": username})
             log.result_json = json.dumps(result, ensure_ascii=False, default=str)
             log.success = True
+            response = {"success": True, "result": result}
+            execution.status = "completed"
+            execution.result_json = json.dumps(response, ensure_ascii=False, default=str)
             self.db.commit()
-            return {"success": True, "result": result}
+            return response
         except Exception as e:
+            self.db.rollback()
+            execution = self.db.get(AssistantExecution, jti)
+            execution.status = "uncertain"
+            log = AssistantActionLog(user_id=user_id, username=username, tool_name=tool_name,
+                                     args_json=json.dumps(args, ensure_ascii=False))
+            self.db.add(log)
             log.success = False
             log.error = str(e)[:2000]
             self.db.commit()

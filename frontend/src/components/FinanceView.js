@@ -210,7 +210,7 @@ const isoToDMY = iso => { const [y, m, d] = iso.split('-'); return `${d}.${m}.${
 const EMPTY_EXPENSE = { project: '', amount: '', what: '', expense_type: '', comment: '', who: '', date: todayISO() };
 const EMPTY_INCOME  = { project: '', amount: '', what: '', comment: '', date: todayISO() };
 
-export default function FinanceView({ username }) {
+export default function FinanceView({ username, isAdmin }) {
   const [balance, setBalance] = useState(null);
   const [meta, setMeta] = useState({ projects: [], expense_types: [], actors: [] });
   const [modal, setModal] = useState(null); // 'expense' | 'income' | null
@@ -399,10 +399,10 @@ export default function FinanceView({ username }) {
                   return isNaN(n) ? tx.amount : n.toLocaleString('ru', { maximumFractionDigits: 0 });
                 })()}
               </div>
-              <button
+              {isAdmin && <button
                 onClick={() => deleteTransaction(tx.type, tx.id)}
                 style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ccc', fontSize: 18, padding: '0 0 0 4px', flexShrink: 0 }}
-              >×</button>
+              >×</button>}
             </div>
           ))}
         </div>

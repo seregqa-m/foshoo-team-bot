@@ -10,7 +10,7 @@ function Toggle({ checked, onChange }) {
   );
 }
 
-const API = process.env.REACT_APP_API_URL || 'http://127.0.0.1:8000';
+
 
 function AvailabilitySection({ showNames }) {
   const [campaign, setCampaign] = useState(undefined); // undefined=loading, null=none
@@ -218,9 +218,8 @@ export default function NotificationsView({ userId }) {
   const [showNames, setShowNames] = useState([]);
 
   useEffect(() => {
-    fetch(`${API}/api/sheets/shows`)
-      .then(r => r.json())
-      .then(data => setShowNames(data.shows || []))
+    client.get('/api/sheets/shows')
+      .then(({ data }) => setShowNames(data.shows || []))
       .catch(() => {});
   }, []);
 

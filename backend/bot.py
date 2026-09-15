@@ -91,9 +91,7 @@ async def handle_poll_answer(poll_answer: PollAnswer):
             logger.warning(f"No DB poll for telegram_poll_id={poll_answer.poll_id}")
             return
 
-        if answer != "retracted":
-            PollingService(db).vote(poll.id, poll_answer.user.id, answer, username=poll_answer.user.username)
-            logger.info(f"Poll vote saved: poll={poll.id} user={poll_answer.user.id} answer={answer}")
+        PollingService(db).vote(poll.id, poll_answer.user.id, answer, username=poll_answer.user.username)
 
         # Записать явку в Google Sheets
         username = poll_answer.user.username
@@ -326,6 +324,11 @@ async def _launch_campaign_for_month(year: int, month_num: int) -> dict:
 
 @dp.callback_query(F.data.startswith("avail_start_"))
 async def on_avail_start(callback: CallbackQuery):
+    from core.access import is_admin
+    from config import GROUP_CHAT_ID
+    if callback.message.chat.id != GROUP_CHAT_ID or not await is_admin(callback.from_user.id):
+        await callback.answer("Доступно только администратору группы", show_alert=True)
+        return
     await callback.answer()
     await callback.message.edit_reply_markup(reply_markup=None)
 
@@ -367,17 +370,15 @@ async def _handle_availability_answer(poll_answer, avail_poll, db):
         AvailabilityVote.poll_id == avail_poll.id,
         AvailabilityVote.user_id == poll_answer.user.id,
     ).first()
-    if not existing_vote:
+    if not poll_answer.option_ids:
+        if existing_vote:
+            db.delete(existing_vote)
+    elif not existing_vote:
         db.add(AvailabilityVote(
             poll_id=avail_poll.id,
             user_id=poll_answer.user.id,
             username=username,
         ))
-
-    # Если нет ответов (retract) — не трогаем таблицу
-    if not poll_answer.option_ids:
-        db.commit()
-        return
 
     selected = set(poll_answer.option_ids)
     options = db.query(AvailabilityPollOption).filter(
@@ -393,7 +394,7 @@ async def _handle_availability_answer(poll_answer, avail_poll, db):
             return
         client = SheetsClient(GOOGLE_CALENDAR_JSON, GOOGLE_SHEETS_ID)
         for opt in options:
-            answer = "yes" if opt.option_index in selected else "no"
+            answer = ("yes" if opt.option_index in selected else "no") if selected else "retracted"
             event = db.query(CalendarEvent).filter(
                 CalendarEvent.id == opt.calendar_event_id
             ).first()

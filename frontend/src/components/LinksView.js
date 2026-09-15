@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 
-const API_BASE = process.env.REACT_APP_API_URL || 'http://127.0.0.1:8000';
+import client from '../api/client';
 const AFISHA_SITE_URL = 'https://foshoo-theatre.ru/afisha';
 
 function openUrl(url) {
@@ -110,17 +110,13 @@ function AfishaUpload() {
     try {
       const fd = new FormData();
       fd.append('file', file);
-      const res = await fetch(`${API_BASE}/api/afisha/upload`, { method: 'POST', body: fd });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.detail || `Ошибка ${res.status}`);
-      }
+      await client.post('/api/afisha/upload', fd, { headers: { 'Content-Type': undefined } });
       setFile(null);
       setDone(true);
       // Открываем сайт автоматически
       openUrl(AFISHA_SITE_URL);
     } catch (e) {
-      setError(e.message);
+      setError(e.response?.data?.detail || e.message);
     } finally {
       setUploading(false);
     }
@@ -244,14 +240,13 @@ function AfishaUpload() {
   );
 }
 
-export default function LinksView() {
+export default function LinksView({ isAdmin }) {
   const [blocks, setBlocks] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch(`${API_BASE}/api/links`)
-      .then(r => r.json())
-      .then(data => { setBlocks(data.blocks || []); setLoading(false); })
+    client.get('/api/links')
+      .then(({ data }) => { setBlocks(data.blocks || []); setLoading(false); })
       .catch(() => setLoading(false));
   }, []);
 
@@ -260,7 +255,7 @@ export default function LinksView() {
       <div className="page-header">
         <div className="page-title">Ресурсы</div>
       </div>
-      <AfishaUpload />
+      {isAdmin && <AfishaUpload />}
       {loading ? (
         <div className="empty-state">Загрузка...</div>
       ) : blocks.length === 0 ? (

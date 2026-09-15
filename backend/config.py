@@ -1,4 +1,5 @@
 import os
+import hashlib
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -27,7 +28,7 @@ GOOGLE_SHEETS_ID = os.getenv("GOOGLE_SHEETS_ID", "")
 TIMEZONE = os.getenv("TIMEZONE", "Europe/Moscow")
 
 # Security
-SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-key-change-in-production")
+SECRET_KEY = os.getenv("SECRET_KEY") or hashlib.sha256(("foshoo-actions:" + BOT_TOKEN).encode()).hexdigest()
 
 # Mini App
 MINI_APP_URL = os.getenv("MINI_APP_URL", "https://your-tunnel.trycloudflare.com")

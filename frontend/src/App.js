@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import './index.css';
+import client from './api/client';
 import AssistantView from './components/AssistantView';
 import CalendarView from './components/CalendarView';
 import NotificationsView from './components/NotificationsView';
@@ -14,33 +15,25 @@ function App() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [trouFilter, setTrouFilter] = useState('труппа 1');
 
-  useEffect(() => {
-    fetch(`${process.env.REACT_APP_API_URL || 'http://127.0.0.1:8000'}/api/auth/app-config`)
-      .then(r => r.json())
-      .then(data => { if (data.troupe_filter) setTrouFilter(data.troupe_filter); })
-      .catch(() => {});
-  }, []);
+  const [accessError, setAccessError] = useState('');
 
   useEffect(() => {
-    if (window.Telegram?.WebApp) {
-      const tg = window.Telegram.WebApp;
-      tg.ready();
-      tg.expand();
-      const user = tg.initDataUnsafe?.user;
-      if (user) {
-        setUserId(user.id);
-        const username = user.username || '';
-        setUsername(username);
-        fetch(`${process.env.REACT_APP_API_URL || 'http://127.0.0.1:8000'}/api/auth/check?username=${username}&user_id=${user.id}`)
-          .then(r => r.json())
-          .then(data => { setAllowed(data.allowed); setIsAdmin(!!data.is_admin); })
-          .catch(() => setAllowed(true)); // при ошибке — пускаем
-      } else {
+    const tg = window.Telegram?.WebApp;
+    tg?.ready();
+    tg?.expand();
+    client.get('/api/auth/check')
+      .then(({ data }) => {
+        setUserId(data.user_id);
+        setUsername(data.username);
+        setIsAdmin(data.is_admin);
+        setAllowed(data.allowed);
+        return client.get('/api/auth/app-config');
+      })
+      .then(({ data }) => { if (data.troupe_filter) setTrouFilter(data.troupe_filter); })
+      .catch(e => {
+        setAccessError(e.response?.data?.detail || 'Не удалось проверить доступ. Попробуй открыть приложение заново.');
         setAllowed(false);
-      }
-    } else {
-      setAllowed(true); // вне Telegram (дев) — пускаем
-    }
+      });
   }, []);
 
   if (allowed === null) {
@@ -53,7 +46,7 @@ function App() {
         <div style={{ fontSize: 48, marginBottom: 16 }}>🎭</div>
         <div style={{ fontSize: 18, fontWeight: 600, marginBottom: 12 }}>Театр-студия FoShoo</div>
         <div style={{ fontSize: 14, color: '#444', marginBottom: 20, lineHeight: 1.5 }}>
-          Это приложение театра-студии FoShoo.<br />Приходите к нам на спектакли:
+          {accessError || 'Это приложение театра-студии FoShoo.'}
         </div>
         <a href="https://foshoo-theatre.ru/" target="_blank" rel="noopener noreferrer"
            style={{ fontSize: 15, color: '#5a0000', fontWeight: 600, textDecoration: 'none', borderBottom: '1px solid #5a0000' }}>
@@ -70,12 +63,12 @@ function App() {
           <AssistantView
             userId={userId}
             username={username}
-            renderSettings={() => <NotificationsView userId={userId} />}
+            renderSettings={() => isAdmin ? <NotificationsView userId={userId} /> : <p>Настройки доступны администратору.</p>}
           />
         )}
         {activeTab === 'calendar' && <CalendarView userId={userId} isAdmin={isAdmin} trouFilter={trouFilter} />}
-        {activeTab === 'finance' && <FinanceView username={username} />}
-        {activeTab === 'links' && <LinksView />}
+        {activeTab === 'finance' && <FinanceView username={username} isAdmin={isAdmin} />}
+        {activeTab === 'links' && <LinksView isAdmin={isAdmin} />}
       </main>
 
       <nav className="tab-bar">
