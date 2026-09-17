@@ -2,6 +2,8 @@
 import importlib.util
 from pathlib import Path
 import subprocess
+import shutil
+import sys
 import tempfile
 from types import SimpleNamespace
 import unittest
@@ -114,7 +116,7 @@ class BotControlTests(unittest.TestCase):
         python = self.root / 'venv/bin/python3'
         with patch.object(botctl, 'python_path', return_value=python):
             unit = botctl.unit_text()
-        self.assertIn(f'WorkingDirectory="{self.root}"', unit)
+        self.assertIn(f'WorkingDirectory={self.root}\n', unit)
         self.assertIn(f'ExecStart="{python}" "{self.root}/backend/main.py"', unit)
         self.assertIn('scripts/botctl.py" health', unit)
         self.assertIn('Restart=on-failure', unit)
@@ -125,6 +127,25 @@ class BotControlTests(unittest.TestCase):
         self.assertEqual(botctl.unit_quote('/a%/b$ c', command=True), '"/a%%/b$$ c"')
         with self.assertRaises(RuntimeError):
             botctl.unit_quote('/path\nExecStart=other')
+
+    @unittest.skipUnless(sys.platform == 'linux' and shutil.which('systemd-analyze'),
+                         'Requires the real systemd parser on Linux')
+    def test_real_systemd_parser_accepts_unit_and_rejects_old_quoted_directory(self):
+        # No daemon is started: verify only parses the unit and its dependencies.
+        # Spaces and % must survive without shell-style quoting in WorkingDirectory.
+        root = self.root / 'project with spaces 100%'
+        root.mkdir()
+        with patch.object(botctl, 'ROOT', root), patch.object(botctl, 'python_path', return_value=Path(sys.executable)):
+            content = botctl.unit_text()
+        unit = self.root / botctl.SERVICE
+        unit.write_text(content)
+        valid = subprocess.run(['systemd-analyze', 'verify', str(unit)], capture_output=True, text=True, timeout=30)
+        self.assertEqual(valid.returncode, 0, valid.stderr)
+        working_directory = f'WorkingDirectory={str(root).replace("%", "%%")}'
+        unit.write_text(content.replace(working_directory, f'WorkingDirectory={botctl.unit_quote(root)}'))
+        invalid = subprocess.run(['systemd-analyze', 'verify', str(unit)], capture_output=True, text=True, timeout=30)
+        self.assertNotEqual(invalid.returncode, 0)
+        self.assertIn('WorkingDirectory=', invalid.stderr)
 
     def test_health_uses_configured_port_and_bypasses_network_proxy(self):
         response = MagicMock()

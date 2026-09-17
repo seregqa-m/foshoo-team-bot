@@ -41,6 +41,9 @@ def unit_quote(value, command=False):
 
 def unit_text():
     python = unit_quote(python_path(), command=True)
+    # WorkingDirectory is a scalar path, not an ExecStart-style argument list:
+    # systemd preserves surrounding quotes here. Only escape specifiers.
+    working_directory = str(ROOT).replace('%', '%%')
     return f'''# Managed by FoShoo bot setup: {ROOT}
 [Unit]
 Description=FoShoo Telegram bot and API
@@ -53,7 +56,7 @@ StartLimitBurst=5
 Type=simple
 User={os.getuid()}
 Group={os.getgid()}
-WorkingDirectory={unit_quote(ROOT)}
+WorkingDirectory={working_directory}
 Environment=PYTHONUNBUFFERED=1
 Environment=API_RELOAD=false
 ExecStart={python} {unit_quote(ROOT / 'backend/main.py', command=True)}
@@ -178,6 +181,7 @@ def restart():
 
 
 def setup(build=False):
+    print('Проверяю настройки службы…', flush=True)
     if UNIT.exists():
         check_service()
     processes = legacy_processes()
@@ -191,7 +195,9 @@ def setup(build=False):
         source = Path(directory) / SERVICE
         source.write_text(content)
         # Verify the exact unit before touching the old process or system config.
+        print('Проверяю файл службы через systemd-analyze…', flush=True)
         run('systemd-analyze', 'verify', source)
+        print('Устанавливаю службу systemd…', flush=True)
         run('sudo', 'install', '-m', '644', source, UNIT)
     run('sudo', 'systemctl', 'daemon-reload')
     stop_legacy(processes)
