@@ -7,15 +7,15 @@ import client, { DATA_CHANGED_EVENT } from './api/client';
 jest.mock('./api/client', () => ({ __esModule: true, default: { get: jest.fn() }, DATA_CHANGED_EVENT: 'foshoo:data-changed' }));
 jest.mock('./components/AssistantView', () => {
   const React = require('react');
-  return function MockAssistant() {
+  return function MockAssistant({ renderSettings }) {
     const [value, setValue] = React.useState('');
-    return <input aria-label="draft" value={value} onChange={e => setValue(e.target.value)} />;
+    return <><input aria-label="draft" value={value} onChange={e => setValue(e.target.value)} />{renderSettings()}</>;
   };
 });
 jest.mock('./components/FinanceView', () => () => <div>finance</div>);
 jest.mock('./components/CalendarView', () => () => <div>calendar</div>);
 jest.mock('./components/LinksView', () => () => <div>links</div>);
-jest.mock('./components/NotificationsView', () => () => <div>settings</div>);
+jest.mock('./components/NotificationsView', () => ({ isSuperAdmin }) => <div>{isSuperAdmin ? 'global settings' : 'group settings'}</div>);
 
 let container, root;
 beforeEach(() => {
@@ -50,4 +50,16 @@ test('mutations refresh the shared troupe filter', async () => {
   const before = client.get.mock.calls.filter(([url]) => url.endsWith('app-config')).length;
   await act(async () => window.dispatchEvent(new Event(DATA_CHANGED_EVENT)));
   expect(client.get.mock.calls.filter(([url]) => url.endsWith('app-config')).length).toBe(before + 1);
+});
+
+test('self-revocation removes global controls while retaining group-admin settings', async () => {
+  const regular = client.get.getMockImplementation();
+  client.get.mockImplementation(url => url.endsWith('/check')
+    ? Promise.resolve({ data: { allowed: true, is_admin: true, is_superadmin: true, user_id: 42 } }) : regular(url));
+  await act(async () => root.render(<App />));
+  expect(container.textContent).toContain('global settings');
+  client.get.mockImplementation(regular);
+  await act(async () => window.dispatchEvent(new Event(DATA_CHANGED_EVENT)));
+  expect(container.textContent).not.toContain('global settings');
+  expect(container.textContent).toContain('group settings');
 });

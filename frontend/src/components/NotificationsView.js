@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import client from '../api/client';
 import AvailabilityCalendar from './AvailabilityCalendar';
+import SuperAdminPanel from './SuperAdminPanel';
 
 function Toggle({ checked, onChange }) {
   return (
@@ -247,7 +248,7 @@ export function AvailabilitySection({ showNames }) {
   );
 }
 
-export default function NotificationsView({ userId }) {
+export default function NotificationsView({ userId, isSuperAdmin = false }) {
   const [settings, setSettings] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -374,6 +375,7 @@ export default function NotificationsView({ userId }) {
       </button>
 
       <AvailabilitySection showNames={showNames} />
+      {isSuperAdmin && <SuperAdminPanel currentUserId={userId} />}
     </>
   );
 }

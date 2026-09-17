@@ -10,7 +10,7 @@ from collections import OrderedDict
 from urllib.parse import parse_qsl
 
 from fastapi import HTTPException, Request
-from config import BOT_TOKEN, ADMIN_ID, GROUP_CHAT_ID, GOOGLE_CALENDAR_JSON, GOOGLE_SHEETS_ID
+from config import BOT_TOKEN, GROUP_CHAT_ID, GOOGLE_CALENDAR_JSON, GOOGLE_SHEETS_ID
 
 INIT_DATA_TTL = 86400
 
@@ -19,6 +19,7 @@ INIT_DATA_TTL = 86400
 class TelegramUser:
     id: int
     username: str = ""
+    display_name: str = ""
 
 
 def verify_init_data(raw: str, *, bot_token: str = BOT_TOKEN, now=None) -> TelegramUser:
@@ -39,14 +40,22 @@ def verify_init_data(raw: str, *, bot_token: str = BOT_TOKEN, now=None) -> Teleg
         user = json.loads(data["user"])
         if type(user["id"]) is not int or user["id"] <= 0:
             raise ValueError("user")
-        return TelegramUser(user["id"], str(user.get("username") or ""))
+        return TelegramUser(user["id"], str(user.get("username") or ""),
+                            " ".join(str(user.get(k) or "").strip() for k in ("first_name", "last_name")).strip())
     except (ValueError, KeyError, TypeError):
         raise HTTPException(401, "Открой приложение заново через Telegram") from None
 
 
+async def is_super_admin(user_id: int) -> bool:
+    from modules.admin.services import has_superadmin_role
+    return await asyncio.to_thread(has_superadmin_role, user_id)
+
+
 async def is_admin(user_id: int) -> bool:
-    if ADMIN_ID and user_id == ADMIN_ID:
-        return True
+    return await is_super_admin(user_id) or await _is_group_admin(user_id)
+
+
+async def _is_group_admin(user_id: int) -> bool:
     if not GROUP_CHAT_ID:
         return False
     from bot import bot
@@ -76,25 +85,31 @@ _access_lock = asyncio.Lock()
 
 
 async def _permissions(user):
+    # Never cache global privileges: revocation must affect the next request.
+    if await is_super_admin(user.id):
+        return True, True, True
     key = (user.id, user.username)
     async with _access_lock:
         cached = _access_cache.get(key)
         if cached and cached[0] > time.monotonic():
-            return cached[1:]
-        admin = await is_admin(user.id)
+            return (*cached[1:], False)
+        admin = await _is_group_admin(user.id)
         allowed = admin or await asyncio.to_thread(_known_actor, user.username)
         # Cache only successful checks; failures never reuse expired permissions.
         _access_cache[key] = (time.monotonic() + 60, allowed, admin)
         _access_cache.move_to_end(key)
         while len(_access_cache) > 512:
             _access_cache.popitem(last=False)
-        return allowed, admin
+        return allowed, admin, False
 
 
 async def authorize_api(request: Request):
     """Applied to every /api router; identity fields cannot override Telegram."""
     user = verify_init_data(request.headers.get("X-Telegram-Init-Data", ""))
-    allowed, admin = await _permissions(user)
+    if request.url.path.rstrip('/') == '/api/auth/check':
+        from modules.admin.services import remember_identity
+        await asyncio.to_thread(remember_identity, user)
+    allowed, admin, superadmin = await _permissions(user)
     if not allowed:
         raise HTTPException(403, "Приложение доступно только участникам труппы")
     supplied_sources = [dict(request.query_params)]
@@ -121,4 +136,5 @@ async def authorize_api(request: Request):
         raise HTTPException(403, "Это действие доступно только администратору")
     request.state.telegram_user = user
     request.state.is_admin = admin
+    request.state.is_superadmin = superadmin
     return user

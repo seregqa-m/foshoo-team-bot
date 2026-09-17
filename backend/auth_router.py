@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 @router.get("/check")
 async def check_access(request: Request):
     user = request.state.telegram_user
-    return {"allowed": True, "is_admin": request.state.is_admin,
+    return {"allowed": True, "is_admin": request.state.is_admin, "is_superadmin": request.state.is_superadmin,
             "user_id": user.id, "username": user.username}
 
 

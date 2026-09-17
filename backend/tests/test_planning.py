@@ -176,7 +176,7 @@ class PlanningEdgeTests(unittest.TestCase):
         from unittest.mock import AsyncMock
         app = FastAPI(); app.include_router(router, dependencies=[Depends(authorize_api)])
         _access_cache.clear()
-        with patch('core.access.verify_init_data', return_value=TelegramUser(42, 'actor')), patch('core.access.is_admin', AsyncMock(return_value=False)), patch('core.access._known_actor', return_value=True):
+        with patch('core.access.verify_init_data', return_value=TelegramUser(42, 'actor')), patch('core.access._is_group_admin', AsyncMock(return_value=False)), patch('core.access.is_super_admin', AsyncMock(return_value=False)), patch('core.access._known_actor', return_value=True):
             client = TestClient(app)
             self.assertEqual(client.get('/api/planning').status_code, 403)
         _access_cache.clear()

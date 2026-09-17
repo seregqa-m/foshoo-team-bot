@@ -34,6 +34,9 @@ def signed_data(token="test-token", user_id=42, auth_date=None):
 
 class AccessTests(unittest.TestCase):
     def setUp(self):
+        role = patch('core.access.is_super_admin', AsyncMock(return_value=False))
+        role.start()
+        self.addCleanup(role.stop)
         from core.access import _access_cache
         _access_cache.clear()
 
@@ -53,7 +56,7 @@ class AccessTests(unittest.TestCase):
             return {"ok": True}
         client = TestClient(app)
         self.assertEqual(client.get('/api/calendar/events').status_code, 401)
-        with patch('core.access.verify_init_data', return_value=TelegramUser(42, 'actor')), patch('core.access.is_admin', AsyncMock(return_value=False)), patch('core.access._known_actor', return_value=True):
+        with patch('core.access.verify_init_data', return_value=TelegramUser(42, 'actor')), patch('core.access._is_group_admin', AsyncMock(return_value=False)), patch('core.access._known_actor', return_value=True):
             self.assertEqual(client.get('/api/calendar/events').status_code, 200)
             self.assertEqual(client.post('/api/calendar/events').status_code, 403)
             self.assertEqual(client.post('/api/finance/expense', json={'user_id': 99}).status_code, 403)
@@ -63,7 +66,7 @@ class AccessTests(unittest.TestCase):
             self.assertEqual(client.post('/api/finance/expense', headers={'Content-Type': 'application/json'}).status_code, 200)
         from core.access import _access_cache
         _access_cache.clear()
-        with patch('core.access.verify_init_data', return_value=TelegramUser(42, 'actor')), patch('core.access.is_admin', AsyncMock(return_value=False)), patch('core.access._known_actor', side_effect=HTTPException(503, 'unavailable')):
+        with patch('core.access.verify_init_data', return_value=TelegramUser(42, 'actor')), patch('core.access._is_group_admin', AsyncMock(return_value=False)), patch('core.access._known_actor', side_effect=HTTPException(503, 'unavailable')):
             self.assertEqual(client.get('/api/calendar/events').status_code, 503)
 
 

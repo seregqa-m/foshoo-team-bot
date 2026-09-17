@@ -19,6 +19,7 @@ from modules.polling.router import router as polling_router
 from modules.notifications.router import router as notifications_router
 from modules.availability.router import router as availability_router
 from modules.planning.router import router as planning_router
+from modules.admin.router import router as admin_router
 from modules.assistant.router import router as assistant_router
 from auth_router import router as auth_router
 from sheets_router import router as sheets_router
@@ -425,6 +426,11 @@ async def startup():
     logger.info("⏱ Running migrations...")
     init_db()
     run_migrations()
+    from core.database import SessionLocal
+    from modules.admin.services import bootstrap_superadmin
+    from config import ADMIN_ID
+    with SessionLocal() as db:
+        bootstrap_superadmin(db, ADMIN_ID)
     logger.info("✅ Database initialized")
 
     app.state.tasks = []
@@ -457,6 +463,7 @@ async def shutdown():
 
 # Регистрировать маршруты
 app.include_router(auth_router, dependencies=[Depends(authorize_api)])
+app.include_router(admin_router, dependencies=[Depends(authorize_api)])
 app.include_router(sheets_router, dependencies=[Depends(authorize_api)])
 app.include_router(finance_router, dependencies=[Depends(authorize_api)])
 app.include_router(calendar_router, dependencies=[Depends(authorize_api)])

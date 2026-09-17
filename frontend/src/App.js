@@ -24,6 +24,7 @@ function App() {
   const [username, setUsername] = useState('');
   const [allowed, setAllowed] = useState(null); // null = проверяем
   const [isAdmin, setIsAdmin] = useState(false);
+  const [isSuperAdmin, setIsSuperAdmin] = useState(false);
   const [trouFilter, setTrouFilter] = useState('труппа 1');
 
   const [accessError, setAccessError] = useState('');
@@ -37,6 +38,7 @@ function App() {
         setUserId(data.user_id);
         setUsername(data.username);
         setIsAdmin(data.is_admin);
+        setIsSuperAdmin(!!data.is_superadmin);
         setAllowed(data.allowed);
         return client.get('/api/auth/app-config');
       })
@@ -49,9 +51,19 @@ function App() {
 
   useEffect(() => {
     if (!allowed || !dataVersion) return;
-    client.get('/api/auth/app-config')
-      .then(({ data }) => setTrouFilter(data.troupe_filter))
-      .catch(() => {});
+    let active = true;
+    Promise.all([client.get('/api/auth/check'), client.get('/api/auth/app-config')])
+      .then(([auth, config]) => {
+        if (!active) return;
+        setIsAdmin(auth.data.is_admin); setIsSuperAdmin(!!auth.data.is_superadmin);
+        setTrouFilter(config.data.troupe_filter);
+      })
+      .catch(e => {
+        if (!active) return;
+        setIsAdmin(false); setIsSuperAdmin(false);
+        if ([401, 403].includes(e.response?.status)) { setAccessError(e.response.data.detail); setAllowed(false); }
+      });
+    return () => { active = false; };
   }, [allowed, dataVersion]);
 
   if (allowed === null) {
@@ -82,7 +94,7 @@ function App() {
             active={activeTab === 'assistant'}
             userId={userId}
             username={username}
-            renderSettings={() => isAdmin ? <NotificationsView userId={userId} /> : <p>Настройки доступны администратору.</p>}
+            renderSettings={() => isAdmin ? <NotificationsView userId={userId} isSuperAdmin={isSuperAdmin} /> : <p>Настройки доступны администратору.</p>}
           />
         </section>
         {visitedTabs.includes('calendar') && <section hidden={activeTab !== 'calendar'}>
