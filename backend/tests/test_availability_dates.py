@@ -96,3 +96,31 @@ class AvailabilityDateTests(unittest.IsolatedAsyncioTestCase):
         option = self.db.get(AvailabilityPollOption, 1)
         self.assertEqual(option.calendar_event_id, 99)
         self.assertIsNone(option.selected_date)
+
+
+    def test_month_events_default_to_next_month_and_support_leap_year(self):
+        from modules.availability.router import get_next_month_events
+        events = [
+            CalendarEvent(title='труппа 1', start_time=datetime(2027, 12, 31, 23)),
+            CalendarEvent(title='труппа 1', start_time=datetime(2028, 1, 1)),
+            CalendarEvent(title='труппа 1', start_time=datetime(2028, 2, 29, 23, 59)),
+            CalendarEvent(title='труппа 1', start_time=datetime(2028, 3, 1)),
+            CalendarEvent(title='труппа 2', start_time=datetime(2028, 2, 5)),
+            CalendarEvent(title='труппа 1', start_time=datetime(2028, 2, 6), is_cancelled=True),
+        ]
+        self.db.add_all(events); self.db.commit()
+        with patch('modules.availability.router.local_now', return_value=datetime(2027, 12, 15)), patch('modules.availability.router.GOOGLE_SHEETS_ID', ''):
+            default = get_next_month_events(db=self.db)
+            selected = get_next_month_events(db=self.db, month='2028-02')
+            empty = get_next_month_events(db=self.db, month='2028-04')
+        self.assertEqual(default['month'], '2028-01')
+        self.assertEqual([e['id'] for e in default['events']], [events[1].id])
+        self.assertEqual([e['id'] for e in selected['events']], [events[2].id])
+        self.assertEqual(empty, {'month': '2028-04', 'events': []})
+
+    def test_invalid_month_is_rejected(self):
+        from modules.availability.router import get_next_month_events
+        for month in ('2026-13', '2026-00', '2026-1', 'not-a-month', ''):
+            with self.assertRaises(HTTPException) as error:
+                get_next_month_events(db=self.db, month=month)
+            self.assertEqual(error.exception.status_code, 422)

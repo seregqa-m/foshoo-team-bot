@@ -3,6 +3,7 @@ import json
 from core.time import local_now
 import logging
 import os
+from calendar import monthrange
 from datetime import date, datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -31,11 +32,16 @@ def _get_troupe_filter(db: Session) -> str:
 
 
 @router.get("/next-month-events")
-def get_next_month_events(db: Session = Depends(get_db)):
-    """События следующего месяца для труппы (не спектакли)."""
+def get_next_month_events(db: Session = Depends(get_db), month: str | None = None):
+    """События выбранного месяца; по умолчанию — следующего (не спектакли)."""
     today = local_now().date()
-    first_next = (today.replace(day=1) + timedelta(days=32)).replace(day=1)
-    last_next = (first_next + timedelta(days=32)).replace(day=1) - timedelta(days=1)
+    try:
+        first_next = date.fromisoformat(month + "-01") if month is not None else (
+            today.replace(day=1) + timedelta(days=32)
+        ).replace(day=1)
+    except ValueError as exc:
+        raise HTTPException(422, "Месяц должен быть в формате ГГГГ-ММ") from exc
+    last_next = first_next.replace(day=monthrange(first_next.year, first_next.month)[1])
 
     troupe_filter = _get_troupe_filter(db)
 

@@ -17,6 +17,7 @@ export function AvailabilitySection({ showNames }) {
   const [campaign, setCampaign] = useState(undefined); // undefined=loading, null=none
   const [showForm, setShowForm] = useState(false);
   const [month, setMonth] = useState(null);
+  const [requestedMonth, setRequestedMonth] = useState(null);
   const [suggestedDates, setSuggestedDates] = useState([]);
   const [datesLoading, setDatesLoading] = useState(true);
   const [loadAttempt, setLoadAttempt] = useState(0);
@@ -38,6 +39,7 @@ export function AvailabilitySection({ showNames }) {
 
   const openForm = () => {
     setFormError(null);
+    setRequestedMonth(null);
     setShowForm(true);
   };
 
@@ -50,7 +52,7 @@ export function AvailabilitySection({ showNames }) {
     setSuggestedDates([]);
     setMissingDates([]);
     setFormError(null);
-    client.get('/api/availability/next-month-events')
+    client.get('/api/availability/next-month-events', requestedMonth ? { params: { month: requestedMonth } } : undefined)
       .then(({ data }) => {
         if (!active) return;
         const dates = [...new Set((data.events || []).map(e => e.start_time.slice(0, 10)))].sort();
@@ -61,7 +63,19 @@ export function AvailabilitySection({ showNames }) {
       .catch(() => { if (active) setFormError('Не удалось загрузить даты из расписания'); })
       .finally(() => { if (active) setDatesLoading(false); });
     return () => { active = false; };
-  }, [showForm, loadAttempt]);
+  }, [showForm, loadAttempt, requestedMonth]);
+
+  const changeMonth = value => {
+    if (!/^\d{4}-\d{2}$/.test(value) || value === (requestedMonth || month)) return;
+    setDatesLoading(true);
+    setSelectedDates([]);
+    setRequestedMonth(value);
+  };
+  const shiftMonth = offset => {
+    const [year, number] = (requestedMonth || month).split('-').map(Number);
+    const next = new Date(year, number - 1 + offset, 1);
+    changeMonth(`${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, '0')}`);
+  };
 
   useEffect(() => {
     setMissingDates([]);
@@ -177,7 +191,7 @@ export function AvailabilitySection({ showNames }) {
         <div className="card-white" style={{ padding: '14px 16px', marginTop: 8 }}>
           <div style={{ fontWeight: 600, marginBottom: 10 }}>Новый опрос</div>
 
-          <div style={{ fontSize: 13, color: '#666', marginBottom: 6 }}>Спектакли в следующем месяце:</div>
+          <div style={{ fontSize: 13, color: '#666', marginBottom: 6 }}>Спектакли для опроса:</div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 14 }}>
             {showNames.map(name => (
               <button
@@ -193,6 +207,14 @@ export function AvailabilitySection({ showNames }) {
               >{name}</button>
             ))}
           </div>
+
+          <label className="availability-calendar__month-label" htmlFor="availability-month">Месяц опроса</label>
+          <div className="availability-calendar__navigation">
+            <button type="button" className="btn btn-secondary" aria-label="Предыдущий месяц" disabled={sending || !(requestedMonth || month)} onClick={() => shiftMonth(-1)}>‹</button>
+            <input id="availability-month" type="month" className="form-input" value={requestedMonth || month || ''} disabled={sending} onChange={e => changeMonth(e.target.value)} />
+            <button type="button" className="btn btn-secondary" aria-label="Следующий месяц" disabled={sending || !(requestedMonth || month)} onClick={() => shiftMonth(1)}>›</button>
+          </div>
+          <p className="availability-calendar__hint">При смене месяца даты выбираются заново из расписания.</p>
 
           {datesLoading ? <div role="status">Загружаем даты из расписания...</div> : month ? (
             <AvailabilityCalendar

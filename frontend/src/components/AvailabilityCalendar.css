@@ -1,4 +1,8 @@
 .availability-calendar { margin: 4px 0 14px; }
+.availability-calendar__month-label { display: block; margin-bottom: 6px; font-size: 13px; color: #666; }
+.availability-calendar__navigation { display: flex; align-items: center; gap: 8px; }
+.availability-calendar__navigation input { flex: 1; min-width: 0; width: 100%; }
+.availability-calendar__navigation button { flex-shrink: 0; min-width: 42px; min-height: 42px; font-size: 20px; }
 .availability-calendar__title { font-size: 16px; font-weight: 600; text-transform: capitalize; }
 .availability-calendar__hint { font-size: 13px; color: #666; line-height: 1.5; margin: 8px 0 12px; }
 .availability-calendar__grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; }

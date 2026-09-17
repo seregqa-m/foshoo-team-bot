@@ -81,3 +81,43 @@ test('date checking uses the edited selection and ignores an outdated response',
     expect(client.get).toHaveBeenLastCalledWith('/api/availability/check-dates', { params: { dates: '2026-10-10' } });
   } finally { jest.useRealTimers(); }
 });
+
+test('changing month loads its dates and sends only that month', async () => {
+  const original = client.get.getMockImplementation();
+  client.get.mockImplementation((url, config) => config?.params?.month
+    ? Promise.resolve({ data: { month: config.params.month, events: [{ id: 4, start_time: `${config.params.month}-05T19:00:00+03:00` }] } })
+    : original(url));
+  await open();
+  expect(container.querySelector('input[type="month"]').value).toBe('2026-10');
+  await act(async () => day(7).click());
+  await act(async () => container.querySelector('[aria-label="Следующий месяц"]').click());
+  expect(client.get).toHaveBeenCalledWith('/api/availability/next-month-events', { params: { month: '2026-11' } });
+  expect(container.querySelectorAll('.availability-calendar__day')).toHaveLength(30);
+  expect(day(5).getAttribute('aria-pressed')).toBe('true');
+  expect(day(7).getAttribute('aria-pressed')).toBe('false');
+  await act(async () => { day(8).click(); button('Урод').click(); });
+  await act(async () => button('Отправить в чат').click());
+  expect(client.post).toHaveBeenCalledWith('/api/availability/campaign', { show_names: ['Урод'], dates: ['2026-11-05', '2026-11-08'] });
+  await act(async () => button('Запустить опрос занятости для спектов').click());
+  expect(container.querySelector('input[type="month"]').value).toBe('2026-10');
+});
+
+test('fast month changes ignore late responses, cross the year boundary, and block sending during loading', async () => {
+  const original = client.get.getMockImplementation();
+  const pending = {};
+  client.get.mockImplementation((url, config) => config?.params?.month
+    ? new Promise(resolve => { pending[config.params.month] = resolve; }) : original(url));
+  await open();
+  for (let i = 0; i < 3; i++) {
+    await act(async () => container.querySelector('[aria-label="Следующий месяц"]').click());
+    expect(button('Отправить в чат').disabled).toBe(true);
+  }
+  expect(container.querySelector('input[type="month"]').value).toBe('2027-01');
+  await act(async () => pending['2027-01']({ data: { month: '2027-01', events: [] } }));
+  await act(async () => pending['2026-11']({ data: { month: '2026-11', events } }));
+  expect(container.querySelector('input[type="month"]').value).toBe('2027-01');
+  expect(container.textContent).toContain('Выбрано дат: 0');
+  await act(async () => { day(1).click(); button('Урод').click(); });
+  await act(async () => button('Отправить в чат').click());
+  expect(client.post).toHaveBeenCalledWith('/api/availability/campaign', { show_names: ['Урод'], dates: ['2027-01-01'] });
+});
