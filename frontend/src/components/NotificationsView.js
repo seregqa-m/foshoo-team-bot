@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import client from '../api/client';
+import AvailabilityCalendar from './AvailabilityCalendar';
 
 function Toggle({ checked, onChange }) {
   return (
@@ -12,12 +13,15 @@ function Toggle({ checked, onChange }) {
 
 
 
-function AvailabilitySection({ showNames }) {
+export function AvailabilitySection({ showNames }) {
   const [campaign, setCampaign] = useState(undefined); // undefined=loading, null=none
   const [showForm, setShowForm] = useState(false);
-  const [nextEvents, setNextEvents] = useState([]);
+  const [month, setMonth] = useState(null);
+  const [suggestedDates, setSuggestedDates] = useState([]);
+  const [datesLoading, setDatesLoading] = useState(true);
+  const [loadAttempt, setLoadAttempt] = useState(0);
   const [selectedShows, setSelectedShows] = useState([]);
-  const [selectedEvents, setSelectedEvents] = useState([]);
+  const [selectedDates, setSelectedDates] = useState([]);
   const [missingDates, setMissingDates] = useState([]);
   const [nonVoters, setNonVoters] = useState(null);
   const [pinging, setPinging] = useState(false);
@@ -33,48 +37,64 @@ function AvailabilitySection({ showNames }) {
   useEffect(() => { loadCampaign(); }, []);
 
   const openForm = () => {
-    setShowForm(true);
     setFormError(null);
-    setMissingDates([]);
-    client.get('/api/availability/next-month-events')
-      .then(r => {
-        const evs = r.data.events || [];
-        setNextEvents(evs);
-        setSelectedEvents(evs.map(e => e.id));
-      })
-      .catch(() => setFormError('Не удалось загрузить события'));
+    setShowForm(true);
   };
+
+  useEffect(() => {
+    if (!showForm) return;
+    let active = true;
+    setDatesLoading(true);
+    setMonth(null);
+    setSelectedDates([]);
+    setSuggestedDates([]);
+    setMissingDates([]);
+    setFormError(null);
+    client.get('/api/availability/next-month-events')
+      .then(({ data }) => {
+        if (!active) return;
+        const dates = [...new Set((data.events || []).map(e => e.start_time.slice(0, 10)))].sort();
+        setMonth(data.month);
+        setSuggestedDates(dates);
+        setSelectedDates(dates);
+      })
+      .catch(() => { if (active) setFormError('Не удалось загрузить даты из расписания'); })
+      .finally(() => { if (active) setDatesLoading(false); });
+    return () => { active = false; };
+  }, [showForm, loadAttempt]);
+
+  useEffect(() => {
+    setMissingDates([]);
+    if (!showForm || !selectedDates.length) return;
+    let active = true;
+    const timer = setTimeout(() => {
+      client.get('/api/availability/check-dates', { params: { dates: selectedDates.join(',') } })
+        .then(({ data }) => { if (active) setMissingDates(data.missing || []); })
+        .catch(() => {});
+    }, 300);
+    return () => { active = false; clearTimeout(timer); };
+  }, [showForm, selectedDates]);
 
   const toggleShow = name => setSelectedShows(s =>
     s.includes(name) ? s.filter(x => x !== name) : [...s, name]
   );
-  const checkDates = async (ids) => {
-    if (!ids.length) { setMissingDates([]); return; }
-    try {
-      const r = await client.get('/api/availability/check-dates', {
-        params: { event_ids: ids.join(',') }
-      });
-      setMissingDates(r.data.missing || []);
-    } catch { setMissingDates([]); }
-  };
-
-  const handleEventToggle = async (id) => {
-    const next = selectedEvents.includes(id)
-      ? selectedEvents.filter(x => x !== id)
-      : [...selectedEvents, id];
-    setSelectedEvents(next);
-    await checkDates(next);
+  const toggleDate = date => {
+    setSelectedDates(dates => dates.includes(date)
+      ? dates.filter(value => value !== date)
+      : [...dates, date].sort());
+    setFormError(null);
   };
 
   const handleSend = async () => {
+    if (sending || datesLoading || !month) return;
     if (!selectedShows.length) { setFormError('Выберите хотя бы один спектакль'); return; }
-    if (!selectedEvents.length) { setFormError('Выберите хотя бы одну дату'); return; }
+    if (!selectedDates.length) { setFormError('Выберите хотя бы одну дату'); return; }
     setSending(true);
     setFormError(null);
     try {
       await client.post('/api/availability/campaign', {
         show_names: selectedShows,
-        event_ids: selectedEvents,
+        dates: selectedDates,
       });
       setShowForm(false);
       loadCampaign();
@@ -124,7 +144,7 @@ function AvailabilitySection({ showNames }) {
             <button className="btn btn-secondary" style={{ fontSize: 13 }} onClick={loadNonVoters}>
               Посмотреть неответивших
             </button>
-            <button className="btn btn-secondary" style={{ fontSize: 13 }} onClick={() => { setShowForm(true); openForm(); }}>
+            <button className="btn btn-secondary" style={{ fontSize: 13 }} onClick={openForm}>
               Новый опрос
             </button>
           </div>
@@ -163,6 +183,7 @@ function AvailabilitySection({ showNames }) {
               <button
                 key={name}
                 onClick={() => toggleShow(name)}
+                disabled={sending}
                 style={{
                   padding: '4px 12px', borderRadius: 16, fontSize: 13, cursor: 'pointer',
                   border: selectedShows.includes(name) ? '2px solid #5a0000' : '1.5px solid #ccc',
@@ -173,30 +194,28 @@ function AvailabilitySection({ showNames }) {
             ))}
           </div>
 
-          <div style={{ fontSize: 13, color: '#666', marginBottom: 6 }}>Даты (из календаря):</div>
-          {nextEvents.length === 0
-            ? <div style={{ fontSize: 13, color: '#aaa', marginBottom: 10 }}>Нет событий в следующем месяце</div>
-            : nextEvents.map(e => (
-              <label key={e.id} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, fontSize: 13, cursor: 'pointer' }}>
-                <input type="checkbox" checked={selectedEvents.includes(e.id)} onChange={() => handleEventToggle(e.id)} />
-                {e.date_label}
-              </label>
-            ))
-          }
+          {datesLoading ? <div role="status">Загружаем даты из расписания...</div> : month ? (
+            <AvailabilityCalendar
+              month={month} selectedDates={selectedDates} suggestedDates={suggestedDates}
+              onToggle={toggleDate} disabled={sending}
+            />
+          ) : (
+            <button className="btn btn-secondary" onClick={() => setLoadAttempt(n => n + 1)}>Повторить загрузку</button>
+          )}
 
           {missingDates.length > 0 && (
             <div style={{ background: '#fff8e1', border: '1px solid #f59e0b', borderRadius: 8, padding: '8px 12px', fontSize: 12, marginBottom: 10 }}>
-              ⚠️ Нет столбцов в «График [составы]»: {missingDates.join(', ')}
+              В «График [составы]» будут добавлены даты: {missingDates.join(', ')}
             </div>
           )}
 
           {formError && <div className="alert alert-error" style={{ marginBottom: 8 }}>{formError}</div>}
 
           <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-            <button className="btn btn-primary" style={{ flex: 1, fontSize: 13 }} onClick={handleSend} disabled={sending}>
+            <button className="btn btn-primary" style={{ flex: 1, fontSize: 13 }} onClick={handleSend} disabled={sending || datesLoading || !month || !selectedDates.length}>
               {sending ? 'Отправка...' : 'Отправить в чат'}
             </button>
-            <button className="btn btn-secondary" style={{ fontSize: 13 }} onClick={() => setShowForm(false)}>
+            <button className="btn btn-secondary" style={{ fontSize: 13 }} onClick={() => setShowForm(false)} disabled={sending}>
               Отмена
             </button>
           </div>

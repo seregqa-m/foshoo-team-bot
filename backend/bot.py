@@ -310,11 +310,16 @@ def _handle_availability_answer(poll_answer, avail_poll, db):
         client = SheetsClient(GOOGLE_CALENDAR_JSON, GOOGLE_SHEETS_ID)
         for opt in options:
             answer = ("yes" if opt.option_index in selected else "no") if selected else "retracted"
-            event = db.query(CalendarEvent).filter(
-                CalendarEvent.id == opt.calendar_event_id
-            ).first()
-            if event:
-                client.record_poll_answer(username, event.start_time, answer)
+            if opt.selected_date:
+                from datetime import datetime
+                target_date = datetime.combine(opt.selected_date, datetime.min.time())
+            else:
+                event = db.query(CalendarEvent).filter(
+                    CalendarEvent.id == opt.calendar_event_id
+                ).first()
+                target_date = event.start_time if event else None
+            if target_date:
+                client.record_poll_answer(username, target_date, answer)
     except Exception as e:
         logger.error(f"Availability sheets write error: {e}")
 

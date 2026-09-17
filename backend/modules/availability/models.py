@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text
+from sqlalchemy import Column, Integer, String, Date, DateTime, ForeignKey, Text
 from sqlalchemy.orm import relationship
 from core.database import Base
 from datetime import datetime
@@ -18,7 +18,7 @@ class AvailabilityCampaign(Base):
 
 
 class AvailabilityPoll(Base):
-    """Один Telegram-опрос внутри кампании (кампания может иметь 1–2 опроса)"""
+    """Один Telegram-опрос внутри кампании (до 9 дат и «Ни одна из дат»)."""
     __tablename__ = "availability_polls"
 
     id = Column(Integer, primary_key=True)
@@ -34,13 +34,14 @@ class AvailabilityPoll(Base):
 
 
 class AvailabilityPollOption(Base):
-    """Маппинг option_index → calendar_event_id для конкретного Telegram-опроса"""
+    """Дата опции; calendar_event_id сохранён для старых опросов."""
     __tablename__ = "availability_poll_options"
 
     id = Column(Integer, primary_key=True)
     poll_id = Column(Integer, ForeignKey("availability_polls.id"))
     option_index = Column(Integer)       # 0–9
     calendar_event_id = Column(Integer)  # FK to calendar_events
+    selected_date = Column(Date, nullable=True)
     date_label = Column(String)          # текст опции, напр. "сб 17 мая 19:30"
 
     poll = relationship("AvailabilityPoll", back_populates="options")

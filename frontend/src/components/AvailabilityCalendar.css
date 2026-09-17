@@ -1,0 +1,13 @@
+.availability-calendar { margin: 4px 0 14px; }
+.availability-calendar__title { font-size: 16px; font-weight: 600; text-transform: capitalize; }
+.availability-calendar__hint { font-size: 13px; color: #666; line-height: 1.5; margin: 8px 0 12px; }
+.availability-calendar__grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; }
+.availability-calendar__weekday { text-align: center; font-size: 12px; color: #777; padding: 4px 0; }
+.availability-calendar__day { position: relative; min-width: 0; min-height: 42px; padding: 8px 0; border: 1px solid #e5e5e5; border-radius: 10px; background: #fff; color: #333; font: inherit; font-size: 14px; cursor: pointer; }
+.availability-calendar__day--selected { background: #5a0000; border-color: #5a0000; color: #fff; font-weight: 600; }
+.availability-calendar__day:focus-visible { outline: 2px solid #5a0000; outline-offset: 2px; }
+.availability-calendar__day:disabled { opacity: .6; cursor: default; }
+.availability-calendar__dot { position: absolute; bottom: 4px; left: calc(50% - 2px); width: 4px; height: 4px; border-radius: 50%; background: currentColor; }
+.availability-calendar__legend { margin-top: 10px; color: #777; font-size: 12px; }
+.availability-calendar__legend span { color: #5a0000; margin-right: 4px; }
+.availability-calendar__count { margin-top: 10px; font-size: 13px; font-weight: 600; }

@@ -3,7 +3,7 @@ import json
 from core.time import local_now
 import logging
 import os
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/availability", tags=["availability"])
 
 
-def _date_label(dt: datetime) -> str:
+def _date_label(dt: date | datetime) -> str:
     """datetime → строка для опции опроса, напр. 'сб 17 мая'"""
     from babel.dates import format_date
     day_name = format_date(dt, 'EE', locale='ru_RU').rstrip('.')
@@ -72,19 +72,25 @@ def get_next_month_events(db: Session = Depends(get_db)):
 
 
 @router.get("/check-dates")
-def check_dates(event_ids: str, db: Session = Depends(get_db)):
-    """Проверить что для переданных event_ids есть столбцы в таблице занятости.
-    event_ids — строка с id через запятую."""
+def check_dates(event_ids: str = "", dates: str = "", db: Session = Depends(get_db)):
+    """Проверить столбцы для дат ISO; event_ids поддерживается для старых клиентов."""
+    try:
+        if dates:
+            selected = sorted({date.fromisoformat(value) for value in dates.split(",")})
+            dts = [datetime.combine(value, datetime.min.time()) for value in selected]
+        else:
+            ids = [int(x) for x in event_ids.split(",") if x.strip()]
+            events = db.query(CalendarEvent).filter(CalendarEvent.id.in_(ids)).all()
+            dts = [e.start_time for e in events]
+    except ValueError as exc:
+        raise HTTPException(422, "Некорректные даты") from exc
     if not GOOGLE_SHEETS_ID or not os.path.exists(GOOGLE_CALENDAR_JSON):
         return {"missing": [], "all_ok": True}
-
-    ids = [int(x) for x in event_ids.split(",") if x.strip()]
-    events = db.query(CalendarEvent).filter(CalendarEvent.id.in_(ids)).all()
 
     try:
         from sheets_client import SheetsClient
         client = SheetsClient(GOOGLE_CALENDAR_JSON, GOOGLE_SHEETS_ID)
-        missing_dts = client.check_dates_exist([e.start_time for e in events])
+        missing_dts = client.check_dates_exist(dts)
         missing_labels = [_date_label(dt) for dt in missing_dts]
     except Exception as e:
         logger.error(f"check_dates failed: {e}")
@@ -112,7 +118,8 @@ def get_current(db: Session = Depends(get_db)):
             "voter_count": len(voters),
             "options": [
                 {"option_index": o.option_index, "date_label": o.date_label,
-                 "calendar_event_id": o.calendar_event_id}
+                 "calendar_event_id": o.calendar_event_id,
+                 "date": o.selected_date.isoformat() if o.selected_date else None}
                 for o in sorted(poll.options, key=lambda x: x.option_index)
             ],
         })
@@ -186,11 +193,7 @@ async def ping_non_voters(db: Session = Depends(get_db)):
     if not non_voters:
         return {"status": "all_answered", "count": 0}
 
-    first_event_dt = db.query(CalendarEvent).filter(
-        CalendarEvent.id == campaign.polls[0].options[0].calendar_event_id
-    ).first()
-    month_label = format_date(first_event_dt.start_time, "MMMM yyyy", locale="ru_RU") \
-        if first_event_dt else campaign.month
+    month_label = format_date(date.fromisoformat(campaign.month + "-01"), "MMMM yyyy", locale="ru_RU")
 
     mentions = " ".join(f"@{u}" for u in sorted(non_voters))
 
@@ -211,7 +214,32 @@ async def ping_non_voters(db: Session = Depends(get_db)):
 
 class CreateCampaignRequest(BaseModel):
     show_names: list[str]
-    event_ids: list[int]
+    event_ids: list[int] | None = None
+    dates: list[date] | None = None
+
+
+def _campaign_dates(req: CreateCampaignRequest, db: Session):
+    """Freeze one option per date, independent of later calendar edits."""
+    if req.dates is not None and req.event_ids is not None:
+        raise HTTPException(400, "Передайте даты или события, не оба списка")
+    if req.dates is not None:
+        selected = [(d, None, "") for d in sorted(set(req.dates))]
+    else:
+        ids = set(req.event_ids or [])
+        events = db.query(CalendarEvent).filter(
+            CalendarEvent.id.in_(ids), CalendarEvent.is_cancelled == False,
+        ).order_by(CalendarEvent.start_time, CalendarEvent.id).all()
+        if len(events) != len(ids):
+            raise HTTPException(409, "Некоторые события удалены или отменены")
+        by_date = {}
+        for event in events:
+            by_date.setdefault(event.start_time.date(), (event.start_time.date(), event.id, event.title))
+        selected = list(by_date.values())
+    if not selected:
+        raise HTTPException(400, "Не выбраны даты")
+    if len(selected) > 31 or len({d.strftime("%Y-%m") for d, _, _ in selected}) != 1:
+        raise HTTPException(400, "Выберите даты одного месяца (максимум 31)")
+    return selected
 
 
 @router.post("/campaign")
@@ -222,25 +250,17 @@ async def create_campaign(req: CreateCampaignRequest, db: Session = Depends(get_
 
     if not GROUP_CHAT_ID:
         raise HTTPException(status_code=400, detail="GROUP_CHAT_ID не настроен")
-    if not req.event_ids:
-        raise HTTPException(status_code=400, detail="Не выбраны даты")
     if not req.show_names:
         raise HTTPException(status_code=400, detail="Не выбраны спектакли")
-    if len(req.event_ids) > 20:
-        raise HTTPException(status_code=400, detail="Слишком много дат (максимум 20)")
+    selected = _campaign_dates(req, db)
 
-    events = db.query(CalendarEvent).filter(
-        CalendarEvent.id.in_(req.event_ids), CalendarEvent.is_cancelled == False,
-    ).order_by(CalendarEvent.start_time).all()
-
-    if len(events) != len(set(req.event_ids)):
-        raise HTTPException(status_code=409, detail="Некоторые события удалены или отменены")
-
-    await asyncio.to_thread(_ensure_campaign_columns, [(e.start_time, e.title) for e in events])
+    await asyncio.to_thread(_ensure_campaign_columns, [
+        (datetime.combine(d, datetime.min.time()), title) for d, _, title in selected
+    ])
     old_ids = [c.id for c in db.query(AvailabilityCampaign).all()]
 
-    month = events[0].start_time.strftime("%Y-%m")
-    month_label = format_date(events[0].start_time, "MMMM yyyy", locale="ru_RU")
+    month = selected[0][0].strftime("%Y-%m")
+    month_label = format_date(selected[0][0], "MMMM yyyy", locale="ru_RU")
 
     campaign = AvailabilityCampaign(
         month=month,
@@ -251,11 +271,11 @@ async def create_campaign(req: CreateCampaignRequest, db: Session = Depends(get_
 
     db.commit()
     # Reserve an option for actors unavailable on every date. Empty options mean retraction.
-    batches = [events[i:i+9] for i in range(0, len(events), 9)]
+    batches = [selected[i:i+9] for i in range(0, len(selected), 9)]
     poll_suffix = f" (часть {{}}/{len(batches)})" if len(batches) > 1 else ""
 
     for batch_idx, batch in enumerate(batches):
-        options = [_date_label(e.start_time) for e in batch]
+        options = [_date_label(d) for d, _, _ in batch]
         question = f"Отметьте даты когда вы свободны для спектаклей — {month_label}" + (
             poll_suffix.format(batch_idx + 1) if poll_suffix else ""
         )
@@ -280,19 +300,20 @@ async def create_campaign(req: CreateCampaignRequest, db: Session = Depends(get_
         db.add(poll)
         db.flush()
 
-        for i, event in enumerate(batch):
+        for i, (selected_date, event_id, _) in enumerate(batch):
             db.add(AvailabilityPollOption(
                 poll_id=poll.id,
                 option_index=i,
-                calendar_event_id=event.id,
-                date_label=_date_label(event.start_time),
+                calendar_event_id=event_id,
+                selected_date=selected_date,
+                date_label=_date_label(selected_date),
             ))
         db.commit()  # Preserve the mapping if sending a later poll fails.
 
     for old in db.query(AvailabilityCampaign).filter(AvailabilityCampaign.id.in_(old_ids)).all():
         db.delete(old)
     db.commit()
-    return {"status": "sent", "month": month, "polls_count": len(batches), "events_count": len(events)}
+    return {"status": "sent", "month": month, "polls_count": len(batches), "events_count": len(selected)}
 
 
 def _ensure_campaign_columns(events):

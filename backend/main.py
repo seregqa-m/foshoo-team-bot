@@ -65,6 +65,7 @@ def run_migrations():
             "ALTER TABLE notification_settings ADD COLUMN reminder_time TEXT DEFAULT '18:00'",
             "ALTER TABLE notification_settings ADD COLUMN troupe_filter TEXT DEFAULT 'труппа 1'",
             "ALTER TABLE notification_settings ADD COLUMN current_show TEXT",
+            "ALTER TABLE availability_poll_options ADD COLUMN selected_date DATE",
         ]:
             table, column = stmt.split()[2], stmt.split()[5]
             if column not in {c["name"] for c in inspect(conn).get_columns(table)}:
