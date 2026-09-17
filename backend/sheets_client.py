@@ -82,15 +82,15 @@ class SheetsClient:
 
         # Сначала ищем точное совпадение по дате + времени
         for col_idx, cell in enumerate(headers):
-            parsed = _parse_header_date(cell)
-            if parsed and parsed.day == event_dt.day and parsed.month == event_dt.month \
+            parsed = _parse_header_date(cell, event_dt.year)
+            if parsed and parsed.date() == event_dt.date() \
                     and parsed.hour == event_dt.hour and parsed.minute == event_dt.minute:
                 return _col_num_to_letter(col_idx + 1)
 
         # Если не нашли — только по дате
         for col_idx, cell in enumerate(headers):
-            parsed = _parse_header_date(cell)
-            if parsed and parsed.day == event_dt.day and parsed.month == event_dt.month:
+            parsed = _parse_header_date(cell, event_dt.year)
+            if parsed and parsed.date() == event_dt.date():
                 return _col_num_to_letter(col_idx + 1)
 
         return None
@@ -401,6 +401,16 @@ class SheetsClient:
                           "date": date, "comment": comment})
         return items
 
+    def get_planning_data(self) -> dict:
+        result = self.api.values().batchGet(
+            spreadsheetId=self.spreadsheet_id,
+            ranges=[f"'{SCHEDULE_SHEET}'", "'Составы спектаклей'!A:C"],
+        ).execute()
+        ranges = result.get("valueRanges", [])
+        if len(ranges) != 2:
+            raise ValueError("Не удалось прочитать график и составы")
+        return {"schedule": ranges[0].get("values", []), "casts": ranges[1].get("values", [])}
+
     def get_show_names(self) -> list[str]:
         """Уникальные названия спектаклей из вкладки 'Составы спектаклей', столбец A."""
         result = self.api.values().get(
@@ -422,13 +432,12 @@ class SheetsClient:
             range=f"{SCHEDULE_SHEET}!1:1",
         ).execute()
         headers = result.get("values", [[]])[0]
-        parsed = [_parse_header_date(h) for h in headers]
 
         missing = []
         for dt in event_dts:
             found = any(
-                p and p.day == dt.day and p.month == dt.month
-                for p in parsed
+                p and p.date() == dt.date()
+                for p in (_parse_header_date(h, dt.year) for h in headers)
             )
             if not found:
                 missing.append(dt)
@@ -465,20 +474,16 @@ class SheetsClient:
         headers = result.get("values", [[]])[0]
         last_col = len(headers)
 
-        existing_keys: set[tuple[int, int]] = set()
-        for cell in headers:
-            parsed = _parse_header_date(cell)
-            if parsed:
-                existing_keys.add((parsed.day, parsed.month))
-
         shows_raw = self.get_show_names() or []
         show_map = {s.lower(): s for s in shows_raw}
 
-        seen: set[tuple[int, int]] = set(existing_keys)
+        seen = set()
         missing: list[tuple[datetime, str]] = []
         for dt, title in events:
-            key = (dt.day, dt.month)
-            if key not in seen:
+            key = dt.date()
+            exists = any(parsed and parsed.date() == key
+                         for parsed in (_parse_header_date(cell, dt.year) for cell in headers))
+            if not exists and key not in seen:
                 missing.append((dt, title))
                 seen.add(key)
 
@@ -569,24 +574,25 @@ def _format_schedule_header(dt: datetime) -> str:
     """datetime → строка-заголовок вида '[пн] 10 апр\n19:00'."""
     day_abbr = _DAY_ABBR[dt.weekday()]
     month_abbr = _MONTH_ABBR[dt.month]
-    header = f"[{day_abbr}] {dt.day} {month_abbr}"
+    header = f"[{day_abbr}] {dt.day} {month_abbr} {dt.year}"
     if dt.hour or dt.minute:
         header += f"\n{dt.hour}:{dt.minute:02d}"
     return header
 
 
-def _parse_header_date(cell: str) -> datetime | None:
-    """Распарсить '[сб] 4 апр 20:00' → datetime (год не важен, ставим текущий)."""
+def _parse_header_date(cell: str, year: int | None = None) -> datetime | None:
+    """Read legacy headers and dates with an explicit year, with or without time."""
     cell = re.sub(r"\[.*?\]", "", cell).strip()
-    m = re.match(r"(\d+)\s+(\S+)\s+(\d+):(\d+)", cell)
-    if not m:
+    match = re.fullmatch(r"(\d{1,2})\s+([а-яА-ЯёЁ]+)\.?(?:\s+(\d{4}))?(?:\s+(\d{1,2}):(\d{2}))?", cell)
+    if not match:
         return None
-    day, month_str, hour, minute = m.groups()
-    month = MONTH_MAP.get(month_str.lower())
+    day, month_text, explicit_year, hour, minute = match.groups()
+    month = MONTH_MAP.get(month_text.lower()) or MONTH_MAP.get(month_text.lower()[:3])
     if not month:
         return None
     try:
-        return datetime(datetime.now().year, month, int(day), int(hour), int(minute))
+        return datetime(int(explicit_year) if explicit_year else (year or datetime.now().year),
+                        month, int(day), int(hour or 0), int(minute or 0))
     except ValueError:
         return None
 

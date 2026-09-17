@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import * as calendarApi from '../api/calendar';
 import client from '../api/client';
+import PlanningView from './PlanningView';
 
 const MONTHS = ['янв','фев','мар','апр','май','июн','июл','авг','сен','окт','ноя','дек'];
 const DAYS   = ['вс','пн','вт','ср','чт','пт','сб'];
@@ -412,6 +413,7 @@ export default function CalendarView({ userId, isAdmin, trouFilter = 'трупп
   const [error, setError] = useState(null);
   const [modal, setModal] = useState(null); // null | 'new' | event object
   const [filter, setFilter] = useState('труппа 1');
+  const [planning, setPlanning] = useState(false);
   const [showNames, setShowNames] = useState([]);
   const [calendarUrl, setCalendarUrl] = useState(null);
   const [pollSummary, setPollSummary] = useState({});
@@ -468,6 +470,8 @@ export default function CalendarView({ userId, isAdmin, trouFilter = 'трупп
         })
       : events.filter(e => e.title.toLowerCase().includes(filter));
 
+  if (planning && isAdmin) return <PlanningView onClose={() => setPlanning(false)} dataVersion={dataVersion} />;
+
   if (loading && events.length === 0) return <div className="empty-state">Загрузка...</div>;
 
   return (
@@ -489,6 +493,8 @@ export default function CalendarView({ userId, isAdmin, trouFilter = 'трупп
           {isAdmin && <button className="btn btn-primary" onClick={() => setModal('new')}>+ Добавить</button>}
         </div>
       </div>
+
+      {isAdmin && <button className="btn btn-secondary" style={{ width: '100%', marginBottom: 14 }} onClick={() => setPlanning(true)}>Планирование составов →</button>}
 
       <WeekCalendar
         events={events}

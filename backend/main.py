@@ -18,6 +18,7 @@ from modules.calendar.google_client import GoogleCalendarClient
 from modules.polling.router import router as polling_router
 from modules.notifications.router import router as notifications_router
 from modules.availability.router import router as availability_router
+from modules.planning.router import router as planning_router
 from modules.assistant.router import router as assistant_router
 from auth_router import router as auth_router
 from sheets_router import router as sheets_router
@@ -419,6 +420,7 @@ async def _send_poll_reminders():
 async def startup():
     logger.info("🚀 Starting application")
     import modules.availability.models  # noqa: ensure tables created
+    import modules.planning.models  # noqa: durable calendar/schedule operations
     import modules.assistant.models  # noqa: ensure assistant_action_log table created
     logger.info("⏱ Running migrations...")
     init_db()
@@ -461,6 +463,7 @@ app.include_router(calendar_router, dependencies=[Depends(authorize_api)])
 app.include_router(polling_router, dependencies=[Depends(authorize_api)])
 app.include_router(notifications_router, dependencies=[Depends(authorize_api)])
 app.include_router(availability_router, dependencies=[Depends(authorize_api)])
+app.include_router(planning_router, dependencies=[Depends(authorize_api)])
 app.include_router(assistant_router, dependencies=[Depends(authorize_api)])
 app.include_router(links_router, dependencies=[Depends(authorize_api)])
 app.include_router(afisha_router, dependencies=[Depends(authorize_api)])

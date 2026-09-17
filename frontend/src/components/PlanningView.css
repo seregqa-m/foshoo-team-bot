@@ -1,0 +1,32 @@
+.planning-view h1 { font-size: 23px; margin: 18px 0 8px; }
+.planning-note { color: #666; font-size: 13px; line-height: 1.5; margin: 10px 0; }
+.planning-toolbar, .planning-filters { display: flex; align-items: center; gap: 8px; margin: 16px 0; }
+.planning-toolbar input { min-width: 0; flex: 1; width: 100%; }
+.planning-toolbar button { min-height: 42px; }
+.planning-filters { flex-wrap: wrap; font-size: 13px; }
+.planning-filters select { min-width: 140px; flex: 1; }
+.planning-warning { padding: 10px 12px; border-radius: 10px; background: #fff5d9; color: #785713; font-size: 12px; line-height: 1.5; margin: 10px 0; }
+.planning-table-scroll { overflow-x: auto; border: 1px solid #e5e5e5; border-radius: 12px; background: #fff; }
+.planning-table { border-collapse: separate; border-spacing: 0; width: 100%; font-size: 13px; }
+.planning-table th, .planning-table td { padding: 8px; border-bottom: 1px solid #eee; text-align: left; }
+.planning-table th:first-child { position: sticky; left: 0; background: #fff; z-index: 1; min-width: 92px; max-width: 130px; }
+.planning-table thead th { background: #faf7f8; }
+.planning-table small { display: block; font-weight: 400; font-size: 10px; margin-top: 5px; color: #651d32; }
+.planning-cell { display: flex; flex-direction: column; gap: 5px; padding: 12px; width: 100%; min-width: 120px; border-radius: 10px; border: 1px solid transparent; text-align: left; cursor: pointer; font: inherit; }
+.planning-cell strong { font-size: 19px; }
+.planning-cell span { font-size: 11px; }
+.planning-cell--ready { background: #e7f4eb; color: #205939; border-color: #bcddc6; }
+.planning-cell--waiting { background: #fff4d9; color: #74541d; }
+.planning-cell--blocked { background: #fae9e8; color: #8a3430; }
+.planning-cell--occupied, .planning-cell--ambiguous { background: #efeff1; color: #60606b; }
+.planning-cell:focus-visible { outline: 2px solid #651d32; outline-offset: 2px; }
+.planning-dialog__heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.planning-dialog h2 { font-size: 21px; margin: 0; }
+.planning-role { margin: 16px 0; padding-bottom: 12px; border-bottom: 1px solid #eee; }
+.planning-role select { display: block; width: 100%; margin-top: 8px; }
+.planning-role ul { margin: 8px 0 0; padding-left: 18px; font-size: 12px; color: #666; line-height: 1.6; }
+.planning-actor--yes, .planning-actor--assigned { color: #205939; }
+.planning-actor--no, .planning-actor--busy { color: #8a3430; }
+.planning-field { display: block; font-size: 13px; margin: 12px 0; }
+.planning-field input { display: block; width: 100%; margin-top: 6px; }
+.planning-save { margin-top: 10px; width: 100%; min-height: 44px; }

@@ -82,6 +82,31 @@ class GoogleCalendarClient:
             logger.error(f"Failed to create event in Google Calendar: {e}")
             raise
 
+    def ensure_planned_event(self, calendar_id: str, event_id: str, event_data: dict) -> dict:
+        """An explicit Google id makes retries after an unknown response safe."""
+        from googleapiclient.errors import HttpError
+        events = self.service.events()
+        try:
+            result = events.get(calendarId=calendar_id, eventId=event_id).execute()
+        except HttpError as exc:
+            if exc.resp.status != 404:
+                raise
+            try:
+                result = events.insert(calendarId=calendar_id, body={**event_data, 'id': event_id}).execute()
+            except HttpError as conflict:
+                if conflict.resp.status != 409:
+                    raise
+                result = events.get(calendarId=calendar_id, eventId=event_id).execute()
+        if result.get('status') == 'cancelled':
+            raise ValueError('Созданное событие уже удалено из Google Calendar. Проверьте расписание.')
+        for field in ('summary', 'location', 'description'):
+            if (result.get(field) or '') != (event_data.get(field) or ''):
+                raise ValueError('Событие изменено в Google Calendar. Проверьте расписание перед повторной записью.')
+        for field in ('start', 'end'):
+            if datetime.fromisoformat(result[field]['dateTime']) != datetime.fromisoformat(event_data[field]['dateTime']):
+                raise ValueError('Время события изменено в Google Calendar. Проверьте расписание.')
+        return result
+
     def update_event(self, calendar_id: str, event_id: str, event_data: dict) -> dict:
         """
         Обновить событие в Google Calendar
