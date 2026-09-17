@@ -61,16 +61,72 @@ ASSISTANT_ENABLED=true
 
 ## Запуск на сервере (production)
 
-```bash
-# Backend
-cd /путь/к/проекту
-source venv/bin/activate
-cd backend && python main.py
+Для действующего Linux-сервера с systemd есть команда `./bot`. Один раз из корня
+проекта, под обычным пользователем (`seregqa`, без `sudo` перед всей командой):
 
-# Frontend — собрать один раз
-cd frontend
-REACT_APP_API_URL=https://ваш-домен.com npm run build
-# Статика раздаётся через nginx из папки frontend/build/
+```bash
+git pull --ff-only
+./bot setup --build
+```
+
+Она установит службу `foshoo-bot`, соберёт фронт, завершит прежний запуск
+`python3 backend/main.py` из этого проекта и запустит backend через systemd.
+При необходимости сама запросит пароль sudo. Служба работает от твоего пользователя,
+с Python из `venv/bin/python3` (или `backend/venv/bin/python3`) и рабочей директорией
+в корне проекта. Backend сам читает `.env`; активировать venv вручную не нужно.
+Фронт публикуется в `frontend/build`, как и при обычном `npm run build`.
+
+Дальше достаточно одной команды:
+
+```bash
+./bot restart          # перезапустить только backend
+./bot restart --build  # собрать фронт и перезапустить backend
+./bot status           # состояние службы
+./bot logs             # последние 100 строк и новые логи; Ctrl+C — выйти
+```
+
+Из любой папки можно вызвать `~/foshoo-team-bot/bot restart --build`.
+Для обновления кода из GitHub и полного перезапуска:
+
+```bash
+git pull --ff-only && ./bot restart --build
+```
+
+`--build` выполняет `npm ci` и сборку во временную папку. Ошибка установки или
+сборки оставляет прежний фронт и backend работающими. После успешной сборки
+заменяется `frontend/build`; nginx перезапускать не требуется, если он уже
+обслуживает эту папку. При отдельном каталоге публикации nginx нужно сохранить
+свой шаг копирования или изменить его root на `frontend/build`.
+
+Сохрани прежний `REACT_APP_API_URL` в `frontend/.env.production` либо передавай его
+при сборке, например `REACT_APP_API_URL=https://ваш-домен.com ./bot restart --build`.
+Backend использует настройки из `.env`, а не переменные интерактивного shell.
+При изменении Python-зависимостей сначала выполни
+`venv/bin/python3 -m pip install -r backend/requirements.txt`.
+
+Служба автоматически запускается после перезагрузки сервера и перезапускается
+при аварийном завершении (с ограничением частых сбоев). Команда перезапуска ждёт
+успешного `/health`. Это проверка готовности HTTP API; связь с Telegram и Google
+проверяется отдельно. После перехода `nohup`/`pkill` больше не нужны, новые логи
+идут в журнал systemd, а прежний `~/bot.log` остаётся на месте.
+
+Настройка рассчитана на Linux с systemd, Python 3.9+ и Linux 5.3+ для автоматической
+остановки прежнего процесса. Если старый backend запущен из другой папки, setup
+остановится до переключения: сначала нужно сверить путь к SQLite. Конфигурация
+другой службы с именем `foshoo-bot` не перезаписывается. На локальном macOS
+команды управления службой недоступны. За службу отвечают стандартные
+[параметры systemd](https://github.com/systemd/systemd/blob/main/man/systemd.service.xml);
+отдельный путь сборки поддерживается
+[Create React App](https://create-react-app.dev/docs/advanced-configuration/).
+
+Для ручного запуска при разработке:
+
+```bash
+# Из корня проекта
+venv/bin/python3 backend/main.py
+
+# В другом терминале, тоже из корня проекта
+npm --prefix frontend start
 ```
 
 ### Подключение Telegram через прокси
@@ -270,13 +326,12 @@ frontend/src/
 ```bash
 git pull
 python -m pip install -r backend/requirements.txt
-npm --prefix frontend ci
-npm --prefix frontend run build
+./bot restart --build
 ```
 
-Сохраните прежний `REACT_APP_API_URL` при сборке. Разместите `frontend/build`
-в каталоге, из которого его обслуживает nginx, и перезапустите backend своим
-менеджером процессов. После обновления заново откройте Mini App через Telegram.
+Для `./bot restart` нужно один раз выполнить `./bot setup`, как описано выше.
+Сохраните прежний `REACT_APP_API_URL` при сборке. После обновления заново откройте
+Mini App через Telegram.
 Дополнительных обязательных переменных окружения нет.
 
 Локальные проверки используют синтетические ответы API и отдельные SQLite-БД,

@@ -52,6 +52,8 @@ yarn-error.log*
 # Logs
 *.log
 logs/
+.bot-control.lock
+frontend/.bot-build-*/
 
 # OS
 .DS_Store
