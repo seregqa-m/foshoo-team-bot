@@ -423,6 +423,7 @@ async def startup():
     import modules.availability.models  # noqa: ensure tables created
     import modules.planning.models  # noqa: durable calendar/schedule operations
     import modules.assistant.models  # noqa: ensure assistant_action_log table created
+    import modules.moderation.models  # noqa: ensure moderation_comments table created
     logger.info("⏱ Running migrations...")
     init_db()
     run_migrations()
