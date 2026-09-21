@@ -189,13 +189,24 @@ class ModerationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.state(), 'expired')
         self.bot.delete_message.assert_not_awaited()
 
-    def manual_command(self, comment=None, **kwargs):
-        return message(message_id=100, text='/check_spam', reply_to_message=comment,
-                       from_user=User(id=42, first_name='Moderator', is_bot=False), **kwargs)
+    def forwarded(self, comment, sender_id=42, forward_from_chat=None, **kwargs):
+        """Личка модератору: пересылка `comment` из группы обсуждений."""
+        return Message(
+            message_id=1000, date=datetime.now(timezone.utc),
+            chat=Chat(id=42, type='private'),
+            from_user=User(id=sender_id, is_bot=False, first_name='Moderator'),
+            forward_from_chat=forward_from_chat or Chat(id=DISCUSSION, type='supergroup'),
+            forward_from_message_id=comment.message_id,
+            forward_from=comment.from_user,
+            forward_date=comment.date,
+            text=comment.text, caption=comment.caption,
+            entities=comment.entities, caption_entities=comment.caption_entities,
+            **kwargs,
+        )
 
     async def test_manual_check_existing_comment_then_delete_exact_original(self):
         comment = message(date=datetime.now(timezone.utc) - timedelta(hours=2))
-        await self.service.manual_check(self.manual_command(comment), self.bot, 1)
+        await self.service.manual_check(self.forwarded(comment), self.bot, 1)
         self.assertEqual(self.state(), 'pending')
         self.bot.delete_message.assert_not_awaited()
         await self.service.callback(self.query(), self.bot)
@@ -203,18 +214,49 @@ class ModerationTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_manual_check_sends_review_buttons_even_on_false_negative(self):
         self.classifier.return_value = (False, 'Нейтральный текст')
-        await self.service.manual_check(self.manual_command(message()), self.bot, 1)
+        await self.service.manual_check(self.forwarded(message()), self.bot, 1)
         self.assertEqual(self.state(), 'pending')
         self.assertIn('ИИ не обнаружил', self.bot.send_message.call_args.args[1])
         self.assertIsNotNone(self.bot.send_message.call_args.kwargs['reply_markup'])
         self.bot.delete_message.assert_not_awaited()
 
-    async def test_manual_request_requires_recipient_reply_and_matching_discussion(self):
-        other_user = message(text='/check_spam', reply_to_message=message())
-        await self.service.manual_check(other_user, self.bot, 1)
-        await self.service.manual_check(self.manual_command(), self.bot, 2)
-        await self.service.manual_check(self.manual_command(message(), chat=Chat(id=-100999, type='supergroup')), self.bot, 3)
-        await self.service.manual_check(self.manual_command(message(is_automatic_forward=True)), self.bot, 4)
+    async def test_manual_check_forward_from_hidden_profile_still_works(self):
+        # Автор оригинального комментария скрыл пересылки: forward_from недоступен,
+        # есть только forward_sender_name. Классификатору всё равно уходит имя.
+        comment = message()
+        forward = Message(
+            message_id=1000, date=datetime.now(timezone.utc),
+            chat=Chat(id=42, type='private'),
+            from_user=User(id=42, is_bot=False, first_name='Moderator'),
+            forward_from_chat=Chat(id=DISCUSSION, type='supergroup'),
+            forward_from_message_id=comment.message_id,
+            forward_sender_name='Скрытый Автор',
+            forward_date=comment.date,
+            text=comment.text,
+        )
+        await self.service.manual_check(forward, self.bot, 1)
+        self.assertEqual(self.state(), 'pending')
+        payload = self.classifier.call_args.args[0]
+        self.assertEqual(payload['sender'], {'name': 'Скрытый Автор', 'username': '', 'kind': 'user'})
+        with self.Session() as db:
+            self.assertIsNone(db.query(ModerationComment).one().author_id)
+
+    async def test_manual_request_rejects_non_recipient_non_forward_and_other_sources(self):
+        # Обычное сообщение без forward — фильтр F.forward_date не пропустит, но проверим и на уровне сервиса.
+        plain = Message(message_id=1, date=datetime.now(timezone.utc),
+                        chat=Chat(id=42, type='private'),
+                        from_user=User(id=42, is_bot=False, first_name='Mod'), text='hi')
+        await self.service.manual_check(plain, self.bot, 1)
+        # Forward от постороннего пользователя игнорируется.
+        await self.service.manual_check(self.forwarded(message(), sender_id=84), self.bot, 2)
+        # Forward из другого чата отклоняется.
+        await self.service.manual_check(self.forwarded(message(), forward_from_chat=Chat(
+            id=-100999, type='supergroup')), self.bot, 3)
+        # Пересылка поста самого канала (source == target[0]) отклоняется.
+        await self.service.manual_check(self.forwarded(message(), forward_from_chat=Chat(
+            id=CHANNEL, type='channel', title='Наш канал')), self.bot, 4)
+        # Пересылка без текста и подписи отклоняется.
+        await self.service.manual_check(self.forwarded(message(text=None)), self.bot, 5)
         self.classifier.assert_not_awaited()
         self.bot.delete_message.assert_not_awaited()
 
@@ -222,7 +264,7 @@ class ModerationTests(unittest.IsolatedAsyncioTestCase):
         await self.service.inspect(message(), self.bot, 1)
         self.bot.delete_message.side_effect = TimeoutError()
         await self.service.callback(self.query(), self.bot)
-        await self.service.manual_check(self.manual_command(message()), self.bot, 2)
+        await self.service.manual_check(self.forwarded(message()), self.bot, 2)
         self.assertEqual(self.state(), 'delete_unknown')
         self.classifier.assert_awaited_once()
         self.bot.delete_message.assert_awaited_once()
@@ -249,10 +291,11 @@ class ModerationTests(unittest.IsolatedAsyncioTestCase):
             await dp.feed_update(app_bot, Update(update_id=124, edited_message=message()))
             self.assertEqual(inspect.call_args.args[2], 124)
         self.assertIn('edited_message', dp.resolve_used_update_types())
-        with patch('bot.moderation.manual_check', AsyncMock()) as check, patch('bot.moderation.inspect', AsyncMock()) as inspect:
-            await dp.feed_update(app_bot, Update(update_id=125, message=self.manual_command(message())))
+        with patch('bot.moderation.manual_check', AsyncMock()) as check, \
+                patch('bot.moderation.inspect', AsyncMock(return_value=False)) as inspect:
+            await dp.feed_update(app_bot, Update(update_id=125, message=self.forwarded(message())))
             check.assert_awaited_once()
-            inspect.assert_not_awaited()
+            self.assertEqual(check.call_args.args[2], 125)
         with patch('bot._detect_availability_intent') as detect:
             await handle_group_message(message(text='Запустим опрос на октябрь'))
             detect.assert_not_called()

@@ -130,49 +130,95 @@ class ModerationService:
                 logger.warning('Moderation check failed (%s)', type(exc).__name__)
         return True  # Never let public comments trigger internal bot commands.
 
-    async def manual_check(self, command, bot, update_id):
-        if not command.from_user or command.from_user.id != self.recipient_id or command.sender_chat:
+    async def manual_check(self, forwarded, bot, update_id):
+        if (not forwarded.from_user or forwarded.from_user.id != self.recipient_id or
+                forwarded.chat.type != 'private' or forwarded.sender_chat):
             return
         target = await self.resolve(bot, force=True)
         if not target:
             await bot.send_message(self.recipient_id, self.status)
             return
-        comment = command.reply_to_message
-        if (command.chat.id != target[1] or not comment or comment.chat.id != target[1]):
-            await bot.send_message(self.recipient_id, 'В группе обсуждений ответьте на нужный комментарий командой /check_spam.')
+        if (not forwarded.forward_from_chat or not forwarded.forward_date or
+                not forwarded.forward_from_message_id):
+            await bot.send_message(self.recipient_id, 'Перешлите комментарий из привязанной группы обсуждений.')
             return
-        if (comment.is_automatic_forward or (comment.sender_chat and comment.sender_chat.id in target) or
-                (comment.from_user and comment.from_user.id == bot.id) or not (comment.text or comment.caption)):
-            await bot.send_message(self.recipient_id, 'Для проверки нужен текстовый комментарий или подпись, а не пост канала.')
+        if forwarded.forward_from_chat.id != target[1]:
+            reply = ('Это пост канала, а не комментарий.'
+                     if forwarded.forward_from_chat.id == target[0]
+                     else 'Это сообщение не из привязанной группы обсуждений.')
+            await bot.send_message(self.recipient_id, reply)
             return
+        if not (forwarded.text or forwarded.caption or '').strip():
+            await bot.send_message(self.recipient_id, 'Нужен текстовый комментарий или подпись, а не медиа без текста.')
+            return
+        fields = self._extract_from_forward(forwarded, target)
         async with self.lock:
             try:
-                await self._inspect(comment, bot, update_id, target, manual=True)
+                await self._inspect_extracted(fields, bot, update_id, target, manual=True)
                 with self.session_factory() as db:
-                    row = db.query(ModerationComment).filter_by(chat_id=target[1], message_id=comment.message_id).one()
+                    row = db.query(ModerationComment).filter_by(
+                        chat_id=target[1], message_id=fields['message_id']).one()
                     if row.state in ('deleted', 'deleting', 'delete_unknown'):
                         await bot.send_message(self.recipient_id, 'Удаление этого комментария уже выполнялось. Проверьте его наличие вручную.')
                     elif row.state == 'exempt':
                         await bot.send_message(self.recipient_id, 'Комментарии администраторов не модерируются.')
             except Exception as exc:
                 logger.warning('Manual moderation check failed (%s)', type(exc).__name__)
-                await bot.send_message(self.recipient_id, 'Не удалось завершить проверку или доставить уведомление. Комментарий не удалён. Повторите /check_spam позже.')
+                await bot.send_message(self.recipient_id, 'Не удалось завершить проверку или доставить уведомление. Комментарий не удалён. Повторите позже.')
 
-    async def _inspect(self, message, bot, update_id, target, manual=False):
+    @staticmethod
+    def _extract_from_live(message):
         text = message.text or message.caption or ''
         entities = message.entities or message.caption_entities or []
         links = [e.url for e in entities if e.type == 'text_link' and e.url]
-        sender = message.sender_chat or message.from_user
-        sender_name = ((message.sender_chat.title or '') if message.sender_chat else
-                       (message.from_user.full_name if message.from_user else 'Неизвестный автор'))
-        username = (sender.username or '') if sender else ''
-        payload = {'text': text, 'links': links, 'sender': {
-            'name': sender_name, 'username': username,
-            'kind': 'channel' if message.sender_chat else 'user',
+        if message.sender_chat:
+            sender_name = message.sender_chat.title or ''
+            username = message.sender_chat.username or ''
+            kind = 'channel'
+            author_id = None
+        else:
+            sender_name = message.from_user.full_name if message.from_user else 'Неизвестный автор'
+            username = (message.from_user.username or '') if message.from_user else ''
+            kind = 'user'
+            author_id = message.from_user.id if message.from_user else None
+        return {
+            'chat_id': message.chat.id, 'message_id': message.message_id,
+            'message_time': int(message.date.timestamp()),
+            'text': text, 'links': links,
+            'sender_name': sender_name, 'username': username, 'kind': kind,
+            'author_id': author_id,
+        }
+
+    @staticmethod
+    def _extract_from_forward(forwarded, target):
+        # forward_from_chat здесь — сама группа обсуждений (проверено в manual_check).
+        # Автор доступен, только если у него не скрыты пересылки; иначе есть только
+        # forward_sender_name.
+        text = forwarded.text or forwarded.caption or ''
+        entities = forwarded.entities or forwarded.caption_entities or []
+        links = [e.url for e in entities if e.type == 'text_link' and e.url]
+        forward_user = forwarded.forward_from
+        sender_name = (forward_user.full_name if forward_user
+                       else forwarded.forward_sender_name or 'Неизвестный автор')
+        username = (forward_user.username or '') if forward_user else ''
+        return {
+            'chat_id': target[1], 'message_id': forwarded.forward_from_message_id,
+            'message_time': int(forwarded.forward_date.timestamp()),
+            'text': text, 'links': links,
+            'sender_name': sender_name, 'username': username, 'kind': 'user',
+            'author_id': forward_user.id if forward_user else None,
+        }
+
+    async def _inspect(self, message, bot, update_id, target, manual=False):
+        await self._inspect_extracted(self._extract_from_live(message), bot, update_id, target, manual)
+
+    async def _inspect_extracted(self, fields, bot, update_id, target, manual=False):
+        payload = {'text': fields['text'], 'links': fields['links'], 'sender': {
+            'name': fields['sender_name'], 'username': fields['username'], 'kind': fields['kind'],
         }}
         digest = hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
         with self.session_factory() as db:
-            row = db.query(ModerationComment).filter_by(chat_id=message.chat.id, message_id=message.message_id).first()
+            row = db.query(ModerationComment).filter_by(chat_id=fields['chat_id'], message_id=fields['message_id']).first()
             if row and update_id <= row.last_update_id:
                 return
             if row and row.state in ('deleted', 'deleting', 'delete_unknown'):
@@ -182,24 +228,25 @@ class ModerationService:
                 db.commit()
                 return
             if not row:
-                if not text.strip():
+                if not fields['text'].strip():
                     return
-                row = ModerationComment(channel_id=target[0], chat_id=target[1], message_id=message.message_id,
+                row = ModerationComment(channel_id=target[0], chat_id=fields['chat_id'], message_id=fields['message_id'],
                                         recipient_id=self.recipient_id, revision=0)
                 db.add(row)
             # Invalidate any old buttons before checking a changed comment.
             row.revision += 1
             row.last_update_id = update_id
             row.content_hash = digest
-            row.text = text
+            row.text = fields['text']
             row.state = 'checking'
             row.notification_id = None
             row.recipient_id = self.recipient_id
             row.channel_id = target[0]
-            row.message_time = int(message.date.timestamp())
+            row.message_time = fields['message_time']
             row.updated_at = datetime.utcnow()
-            row.author_id = message.from_user.id if message.from_user and not message.sender_chat else None
-            row.author = f'{sender_name} (@{username})' if username else sender_name
+            row.author_id = fields['author_id']
+            row.author = (f"{fields['sender_name']} (@{fields['username']})"
+                          if fields['username'] else fields['sender_name'])
             db.commit()
             try:
                 if row.author_id:
@@ -208,7 +255,7 @@ class ModerationService:
                         row.state = 'exempt'
                         db.commit()
                         return
-                if not text.strip():
+                if not fields['text'].strip():
                     row.state = 'clear'
                     db.commit()
                     return

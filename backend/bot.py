@@ -2,6 +2,7 @@
 Telegram bot для управления театральной студией
 Показывает кнопку для открытия Mini App
 """
+from __future__ import annotations
 import asyncio
 from core.time import local_now
 import logging
@@ -27,9 +28,6 @@ moderation = ModerationService(MODERATION_CHANNEL, MODERATION_ADMIN_ID, GROUP_CH
 
 @dp.message.outer_middleware()
 async def moderate_discussion(handler, event, data):
-    if (event.text or '').startswith('/check_spam') and await Command('check_spam')(event, data['bot']):
-        await moderation.manual_check(event, data['bot'], data['event_update'].update_id)
-        return
     if await moderation.inspect(event, data['bot'], data['event_update'].update_id):
         return
     return await handler(event, data)
@@ -43,6 +41,11 @@ async def moderate_edited_comment(message: Message, event_update):
 @dp.callback_query(F.data.startswith('mod:'))
 async def on_moderation_action(callback: CallbackQuery):
     await moderation.callback(callback, bot)
+
+
+@dp.message(F.chat.type == 'private', F.forward_date)
+async def on_forwarded_for_moderation(message: Message, event_update):
+    await moderation.manual_check(message, bot, event_update.update_id)
 
 
 @dp.message(Command('moderation'))
