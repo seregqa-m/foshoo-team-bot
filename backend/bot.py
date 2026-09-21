@@ -12,7 +12,8 @@ from aiogram.types import (
     WebAppInfo, PollAnswer,
 )
 from aiogram.filters import Command
-from config import BOT_TOKEN, MINI_APP_URL, TELEGRAM_PROXY_URL
+from config import BOT_TOKEN, MINI_APP_URL, TELEGRAM_PROXY_URL, GROUP_CHAT_ID, MODERATION_CHANNEL, MODERATION_ADMIN_ID
+from modules.moderation.services import ModerationService
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +22,35 @@ bot = Bot(
     session=AiohttpSession(timeout=15, proxy=TELEGRAM_PROXY_URL),
 )
 dp = Dispatcher()
+moderation = ModerationService(MODERATION_CHANNEL, MODERATION_ADMIN_ID, GROUP_CHAT_ID)
+
+
+@dp.message.outer_middleware()
+async def moderate_discussion(handler, event, data):
+    if (event.text or '').startswith('/check_spam') and await Command('check_spam')(event, data['bot']):
+        await moderation.manual_check(event, data['bot'], data['event_update'].update_id)
+        return
+    if await moderation.inspect(event, data['bot'], data['event_update'].update_id):
+        return
+    return await handler(event, data)
+
+
+@dp.edited_message()
+async def moderate_edited_comment(message: Message, event_update):
+    await moderation.inspect(message, bot, event_update.update_id)
+
+
+@dp.callback_query(F.data.startswith('mod:'))
+async def on_moderation_action(callback: CallbackQuery):
+    await moderation.callback(callback, bot)
+
+
+@dp.message(Command('moderation'))
+async def moderation_status(message: Message):
+    if message.chat.type != 'private' or message.from_user.id != MODERATION_ADMIN_ID:
+        return
+    await moderation.resolve(bot, force=True)
+    await message.answer(moderation.status)
 
 
 @dp.message(Command("start"))
@@ -182,6 +212,8 @@ async def _llm_confirm_intent(text: str, month_label: str) -> bool:
 
 @dp.message(F.chat.type.in_({"group", "supergroup"}))
 async def handle_group_message(message: Message):
+    if message.chat.id != GROUP_CHAT_ID:
+        return
     if not message.text:
         return
     intent = _detect_availability_intent(message.text)
