@@ -270,10 +270,27 @@ class ModerationService:
                     row.notification_id = sent.message_id
                     row.state = 'pending'
                     db.commit()
-            except Exception:
+            except Exception as exc:
                 row.state = 'notification_failed' if row.state == 'notifying' else 'check_failed'
                 db.commit()
+                await self._alert_check_failed(bot, row, type(exc).__name__)
                 raise
+
+    async def _alert_check_failed(self, bot, row, exc_type):
+        # Notification path is already broken when we hit notification_failed,
+        # but attempt anyway — the send limit may be per-payload, not global.
+        link = f'https://t.me/c/{str(row.chat_id)[4:]}/{row.message_id}'
+        text = (f'⚠️ Не смогла проверить комментарий (ошибка: {exc_type}).\n'
+                f'Автор: {excerpt(row.author, 200)}\n\n'
+                f'{excerpt(row.text, 2400)}\n\nПроверь вручную.')
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text='Открыть комментарий', url=link),
+        ]])
+        try:
+            await bot.send_message(self.recipient_id, text, reply_markup=keyboard,
+                                   parse_mode=None, disable_web_page_preview=True)
+        except Exception as alert_exc:
+            logger.warning('Moderation alert send failed (%s)', type(alert_exc).__name__)
 
     async def callback(self, query, bot):
         match = re.fullmatch(r'mod:(spam|keep):(\d+):(\d+)', query.data or '')

@@ -160,6 +160,11 @@ class ModerationTests(unittest.IsolatedAsyncioTestCase):
         self.classifier.side_effect = TimeoutError()
         await self.service.inspect(message(), self.bot, 1)
         self.assertEqual(self.state(), 'check_failed')
+        # Алерт улетел модератору с типом ошибки — молчать нельзя.
+        alert = self.bot.send_message.call_args
+        self.assertEqual(alert.args[0], 42)
+        self.assertIn('Не смогла проверить', alert.args[1])
+        self.assertIn('TimeoutError', alert.args[1])
         self.classifier.side_effect = None
         self.bot.send_message.side_effect = TimeoutError()
         await self.service.inspect(message(text='Другой спам'), self.bot, 2)
