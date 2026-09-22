@@ -1,4 +1,4 @@
-"""One discussion group, one reviewer. Only an authenticated button press deletes."""
+"""One discussion group, one reviewer. Automatic spam removal with durable deletion outcomes."""
 import asyncio
 from datetime import datetime
 import hashlib
@@ -51,7 +51,9 @@ async def classify(payload):
 
 
 class ModerationService:
-    def __init__(self, channel='', recipient_id=0, internal_chat_id=0, session_factory=SessionLocal):
+    def __init__(self, channel='', recipient_id=0, internal_chat_id=0, session_factory=SessionLocal, auto_delete=True):
+        self.auto_delete = auto_delete
+        self.latest_updates = {}
         self.channel = channel
         self.recipient_id = recipient_id
         self.internal_chat_id = internal_chat_id
@@ -87,7 +89,9 @@ class ModerationService:
                     raise ValueError('Выдайте боту права администратора с удалением сообщений в группе обсуждений.')
                 self.target = (channel.id, discussion.id)
                 self.expires = time.monotonic() + 300
-                self.status = 'Модерация подключена. Уведомления — в личку; удаление — только по кнопке.'
+                self.status = ('Модерация подключена. Спам удаляется автоматически; отчёты — в личку.'
+                               if self.auto_delete else
+                               'Модерация подключена. Уведомления — в личку; удаление — только по кнопке.')
             except ValueError as exc:
                 self.status = str(exc)
             except Exception as exc:
@@ -123,48 +127,51 @@ class ModerationService:
                 (message.sender_chat and message.sender_chat.id in target) or
                 (message.from_user and message.from_user.id == bot.id)):
             return True
-        async with self.lock:
-            try:
-                await self._inspect(message, bot, update_id, target)
-            except Exception as exc:
-                logger.warning('Moderation check failed (%s)', type(exc).__name__)
+        key = (message.chat.id, message.message_id)
+        self.latest_updates[key] = max(update_id, self.latest_updates.get(key, update_id))
+        try:
+            async with self.lock:
+                try:
+                    await self._inspect(message, bot, update_id, target)
+                except Exception as exc:
+                    logger.warning('Moderation check failed (%s)', type(exc).__name__)
+        finally:
+            if self.latest_updates.get(key) == update_id:
+                self.latest_updates.pop(key, None)
         return True  # Never let public comments trigger internal bot commands.
 
     async def manual_check(self, forwarded, bot, update_id):
+        # User/hidden-user forwards contain no original chat/message ID. Never
+        # infer a deletion target from their text, author or timestamp.
         if (not forwarded.from_user or forwarded.from_user.id != self.recipient_id or
                 forwarded.chat.type != 'private' or forwarded.sender_chat):
             return
-        target = await self.resolve(bot, force=True)
-        if not target:
+        if not await self.resolve(bot):
             await bot.send_message(self.recipient_id, self.status)
             return
-        if (not forwarded.forward_from_chat or not forwarded.forward_date or
-                not forwarded.forward_from_message_id):
-            await bot.send_message(self.recipient_id, 'Перешлите комментарий из привязанной группы обсуждений.')
+        origin = forwarded.forward_origin
+        if not origin or origin.type not in ('user', 'hidden_user'):
+            await bot.send_message(self.recipient_id, 'Перешлите текстовый комментарий пользователя. Посты каналов не проверяются.')
             return
-        if forwarded.forward_from_chat.id != target[1]:
-            reply = ('Это пост канала, а не комментарий.'
-                     if forwarded.forward_from_chat.id == target[0]
-                     else 'Это сообщение не из привязанной группы обсуждений.')
-            await bot.send_message(self.recipient_id, reply)
-            return
-        if not (forwarded.text or forwarded.caption or '').strip():
+        fields = self._extract_from_live(forwarded)
+        if not fields['text'].strip():
             await bot.send_message(self.recipient_id, 'Нужен текстовый комментарий или подпись, а не медиа без текста.')
             return
-        fields = self._extract_from_forward(forwarded, target)
-        async with self.lock:
-            try:
-                await self._inspect_extracted(fields, bot, update_id, target, manual=True)
-                with self.session_factory() as db:
-                    row = db.query(ModerationComment).filter_by(
-                        chat_id=target[1], message_id=fields['message_id']).one()
-                    if row.state in ('deleted', 'deleting', 'delete_unknown'):
-                        await bot.send_message(self.recipient_id, 'Удаление этого комментария уже выполнялось. Проверьте его наличие вручную.')
-                    elif row.state == 'exempt':
-                        await bot.send_message(self.recipient_id, 'Комментарии администраторов не модерируются.')
-            except Exception as exc:
-                logger.warning('Manual moderation check failed (%s)', type(exc).__name__)
-                await bot.send_message(self.recipient_id, 'Не удалось завершить проверку или доставить уведомление. Комментарий не удалён. Повторите позже.')
+        author = origin.sender_user if origin.type == 'user' else None
+        payload = {'text': fields['text'], 'links': fields['links'], 'sender': {
+            'name': author.full_name if author else origin.sender_user_name,
+            'username': (author.username or '') if author else '', 'kind': 'user',
+        }}
+        try:
+            spam, reason = await classify(payload)
+            result = 'Обнаружены признаки спама.' if spam else 'Явных признаков спама нет.'
+            text = (f'🔎 Проверка пересланного текста\n{result}\n{reason}\n\n'
+                    'Telegram не передал ID исходной группы и комментария. '
+                    'Источник не подтверждён; удаление возможно только вручную в Telegram.')
+        except Exception as exc:
+            logger.warning('Forward moderation check failed (%s)', type(exc).__name__)
+            text = 'Не удалось проверить пересланный текст. Проверьте комментарий вручную.'
+        await bot.send_message(self.recipient_id, text, parse_mode=None)
 
     @staticmethod
     def _extract_from_live(message):
@@ -189,30 +196,10 @@ class ModerationService:
             'author_id': author_id,
         }
 
-    @staticmethod
-    def _extract_from_forward(forwarded, target):
-        # forward_from_chat здесь — сама группа обсуждений (проверено в manual_check).
-        # Автор доступен, только если у него не скрыты пересылки; иначе есть только
-        # forward_sender_name.
-        text = forwarded.text or forwarded.caption or ''
-        entities = forwarded.entities or forwarded.caption_entities or []
-        links = [e.url for e in entities if e.type == 'text_link' and e.url]
-        forward_user = forwarded.forward_from
-        sender_name = (forward_user.full_name if forward_user
-                       else forwarded.forward_sender_name or 'Неизвестный автор')
-        username = (forward_user.username or '') if forward_user else ''
-        return {
-            'chat_id': target[1], 'message_id': forwarded.forward_from_message_id,
-            'message_time': int(forwarded.forward_date.timestamp()),
-            'text': text, 'links': links,
-            'sender_name': sender_name, 'username': username, 'kind': 'user',
-            'author_id': forward_user.id if forward_user else None,
-        }
+    async def _inspect(self, message, bot, update_id, target):
+        await self._inspect_extracted(self._extract_from_live(message), bot, update_id, target)
 
-    async def _inspect(self, message, bot, update_id, target, manual=False):
-        await self._inspect_extracted(self._extract_from_live(message), bot, update_id, target, manual)
-
-    async def _inspect_extracted(self, fields, bot, update_id, target, manual=False):
+    async def _inspect_extracted(self, fields, bot, update_id, target):
         payload = {'text': fields['text'], 'links': fields['links'], 'sender': {
             'name': fields['sender_name'], 'username': fields['username'], 'kind': fields['kind'],
         }}
@@ -223,7 +210,8 @@ class ModerationService:
                 return
             if row and row.state in ('deleted', 'deleting', 'delete_unknown'):
                 return
-            if row and row.content_hash == digest and not manual:
+            if (row and row.content_hash == digest
+                    and row.state not in ('check_failed', 'notification_failed', 'checking', 'superseded')):
                 row.last_update_id = update_id
                 db.commit()
                 return
@@ -260,10 +248,14 @@ class ModerationService:
                     db.commit()
                     return
                 spam, reason = await classify(payload)
+                if self.latest_updates.get((row.chat_id, row.message_id), update_id) != update_id:
+                    row.state = 'superseded'
+                    db.commit()
+                    return
                 row.reason = reason if spam else f'ИИ не обнаружил явных признаков спама. {reason}'
-                row.state = 'notifying' if spam or manual else 'clear'
+                row.state = ('pending' if self.auto_delete else 'notifying') if spam else 'clear'
                 db.commit()
-                if spam or manual:
+                if spam and not self.auto_delete:
                     sent = await bot.send_message(self.recipient_id, self.notification(row),
                                                   reply_markup=self.keyboard(row), parse_mode=None,
                                                   disable_web_page_preview=True)
@@ -275,6 +267,16 @@ class ModerationService:
                 db.commit()
                 await self._alert_check_failed(bot, row, type(exc).__name__)
                 raise
+            if spam and self.auto_delete:
+                result = await self._delete_comment(bot, row, db)
+                try:
+                    sent = await bot.send_message(self.recipient_id, self.notification(row, result),
+                                                  reply_markup=self.keyboard(row) if row.state == 'pending' else None,
+                                                  parse_mode=None, disable_web_page_preview=True)
+                    row.notification_id = sent.message_id
+                    db.commit()
+                except Exception as exc:
+                    logger.warning('Moderation result delivery failed (%s); saved state=%s', type(exc).__name__, row.state)
 
     async def _alert_check_failed(self, bot, row, exc_type):
         # Notification path is already broken when we hit notification_failed,
@@ -318,41 +320,52 @@ class ModerationService:
                 if action == 'keep':
                     row.state = 'not_spam'
                 else:
-                    if time.time() - row.message_time >= 48 * 3600:
-                        row.state = 'expired'
-                        result = 'Telegram не позволяет боту удалить сообщение старше 48 часов. Удалите вручную.'
-                    else:
-                        if row.author_id:
-                            try:
-                                member = await bot.get_chat_member(row.chat_id, row.author_id)
-                            except Exception:
-                                await self._finish_notice(bot, row, 'Не удалось проверить автора. Повторите позже.', keep_buttons=True)
-                                return
-                            if member.status in ('creator', 'administrator'):
-                                row.state = 'exempt'
-                                db.commit()
-                                await self._finish_notice(bot, row, 'Комментарий администратора оставлен.')
-                                return
-                        row.state = 'deleting'
-                        db.commit()  # A restart/double click cannot repeat an uncertain deletion.
-                        try:
-                            await bot.delete_message(row.chat_id, row.message_id)
-                            row.state = 'deleted'
-                            result = '🗑 Спам удалён. Автор не заблокирован.'
-                        except TelegramBadRequest as exc:
-                            if 'message to delete not found' in exc.message.lower():
-                                row.state = 'deleted'
-                                result = 'Комментарий уже отсутствует в Telegram.'
-                            else:
-                                row.state = 'pending'
-                                result = 'Telegram отклонил удаление. Проверьте права бота или удалите вручную.'
-                        except Exception as exc:
-                            logger.warning('Moderation delete uncertain (%s)', type(exc).__name__)
-                            row.state = 'delete_unknown'
-                            result = 'Не удалось подтвердить удаление. Проверьте комментарий вручную; повторное удаление заблокировано.'
+                    result = await self._delete_comment(bot, row, db)
                 row.updated_at = datetime.utcnow()
                 db.commit()
                 await self._finish_notice(bot, row, result, keep_buttons=row.state == 'pending')
+
+    async def _delete_comment(self, bot, row, db):
+        target = await self.resolve(bot, force=True)
+        if target != (row.channel_id, row.chat_id):
+            return 'Не удалось подтвердить канал и права бота. Комментарий оставлен.'
+        if time.time() - row.message_time >= 48 * 3600:
+            row.state = 'expired'
+            result = 'Telegram не позволяет боту удалить сообщение старше 48 часов. Удалите вручную.'
+        else:
+            if row.author_id:
+                try:
+                    member = await bot.get_chat_member(row.chat_id, row.author_id)
+                except Exception:
+                    return 'Не удалось проверить автора. Комментарий оставлен.'
+                if member.status in ('creator', 'administrator'):
+                    row.state = 'exempt'
+                    db.commit()
+                    return 'Комментарий администратора оставлен.'
+            if self.latest_updates.get((row.chat_id, row.message_id), row.last_update_id) > row.last_update_id:
+                row.state = 'superseded'
+                db.commit()
+                return 'Во время проверки комментарий изменился; ожидается новая проверка.'
+            row.state = 'deleting'
+            db.commit()  # Persist before the API call: never retry uncertain deletion.
+            try:
+                await bot.delete_message(row.chat_id, row.message_id)
+                row.state = 'deleted'
+                result = '🗑 Спам удалён. Автор не заблокирован.'
+            except TelegramBadRequest as exc:
+                if 'message to delete not found' in exc.message.lower():
+                    row.state = 'deleted'
+                    result = 'Комментарий уже отсутствует в Telegram.'
+                else:
+                    row.state = 'pending'
+                    result = 'Telegram отклонил удаление. Проверьте права бота или удалите вручную.'
+            except Exception as exc:
+                logger.warning('Moderation delete uncertain (%s)', type(exc).__name__)
+                row.state = 'delete_unknown'
+                result = 'Не удалось подтвердить удаление. Проверьте комментарий вручную; повторное удаление заблокировано.'
+        row.updated_at = datetime.utcnow()
+        db.commit()
+        return result
 
     async def _finish_notice(self, bot, row, result, keep_buttons=False):
         try:

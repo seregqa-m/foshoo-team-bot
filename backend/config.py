@@ -38,7 +38,8 @@ ADMIN_ID = int(os.getenv("ADMIN_ID", 0))
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")
 
 # Optional moderation of one public channel's linked discussion group.
-# Empty channel disables the feature. No automatic deletion.
+# Empty channel disables the feature. Spam removal is automatic by default.
+MODERATION_AUTO_DELETE = os.getenv("MODERATION_AUTO_DELETE", "true").strip().lower() == "true"
 MODERATION_CHANNEL = os.getenv("MODERATION_CHANNEL", "").strip()
 MODERATION_ADMIN_ID = int(os.getenv("MODERATION_ADMIN_ID", "").strip() or ADMIN_ID)
 

@@ -13,7 +13,7 @@ from aiogram.types import (
     WebAppInfo, PollAnswer,
 )
 from aiogram.filters import Command
-from config import BOT_TOKEN, MINI_APP_URL, TELEGRAM_PROXY_URL, GROUP_CHAT_ID, MODERATION_CHANNEL, MODERATION_ADMIN_ID
+from config import BOT_TOKEN, MINI_APP_URL, TELEGRAM_PROXY_URL, GROUP_CHAT_ID, MODERATION_CHANNEL, MODERATION_ADMIN_ID, MODERATION_AUTO_DELETE
 from modules.moderation.services import ModerationService
 
 logger = logging.getLogger(__name__)
@@ -23,7 +23,7 @@ bot = Bot(
     session=AiohttpSession(timeout=15, proxy=TELEGRAM_PROXY_URL),
 )
 dp = Dispatcher()
-moderation = ModerationService(MODERATION_CHANNEL, MODERATION_ADMIN_ID, GROUP_CHAT_ID)
+moderation = ModerationService(MODERATION_CHANNEL, MODERATION_ADMIN_ID, GROUP_CHAT_ID, auto_delete=MODERATION_AUTO_DELETE)
 
 
 @dp.message.outer_middleware()
@@ -43,7 +43,7 @@ async def on_moderation_action(callback: CallbackQuery):
     await moderation.callback(callback, bot)
 
 
-@dp.message(F.chat.type == 'private', F.forward_date)
+@dp.message(F.chat.type == 'private', F.forward_origin)
 async def on_forwarded_for_moderation(message: Message, event_update):
     await moderation.manual_check(message, bot, event_update.update_id)
 

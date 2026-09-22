@@ -36,7 +36,7 @@ class ModerationTests(unittest.IsolatedAsyncioTestCase):
         self.engine = create_engine('sqlite://')
         Base.metadata.create_all(self.engine)
         self.Session = sessionmaker(bind=self.engine)
-        self.service = ModerationService('@example_channel', 42, -100300, self.Session)
+        self.service = ModerationService('@example_channel', 42, -100300, self.Session, auto_delete=False)
         self.bot = NS(id=999, get_chat=AsyncMock(side_effect=self.get_chat),
                       get_chat_member=AsyncMock(side_effect=self.get_member),
                       send_message=AsyncMock(return_value=NS(message_id=500)),
@@ -87,7 +87,7 @@ class ModerationTests(unittest.IsolatedAsyncioTestCase):
         await asyncio.gather(self.service.callback(self.query(), self.bot), self.service.callback(self.query(), self.bot))
         self.bot.delete_message.assert_awaited_once_with(DISCUSSION, 20)
         self.assertEqual(self.state(), 'deleted')
-        restarted = ModerationService('@example_channel', 42, -100300, self.Session)
+        restarted = ModerationService('@example_channel', 42, -100300, self.Session, auto_delete=False)
         await restarted.callback(self.query(), self.bot)
         self.bot.delete_message.assert_awaited_once()
         self.assertNotIn('оставлен без изменений', self.bot.edit_message_text.call_args.kwargs['text'])
@@ -194,85 +194,132 @@ class ModerationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.state(), 'expired')
         self.bot.delete_message.assert_not_awaited()
 
-    def forwarded(self, comment, sender_id=42, forward_from_chat=None, **kwargs):
-        """Личка модератору: пересылка `comment` из группы обсуждений."""
-        return Message(
-            message_id=1000, date=datetime.now(timezone.utc),
-            chat=Chat(id=42, type='private'),
-            from_user=User(id=sender_id, is_bot=False, first_name='Moderator'),
-            forward_from_chat=forward_from_chat or Chat(id=DISCUSSION, type='supergroup'),
-            forward_from_message_id=comment.message_id,
-            forward_from=comment.from_user,
-            forward_date=comment.date,
-            text=comment.text, caption=comment.caption,
-            entities=comment.entities, caption_entities=comment.caption_entities,
-            **kwargs,
-        )
+    def forwarded(self, comment, sender_id=42, hidden=False):
+        origin = ({'type': 'hidden_user', 'date': comment.date, 'sender_user_name': 'Скрытый Автор'}
+                  if hidden else {'type': 'user', 'date': comment.date, 'sender_user': comment.from_user})
+        return Message(message_id=1000, date=datetime.now(timezone.utc),
+                       chat=Chat(id=sender_id, type='private'),
+                       from_user=User(id=sender_id, is_bot=False, first_name='Moderator'),
+                       forward_origin=origin, text=comment.text, caption=comment.caption)
 
-    async def test_manual_check_existing_comment_then_delete_exact_original(self):
-        comment = message(date=datetime.now(timezone.utc) - timedelta(hours=2))
-        await self.service.manual_check(self.forwarded(comment), self.bot, 1)
-        self.assertEqual(self.state(), 'pending')
+    async def test_real_user_forwards_are_assessed_without_deletion_target(self):
+        for hidden in (False, True):
+            await self.service.manual_check(self.forwarded(message(), hidden=hidden), self.bot, 1)
+            self.assertIn('Источник не подтверждён', self.bot.send_message.call_args.args[1])
+            self.assertNotIn('reply_markup', self.bot.send_message.call_args.kwargs)
+        self.assertEqual(self.classifier.call_args.args[0]['sender']['name'], 'Скрытый Автор')
         self.bot.delete_message.assert_not_awaited()
-        await self.service.callback(self.query(), self.bot)
-        self.bot.delete_message.assert_awaited_once_with(DISCUSSION, 20)
-
-    async def test_manual_check_sends_review_buttons_even_on_false_negative(self):
-        self.classifier.return_value = (False, 'Нейтральный текст')
-        await self.service.manual_check(self.forwarded(message()), self.bot, 1)
-        self.assertEqual(self.state(), 'pending')
-        self.assertIn('ИИ не обнаружил', self.bot.send_message.call_args.args[1])
-        self.assertIsNotNone(self.bot.send_message.call_args.kwargs['reply_markup'])
-        self.bot.delete_message.assert_not_awaited()
-
-    async def test_manual_check_forward_from_hidden_profile_still_works(self):
-        # Автор оригинального комментария скрыл пересылки: forward_from недоступен,
-        # есть только forward_sender_name. Классификатору всё равно уходит имя.
-        comment = message()
-        forward = Message(
-            message_id=1000, date=datetime.now(timezone.utc),
-            chat=Chat(id=42, type='private'),
-            from_user=User(id=42, is_bot=False, first_name='Moderator'),
-            forward_from_chat=Chat(id=DISCUSSION, type='supergroup'),
-            forward_from_message_id=comment.message_id,
-            forward_sender_name='Скрытый Автор',
-            forward_date=comment.date,
-            text=comment.text,
-        )
-        await self.service.manual_check(forward, self.bot, 1)
-        self.assertEqual(self.state(), 'pending')
-        payload = self.classifier.call_args.args[0]
-        self.assertEqual(payload['sender'], {'name': 'Скрытый Автор', 'username': '', 'kind': 'user'})
         with self.Session() as db:
-            self.assertIsNone(db.query(ModerationComment).one().author_id)
+            self.assertEqual(db.query(ModerationComment).count(), 0)
 
-    async def test_manual_request_rejects_non_recipient_non_forward_and_other_sources(self):
-        # Обычное сообщение без forward — фильтр F.forward_date не пропустит, но проверим и на уровне сервиса.
-        plain = Message(message_id=1, date=datetime.now(timezone.utc),
-                        chat=Chat(id=42, type='private'),
-                        from_user=User(id=42, is_bot=False, first_name='Mod'), text='hi')
-        await self.service.manual_check(plain, self.bot, 1)
-        # Forward от постороннего пользователя игнорируется.
-        await self.service.manual_check(self.forwarded(message(), sender_id=84), self.bot, 2)
-        # Forward из другого чата отклоняется.
-        await self.service.manual_check(self.forwarded(message(), forward_from_chat=Chat(
-            id=-100999, type='supergroup')), self.bot, 3)
-        # Пересылка поста самого канала (source == target[0]) отклоняется.
-        await self.service.manual_check(self.forwarded(message(), forward_from_chat=Chat(
-            id=CHANNEL, type='channel', title='Наш канал')), self.bot, 4)
-        # Пересылка без текста и подписи отклоняется.
-        await self.service.manual_check(self.forwarded(message(text=None)), self.bot, 5)
+    async def test_forward_rejects_non_recipient_and_channel_posts(self):
+        await self.service.manual_check(self.forwarded(message(), sender_id=84), self.bot, 1)
+        post = self.forwarded(message()).model_copy(update={'forward_origin': NS(type='channel')})
+        await self.service.manual_check(post, self.bot, 2)
+        await self.service.manual_check(self.forwarded(message(text=None)), self.bot, 3)
         self.classifier.assert_not_awaited()
         self.bot.delete_message.assert_not_awaited()
 
-    async def test_manual_recheck_cannot_retry_unknown_deletion(self):
+    async def test_automatic_deletion_and_restart_do_not_repeat(self):
+        self.service.auto_delete = True
         await self.service.inspect(message(), self.bot, 1)
+        self.assertEqual(self.state(), 'deleted')
+        self.assertIn('Спам удалён', self.bot.send_message.call_args.args[1])
+        self.assertIsNone(self.bot.send_message.call_args.kwargs['reply_markup'])
+        restarted = ModerationService('@example_channel', 42, -100300, self.Session)
+        await restarted.inspect(message(), self.bot, 2)
+        self.bot.delete_message.assert_awaited_once_with(DISCUSSION, 20)
+
+    async def test_auto_delivery_failure_preserves_deleted_or_uncertain_state(self):
+        self.service.auto_delete = True
+        self.bot.send_message.side_effect = TimeoutError()
+        await self.service.inspect(message(), self.bot, 1)
+        self.assertEqual(self.state(), 'deleted')
         self.bot.delete_message.side_effect = TimeoutError()
+        await self.service.inspect(message(message_id=21), self.bot, 2)
+        await self.service.inspect(message(message_id=21), self.bot, 3)
+        with self.Session() as db:
+            self.assertEqual(db.query(ModerationComment).filter_by(message_id=21).one().state, 'delete_unknown')
+        self.assertEqual(self.bot.delete_message.await_count, 2)
+
+    async def test_auto_clear_failed_and_expired_comments_are_not_deleted(self):
+        self.service.auto_delete = True
+        self.classifier.return_value = (False, 'Обычный отзыв')
+        await self.service.inspect(message(), self.bot, 1)
+        self.assertEqual(self.state(), 'clear')
+        self.classifier.side_effect = TimeoutError()
+        await self.service.inspect(message(text='Изменение'), self.bot, 2)
+        self.assertEqual(self.state(), 'check_failed')
+        self.classifier.side_effect = None
+        self.classifier.return_value = (True, 'Спам')
+        await self.service.inspect(message(date=datetime.now(timezone.utc)-timedelta(days=3)), self.bot, 3)
+        self.assertEqual(self.state(), 'expired')
+        self.bot.delete_message.assert_not_awaited()
+
+    async def test_auto_rechecks_promoted_admin_before_delete(self):
+        self.service.auto_delete = True
+        async def verdict(payload):
+            self.bot.get_chat_member.side_effect = None
+            self.bot.get_chat_member.return_value = NS(status='administrator', can_delete_messages=True)
+            return True, 'Спам'
+        self.classifier.side_effect = verdict
+        await self.service.inspect(message(), self.bot, 1)
+        self.assertEqual(self.state(), 'exempt')
+        self.bot.delete_message.assert_not_awaited()
+
+    async def test_edit_arriving_during_classification_prevents_stale_auto_delete(self):
+        self.service.auto_delete = True
+        entered, release = asyncio.Event(), asyncio.Event()
+        async def verdict(payload):
+            if payload['text'] == message().text:
+                entered.set()
+                await release.wait()
+                return True, 'Спам'
+            return False, 'Отзыв'
+        self.classifier.side_effect = verdict
+        first = asyncio.create_task(self.service.inspect(message(), self.bot, 1))
+        await entered.wait()
+        edited = asyncio.create_task(self.service.inspect(message(text='Спасибо!'), self.bot, 2))
+        await asyncio.sleep(0)
+        release.set()
+        await asyncio.gather(first, edited)
+        self.assertEqual(self.state(), 'clear')
+        self.bot.delete_message.assert_not_awaited()
+
+    async def test_auto_rejected_delete_leaves_manual_action(self):
+        self.service.auto_delete = True
+        self.bot.delete_message.side_effect = TelegramBadRequest(
+            method=DeleteMessage(chat_id=DISCUSSION, message_id=20), message='not enough rights')
+        await self.service.inspect(message(), self.bot, 1)
+        self.assertEqual(self.state(), 'pending')
+        self.assertIn('отклонил', self.bot.send_message.call_args.args[1])
+        self.assertIsNotNone(self.bot.send_message.call_args.kwargs['reply_markup'])
+
+    async def test_auto_lost_permissions_prevent_delete(self):
+        self.service.auto_delete = True
+        async def verdict(payload):
+            self.bot.get_chat_member.side_effect = None
+            self.bot.get_chat_member.return_value = NS(status='member', can_delete_messages=False)
+            return True, 'Спам'
+        self.classifier.side_effect = verdict
+        await self.service.inspect(message(), self.bot, 1)
+        self.assertEqual(self.state(), 'pending')
+        self.bot.delete_message.assert_not_awaited()
+
+    async def test_pending_edit_blocks_manual_delete_as_well(self):
+        await self.service.inspect(message(), self.bot, 1)
+        self.service.latest_updates[(DISCUSSION, 20)] = 2
         await self.service.callback(self.query(), self.bot)
-        await self.service.manual_check(self.forwarded(message()), self.bot, 2)
-        self.assertEqual(self.state(), 'delete_unknown')
-        self.classifier.assert_awaited_once()
-        self.bot.delete_message.assert_awaited_once()
+        self.assertEqual(self.state(), 'superseded')
+        self.bot.delete_message.assert_not_awaited()
+
+    async def test_failed_check_can_retry_same_content_on_new_update(self):
+        self.classifier.side_effect = TimeoutError()
+        await self.service.inspect(message(), self.bot, 1)
+        self.classifier.side_effect = None
+        await self.service.inspect(message(), self.bot, 2)
+        self.assertEqual(self.state(), 'pending')
+        self.assertEqual(self.classifier.await_count, 2)
 
     async def test_reconfigured_or_disabled_channel_cannot_delete_previous_comments(self):
         await self.service.inspect(message(), self.bot, 1)
