@@ -34,11 +34,18 @@ SETTINGS_SHEET = "Труппа"
 
 
 class SheetsClient:
-    def __init__(self, credentials_path: str, spreadsheet_id: str):
+    def __init__(self, credentials_path: str, spreadsheet_id: str, *, timeout=None):
         creds = service_account.Credentials.from_service_account_file(
             credentials_path, scopes=SCOPES
         )
-        service = build("sheets", "v4", credentials=creds, cache_discovery=False)
+        if timeout is None:
+            service = build("sheets", "v4", credentials=creds, cache_discovery=False)
+        else:
+            import httplib2
+            from google_auth_httplib2 import AuthorizedHttp
+            # Bound the actual worker-thread I/O as well as the async caller.
+            http = AuthorizedHttp(creds, http=httplib2.Http(timeout=timeout))
+            service = build("sheets", "v4", http=http, cache_discovery=False)
         self.api = service.spreadsheets()
         self.spreadsheet_id = spreadsheet_id
 

@@ -28,31 +28,40 @@ function App() {
   const [trouFilter, setTrouFilter] = useState('труппа 1');
 
   const [accessError, setAccessError] = useState('');
+  const [accessAttempt, setAccessAttempt] = useState(0);
 
   useEffect(() => {
+    let active = true;
+    setAllowed(null);
+    setAccessError('');
     const tg = window.Telegram?.WebApp;
     tg?.ready();
     tg?.expand();
-    client.get('/api/auth/check')
+    client.get('/api/auth/check', { timeout: 15000 })
       .then(({ data }) => {
+        if (!active) return;
         setUserId(data.user_id);
         setUsername(data.username);
         setIsAdmin(data.is_admin);
         setIsSuperAdmin(!!data.is_superadmin);
         setAllowed(data.allowed);
-        return client.get('/api/auth/app-config');
+        // Optional settings must not turn a successful login into an access error.
+        client.get('/api/auth/app-config', { timeout: 15000 })
+          .then(({ data: config }) => { if (active && config.troupe_filter) setTrouFilter(config.troupe_filter); })
+          .catch(() => {});
       })
-      .then(({ data }) => { if (data.troupe_filter) setTrouFilter(data.troupe_filter); })
       .catch(e => {
+        if (!active) return;
         setAccessError(e.response?.data?.detail || 'Не удалось проверить доступ. Попробуй открыть приложение заново.');
         setAllowed(false);
       });
-  }, []);
+    return () => { active = false; };
+  }, [accessAttempt]);
 
   useEffect(() => {
     if (!allowed || !dataVersion) return;
     let active = true;
-    Promise.all([client.get('/api/auth/check'), client.get('/api/auth/app-config')])
+    Promise.all([client.get('/api/auth/check', { timeout: 15000 }), client.get('/api/auth/app-config', { timeout: 15000 })])
       .then(([auth, config]) => {
         if (!active) return;
         setIsAdmin(auth.data.is_admin); setIsSuperAdmin(!!auth.data.is_superadmin);
@@ -78,6 +87,7 @@ function App() {
         <div style={{ fontSize: 14, color: '#444', marginBottom: 20, lineHeight: 1.5 }}>
           {accessError || 'Это приложение театра-студии FoShoo.'}
         </div>
+        <button onClick={() => setAccessAttempt(attempt => attempt + 1)} style={{ marginBottom: 20 }}>Повторить попытку</button>
         <a href="https://foshoo-theatre.ru/" target="_blank" rel="noopener noreferrer"
            style={{ fontSize: 15, color: '#5a0000', fontWeight: 600, textDecoration: 'none', borderBottom: '1px solid #5a0000' }}>
           foshoo-theatre.ru

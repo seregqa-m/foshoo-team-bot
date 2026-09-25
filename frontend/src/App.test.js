@@ -63,3 +63,24 @@ test('self-revocation removes global controls while retaining group-admin settin
   expect(container.textContent).not.toContain('global settings');
   expect(container.textContent).toContain('group settings');
 });
+
+
+test('access timeout leaves loading and retry can open the app', async () => {
+  const regular = client.get.getMockImplementation();
+  client.get.mockRejectedValueOnce({ code: 'ECONNABORTED' });
+  await act(async () => root.render(<App />));
+  expect(container.textContent).not.toContain('Загрузка...');
+  expect(container.querySelector('nav')).toBeNull();
+  expect(client.get).toHaveBeenCalledWith('/api/auth/check', { timeout: 15000 });
+  client.get.mockImplementation(regular);
+  await act(async () => container.querySelector('button').click());
+  expect(container.querySelector('nav')).not.toBeNull();
+});
+
+test('unavailable optional config does not revoke a successful login', async () => {
+  const regular = client.get.getMockImplementation();
+  client.get.mockImplementation(url => url.endsWith('app-config')
+    ? Promise.reject({ code: 'ECONNABORTED' }) : regular(url));
+  await act(async () => root.render(<App />));
+  expect(container.querySelector('nav')).not.toBeNull();
+});

@@ -163,3 +163,81 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(HTTPException):
                 await AssistantService(self.db).execute_pending(user_id=42, action_token=token)
         handler.assert_not_called()
+
+
+class AccessLatencyTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        from core import access
+        self.access = access
+        access._access_cache.clear()
+        role = patch("core.access.is_super_admin", AsyncMock(return_value=False))
+        role.start()
+        self.addCleanup(role.stop)
+
+    async def test_slow_user_does_not_block_cached_or_uncached_user(self):
+        entered, release = asyncio.Event(), asyncio.Event()
+        async def group_admin(user_id):
+            if user_id == 1:
+                entered.set()
+                await release.wait()
+            return True
+        self.access._access_cache[(2, "cached")] = (time.monotonic() + 60, True, False)
+        with patch("core.access._is_group_admin", side_effect=group_admin):
+            slow = asyncio.create_task(self.access._permissions(TelegramUser(1, "slow")))
+            try:
+                await asyncio.wait_for(entered.wait(), 1)
+                cached = await asyncio.wait_for(self.access._permissions(TelegramUser(2, "cached")), .2)
+                fresh = await asyncio.wait_for(self.access._permissions(TelegramUser(3, "fresh")), .2)
+                self.assertEqual(cached, (True, False, False))
+                self.assertEqual(fresh, (True, True, False))
+                self.assertFalse(slow.done())
+            finally:
+                release.set()
+                await slow
+
+    async def test_telegram_timeout_is_not_cached_and_retry_succeeds(self):
+        import bot
+        async def stalled(*args, **kwargs):
+            await asyncio.Event().wait()
+        with patch("core.access.GROUP_CHAT_ID", -123), patch("core.access.TELEGRAM_ACCESS_TIMEOUT", .01), patch.object(bot.bot, "get_chat_member", side_effect=stalled):
+            with self.assertLogs("core.access", level="WARNING") as logs:
+                with self.assertRaises(HTTPException) as error:
+                    await self.access._permissions(TelegramUser(1, "actor"))
+            self.assertEqual(error.exception.status_code, 503)
+            self.assertIn("stage=telegram outcome=timeout", " ".join(logs.output))
+            self.assertFalse(self.access._access_cache)
+        with patch("core.access._is_group_admin", AsyncMock(return_value=True)):
+            self.assertEqual(await self.access._permissions(TelegramUser(1, "actor")), (True, True, False))
+
+    async def test_sheets_timeout_does_not_reuse_expired_access(self):
+        import threading
+        release = threading.Event()
+        def stalled(username):
+            release.wait(1)
+            return True
+        self.access._access_cache[(1, "actor")] = (time.monotonic() - 1, True, True)
+        try:
+            with patch("core.access._is_group_admin", AsyncMock(return_value=False)), patch("core.access._known_actor", side_effect=stalled), patch("core.access.SHEETS_ACCESS_TIMEOUT", .01):
+                with self.assertRaises(HTTPException) as error:
+                    await self.access._permissions(TelegramUser(1, "actor"))
+                self.assertEqual(error.exception.status_code, 503)
+                self.assertLess(self.access._access_cache[(1, "actor")][0], time.monotonic())
+        finally:
+            release.set()
+
+    async def test_telegram_failure_logs_type_without_sensitive_message(self):
+        import bot
+        with patch("core.access.GROUP_CHAT_ID", -123), patch.object(bot.bot, "get_chat_member", side_effect=RuntimeError("private-token")):
+            with self.assertLogs("core.access", level="WARNING") as logs:
+                with self.assertRaises(HTTPException) as error:
+                    await self.access._permissions(TelegramUser(1, "actor"))
+            self.assertEqual(error.exception.status_code, 503)
+            self.assertNotIn("private-token", " ".join(logs.output))
+            self.assertIn("RuntimeError", " ".join(logs.output))
+            self.assertFalse(self.access._access_cache)
+
+    async def test_superadmin_revocation_is_checked_even_with_cached_access(self):
+        with patch("core.access.is_super_admin", AsyncMock(side_effect=[True, False])), patch("core.access._is_group_admin", AsyncMock(return_value=False)), patch("core.access._known_actor", return_value=False):
+            user = TelegramUser(1, "actor")
+            self.assertEqual(await self.access._permissions(user), (True, True, True))
+            self.assertEqual(await self.access._permissions(user), (False, False, False))

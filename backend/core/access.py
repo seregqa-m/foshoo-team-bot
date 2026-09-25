@@ -3,6 +3,7 @@ import asyncio
 import hashlib
 import hmac
 import json
+import logging
 import os
 import time
 from dataclasses import dataclass
@@ -13,6 +14,26 @@ from fastapi import HTTPException, Request
 from config import BOT_TOKEN, GROUP_CHAT_ID, GOOGLE_CALENDAR_JSON, GOOGLE_SHEETS_ID
 
 INIT_DATA_TTL = 86400
+TELEGRAM_ACCESS_TIMEOUT = 4
+SHEETS_ACCESS_TIMEOUT = 6
+logger = logging.getLogger(__name__)
+
+
+async def _access_step(stage, operation, timeout):
+    started = time.monotonic()
+    outcome = "ok"
+    try:
+        return await asyncio.wait_for(operation, timeout=timeout)
+    except asyncio.TimeoutError:
+        outcome = "timeout"
+        raise HTTPException(503, "Проверка доступа временно недоступна. Попробуй ещё раз.") from None
+    except Exception as exc:
+        outcome = type(exc).__name__
+        raise
+    finally:
+        elapsed = time.monotonic() - started
+        log = logger.warning if outcome != "ok" or elapsed >= 1 else logger.debug
+        log("Access check stage=%s outcome=%s duration=%.3fs", stage, outcome, elapsed)
 
 
 @dataclass(frozen=True)
@@ -23,6 +44,7 @@ class TelegramUser:
 
 
 def verify_init_data(raw: str, *, bot_token: str = BOT_TOKEN, now=None) -> TelegramUser:
+    reason = "missing" if not raw else "malformed"
     try:
         pairs = parse_qsl(raw, keep_blank_values=True, strict_parsing=True)
         data = dict(pairs)
@@ -33,9 +55,11 @@ def verify_init_data(raw: str, *, bot_token: str = BOT_TOKEN, now=None) -> Teleg
         secret = hmac.new(b"WebAppData", bot_token.encode(), hashlib.sha256).digest()
         expected = hmac.new(secret, check.encode(), hashlib.sha256).hexdigest()
         if not hmac.compare_digest(signature, expected):
+            reason = "signature"
             raise ValueError("signature")
         age = (time.time() if now is None else now) - int(data["auth_date"])
         if not -30 <= age <= INIT_DATA_TTL:
+            reason = "expired"
             raise ValueError("expired")
         user = json.loads(data["user"])
         if type(user["id"]) is not int or user["id"] <= 0:
@@ -43,6 +67,7 @@ def verify_init_data(raw: str, *, bot_token: str = BOT_TOKEN, now=None) -> Teleg
         return TelegramUser(user["id"], str(user.get("username") or ""),
                             " ".join(str(user.get(k) or "").strip() for k in ("first_name", "last_name")).strip())
     except (ValueError, KeyError, TypeError):
+        logger.warning("Telegram initData rejected reason=%s", reason)
         raise HTTPException(401, "Открой приложение заново через Telegram") from None
 
 
@@ -60,11 +85,16 @@ async def _is_group_admin(user_id: int) -> bool:
         return False
     from bot import bot
     try:
-        member = await bot.get_chat_member(GROUP_CHAT_ID, user_id)
+        member = await _access_step(
+            "telegram", bot.get_chat_member(GROUP_CHAT_ID, user_id),
+            TELEGRAM_ACCESS_TIMEOUT,
+        )
         return member.status in ("creator", "administrator")
+    except HTTPException:
+        raise
     except Exception:
-        # An unavailable Telegram API must not grant administrative access.
-        return False
+        # Do not cache an API failure as a successful non-admin check.
+        raise HTTPException(503, "Проверка доступа временно недоступна") from None
 
 
 def _known_actor(username: str) -> bool:
@@ -74,14 +104,13 @@ def _known_actor(username: str) -> bool:
         raise HTTPException(503, "Проверка доступа временно недоступна")
     from sheets_client import SheetsClient
     try:
-        mapping = SheetsClient(GOOGLE_CALENDAR_JSON, GOOGLE_SHEETS_ID).get_actor_mapping()
+        mapping = SheetsClient(GOOGLE_CALENDAR_JSON, GOOGLE_SHEETS_ID, timeout=3).get_actor_mapping()
         return username.lower().lstrip("@") in mapping
     except Exception:
         raise HTTPException(503, "Проверка доступа временно недоступна") from None
 
 
 _access_cache = OrderedDict()
-_access_lock = asyncio.Lock()
 
 
 async def _permissions(user):
@@ -89,18 +118,20 @@ async def _permissions(user):
     if await is_super_admin(user.id):
         return True, True, True
     key = (user.id, user.username)
-    async with _access_lock:
-        cached = _access_cache.get(key)
-        if cached and cached[0] > time.monotonic():
-            return (*cached[1:], False)
-        admin = await _is_group_admin(user.id)
-        allowed = admin or await asyncio.to_thread(_known_actor, user.username)
-        # Cache only successful checks; failures never reuse expired permissions.
-        _access_cache[key] = (time.monotonic() + 60, allowed, admin)
-        _access_cache.move_to_end(key)
-        while len(_access_cache) > 512:
-            _access_cache.popitem(last=False)
-        return allowed, admin, False
+    # Cache operations contain no awaits; network calls never hold a global lock.
+    cached = _access_cache.get(key)
+    if cached and cached[0] > time.monotonic():
+        return (*cached[1:], False)
+    admin = await _is_group_admin(user.id)
+    allowed = admin or await _access_step(
+        "sheets", asyncio.to_thread(_known_actor, user.username), SHEETS_ACCESS_TIMEOUT,
+    )
+    # Failed/timed-out checks never reach the cache.
+    _access_cache[key] = (time.monotonic() + 60, allowed, admin)
+    _access_cache.move_to_end(key)
+    while len(_access_cache) > 512:
+        _access_cache.popitem(last=False)
+    return allowed, admin, False
 
 
 async def authorize_api(request: Request):
