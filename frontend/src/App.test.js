@@ -19,12 +19,13 @@ jest.mock('./components/NotificationsView', () => ({ isSuperAdmin }) => <div>{is
 
 let container, root;
 beforeEach(() => {
+  window.Telegram = { WebApp: { ready: jest.fn(), expand: jest.fn() } };
   global.IS_REACT_ACT_ENVIRONMENT = true;
   container = document.createElement('div'); document.body.appendChild(container);
   root = createRoot(container);
   client.get.mockImplementation(url => Promise.resolve({ data: url.endsWith('/check') ? { allowed: true, is_admin: true, user_id: 42, username: 'actor' } : { troupe_filter: 'труппа 1' } }));
 });
-afterEach(() => { act(() => root.unmount()); container.remove(); jest.clearAllMocks(); });
+afterEach(() => { act(() => root.unmount()); container.remove(); delete window.Telegram; jest.clearAllMocks(); });
 
 test('switching tabs preserves the assistant draft', async () => {
   await act(async () => root.render(<App />));
@@ -83,4 +84,18 @@ test('unavailable optional config does not revoke a successful login', async () 
     ? Promise.reject({ code: 'ECONNABORTED' }) : regular(url));
   await act(async () => root.render(<App />));
   expect(container.querySelector('nav')).not.toBeNull();
+});
+
+
+test('slow Telegram SDK displays its stage and does not send unsigned auth requests', async () => {
+  delete window.Telegram;
+  await act(async () => root.render(<App />));
+  expect(container.textContent).toContain('Подключение к Telegram');
+  expect(client.get).not.toHaveBeenCalled();
+  await act(async () => {
+    window.Telegram = { WebApp: { ready: jest.fn(), expand: jest.fn() } };
+    document.querySelector('script[src*="telegram.org"]').dispatchEvent(new Event('load'));
+  });
+  expect(container.querySelector('nav')).not.toBeNull();
+  document.querySelector('script[src*="telegram.org"]').remove();
 });

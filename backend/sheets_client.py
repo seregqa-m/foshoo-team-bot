@@ -14,6 +14,7 @@ Google Sheets client — запись явок актёров по резуль�
 import re
 import logging
 from datetime import datetime
+from modules.finance.catalog import PROJECTS as FINANCE_PROJECTS
 
 from googleapiclient.discovery import build
 from google.oauth2 import service_account
@@ -132,7 +133,7 @@ class SheetsClient:
 
     FINANCE_SHEET = "Финансы"
     EXPENSE_TYPES = ["Личные траты", "Трата со счета ФоШу", "Пожертвование", "Возврат"]
-    PROJECTS = ["Театр", "Любовь Громова", "Урод", "Слепые"]
+    PROJECTS = FINANCE_PROJECTS
 
     def _get_sheet_id(self, sheet_name: str) -> int:
         """Получить числовой ID листа по имени."""

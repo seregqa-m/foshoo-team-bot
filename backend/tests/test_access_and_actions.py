@@ -241,3 +241,28 @@ class AccessLatencyTests(unittest.IsolatedAsyncioTestCase):
             user = TelegramUser(1, "actor")
             self.assertEqual(await self.access._permissions(user), (True, True, True))
             self.assertEqual(await self.access._permissions(user), (False, False, False))
+
+
+    async def test_identity_database_stall_has_start_end_logs_and_timeout(self):
+        request = self.access.Request({"type": "http", "path": "/api/auth/check", "headers": [], "method": "GET"})
+        async def stalled(*args, **kwargs):
+            await asyncio.Event().wait()
+        with patch("core.access.verify_init_data", return_value=TelegramUser(1, "actor")), patch("core.access.asyncio.to_thread", side_effect=stalled), patch("core.access.DATABASE_ACCESS_TIMEOUT", .01):
+            with self.assertLogs("core.access", level="INFO") as logs:
+                with self.assertRaises(HTTPException) as error:
+                    await self.access.authorize_api(request)
+            self.assertEqual(error.exception.status_code, 503)
+            text = " ".join(logs.output)
+            self.assertIn("Login started request=", text)
+            self.assertIn("stage=database_identity outcome=timeout", text)
+            self.assertIn("Login finished request=", text)
+            self.assertIn("status=503", text)
+
+    async def test_total_authorization_budget_is_bounded(self):
+        request = self.access.Request({"type": "http", "path": "/api/auth/check", "headers": [], "method": "GET"})
+        async def stalled(*args):
+            await asyncio.Event().wait()
+        with patch("core.access._authorize_api", side_effect=stalled), patch("core.access.AUTHORIZATION_TIMEOUT", .01):
+            with self.assertRaises(HTTPException) as error:
+                await self.access.authorize_api(request)
+            self.assertEqual(error.exception.status_code, 503)

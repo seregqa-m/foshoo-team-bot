@@ -13,7 +13,7 @@ router = APIRouter(prefix="/api/finance", tags=["finance"])
 logger = logging.getLogger(__name__)
 
 EXPENSE_TYPES = ["Личные траты", "Трата со счета ФоШу", "Пожертвование", "Возврат"]
-PROJECTS = ["Театр", "Любовь Громова", "Урод", "Слепые"]
+from modules.finance.catalog import PROJECTS
 
 
 # ── Вспомогательные функции ──────────────────────────────────────────────────

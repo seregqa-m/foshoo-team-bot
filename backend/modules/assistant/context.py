@@ -38,7 +38,7 @@ from modules.notifications.models import NotificationSetting
 logger = logging.getLogger(__name__)
 
 
-FINANCE_PROJECTS = ["Театр", "Любовь Громова", "Урод", "Слепые"]
+from modules.finance.catalog import PROJECTS as FINANCE_PROJECTS
 FINANCE_EXPENSE_TYPES = ["Личные траты", "Трата со счета ФоШу", "Пожертвование", "Возврат"]
 
 

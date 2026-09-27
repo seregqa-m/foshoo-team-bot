@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import './index.css';
 import client, { DATA_CHANGED_EVENT } from './api/client';
+import { loadTelegram } from './telegram';
 import AssistantView from './components/AssistantView';
 import CalendarView from './components/CalendarView';
 import NotificationsView from './components/NotificationsView';
@@ -29,17 +30,26 @@ function App() {
 
   const [accessError, setAccessError] = useState('');
   const [accessAttempt, setAccessAttempt] = useState(0);
+  const [loadingStage, setLoadingStage] = useState('Подключение к Telegram…');
 
   useEffect(() => {
     let active = true;
     setAllowed(null);
     setAccessError('');
-    const tg = window.Telegram?.WebApp;
-    tg?.ready();
-    tg?.expand();
-    client.get('/api/auth/check', { timeout: 15000 })
-      .then(({ data }) => {
+    setLoadingStage('Подключение к Telegram…');
+    let checkingAccess = false;
+    loadTelegram()
+      .then(tg => {
         if (!active) return;
+        tg.ready();
+        tg.expand();
+        checkingAccess = true;
+        setLoadingStage('Проверка доступа…');
+        return client.get('/api/auth/check', { timeout: 15000 });
+      })
+      .then(response => {
+        if (!active) return;
+        const { data } = response;
         setUserId(data.user_id);
         setUsername(data.username);
         setIsAdmin(data.is_admin);
@@ -52,7 +62,9 @@ function App() {
       })
       .catch(e => {
         if (!active) return;
-        setAccessError(e.response?.data?.detail || 'Не удалось проверить доступ. Попробуй открыть приложение заново.');
+        setAccessError(checkingAccess
+          ? (e.response?.data?.detail || 'Не удалось проверить доступ. Нажми «Повторить попытку».')
+          : e.message);
         setAllowed(false);
       });
     return () => { active = false; };
@@ -76,7 +88,7 @@ function App() {
   }, [allowed, dataVersion]);
 
   if (allowed === null) {
-    return <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', fontFamily: 'sans-serif' }}>Загрузка...</div>;
+    return <div role="status" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', fontFamily: 'sans-serif' }}>{loadingStage}</div>;
   }
 
   if (!allowed) {

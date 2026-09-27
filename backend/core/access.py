@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import time
+import uuid
 from dataclasses import dataclass
 from collections import OrderedDict
 from urllib.parse import parse_qsl
@@ -14,6 +15,8 @@ from fastapi import HTTPException, Request
 from config import BOT_TOKEN, GROUP_CHAT_ID, GOOGLE_CALENDAR_JSON, GOOGLE_SHEETS_ID
 
 INIT_DATA_TTL = 86400
+DATABASE_ACCESS_TIMEOUT = 3
+AUTHORIZATION_TIMEOUT = 12
 TELEGRAM_ACCESS_TIMEOUT = 4
 SHEETS_ACCESS_TIMEOUT = 6
 logger = logging.getLogger(__name__)
@@ -73,7 +76,7 @@ def verify_init_data(raw: str, *, bot_token: str = BOT_TOKEN, now=None) -> Teleg
 
 async def is_super_admin(user_id: int) -> bool:
     from modules.admin.services import has_superadmin_role
-    return await asyncio.to_thread(has_superadmin_role, user_id)
+    return await _access_step("database_role", asyncio.to_thread(has_superadmin_role, user_id), DATABASE_ACCESS_TIMEOUT)
 
 
 async def is_admin(user_id: int) -> bool:
@@ -134,12 +137,12 @@ async def _permissions(user):
     return allowed, admin, False
 
 
-async def authorize_api(request: Request):
+async def _authorize_api(request: Request):
     """Applied to every /api router; identity fields cannot override Telegram."""
     user = verify_init_data(request.headers.get("X-Telegram-Init-Data", ""))
     if request.url.path.rstrip('/') == '/api/auth/check':
         from modules.admin.services import remember_identity
-        await asyncio.to_thread(remember_identity, user)
+        await _access_step("database_identity", asyncio.to_thread(remember_identity, user), DATABASE_ACCESS_TIMEOUT)
     allowed, admin, superadmin = await _permissions(user)
     if not allowed:
         raise HTTPException(403, "Приложение доступно только участникам труппы")
@@ -169,3 +172,24 @@ async def authorize_api(request: Request):
     request.state.is_admin = admin
     request.state.is_superadmin = superadmin
     return user
+
+
+async def authorize_api(request: Request):
+    login = request.url.path.rstrip("/") == "/api/auth/check"
+    request_id = uuid.uuid4().hex[:12]
+    started = time.monotonic()
+    status = 200
+    if login:
+        logger.info("Login started request=%s", request_id)
+    try:
+        return await _access_step("authorization", _authorize_api(request), AUTHORIZATION_TIMEOUT)
+    except HTTPException as exc:
+        status = exc.status_code
+        raise
+    except Exception:
+        status = 500
+        raise
+    finally:
+        if login:
+            logger.info("Login finished request=%s status=%s duration=%.3fs",
+                        request_id, status, time.monotonic() - started)
