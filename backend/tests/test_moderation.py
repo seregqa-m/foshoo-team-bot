@@ -355,14 +355,22 @@ class ModerationTests(unittest.IsolatedAsyncioTestCase):
 
 class ClassifierTests(unittest.IsolatedAsyncioTestCase):
     async def test_structured_output_and_no_tool_access(self):
-        client = NS(chat=AsyncMock(return_value=NS(text='{"spam":true,"reason":"Реклама в имени"}')))
+        client = NS(chat=AsyncMock(return_value=NS(text='{"spam":true,"reason":"Реклама в имени"}', finish_reason='stop')))
         payload = {'text': 'Привет', 'sender': {'name': 'Заработок', 'username': 'advert'}}
         with patch('modules.moderation.services.get_llm_client', return_value=client):
             self.assertEqual(await classify(payload), (True, 'Реклама в имени'))
             sent = client.chat.call_args
             self.assertEqual(json.loads(sent.args[0][1].text), payload)
             self.assertNotIn('tools', sent.kwargs)
+            self.assertEqual(sent.kwargs['max_tokens'], 4096)
             for raw in ('not JSON', '{"spam":"false","reason":"x"}', '[]', '{"spam":true}'):
                 client.chat.return_value.text = raw
                 with self.assertRaises(ValueError):
                     await classify(payload)
+
+    async def test_truncated_response_is_never_a_verdict_even_with_valid_json(self):
+        client = NS(chat=AsyncMock(return_value=NS(
+            text='{"spam":true,"reason":"Спам"}', finish_reason='length')))
+        with patch('modules.moderation.services.get_llm_client', return_value=client):
+            with self.assertRaisesRegex(ValueError, 'truncated'):
+                await classify({'text': 'Тест'})

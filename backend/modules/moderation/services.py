@@ -10,6 +10,7 @@ import time
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from core.database import SessionLocal
+from config import MODERATION_MAX_TOKENS
 from modules.assistant.llm_client import ChatMessage, get_llm_client
 from .models import ModerationComment
 
@@ -43,7 +44,11 @@ async def classify(payload):
     result = await asyncio.wait_for(get_llm_client().chat([
         ChatMessage(role='system', text=PROMPT),
         ChatMessage(role='user', text=json.dumps(payload, ensure_ascii=False)),
-    ], temperature=0, max_tokens=200), timeout=25)
+    ], temperature=0, max_tokens=MODERATION_MAX_TOKENS), timeout=25)
+    # Reasoning models consume the completion budget before producing JSON.
+    # Even parseable JSON is not a trusted verdict if generation was truncated.
+    if result.finish_reason == 'length':
+        raise ValueError('Moderation verdict truncated by token limit')
     value = json.loads(result.text)
     if not isinstance(value, dict) or type(value.get('spam')) is not bool or not isinstance(value.get('reason'), str):
         raise ValueError('Invalid moderation verdict')
@@ -128,13 +133,15 @@ class ModerationService:
                 (message.from_user and message.from_user.id == bot.id)):
             return True
         key = (message.chat.id, message.message_id)
+        logger.info('Moderation received message=%s update=%s', message.message_id, update_id)
         self.latest_updates[key] = max(update_id, self.latest_updates.get(key, update_id))
         try:
             async with self.lock:
                 try:
                     await self._inspect(message, bot, update_id, target)
                 except Exception as exc:
-                    logger.warning('Moderation check failed (%s)', type(exc).__name__)
+                    logger.warning('Moderation check failed (%s) message=%s update=%s',
+                                   type(exc).__name__, message.message_id, update_id)
         finally:
             if self.latest_updates.get(key) == update_id:
                 self.latest_updates.pop(key, None)
@@ -255,6 +262,8 @@ class ModerationService:
                 row.reason = reason if spam else f'ИИ не обнаружил явных признаков спама. {reason}'
                 row.state = ('pending' if self.auto_delete else 'notifying') if spam else 'clear'
                 db.commit()
+                logger.info('Moderation verdict message=%s update=%s spam=%s state=%s',
+                            row.message_id, update_id, spam, row.state)
                 if spam and not self.auto_delete:
                     sent = await bot.send_message(self.recipient_id, self.notification(row),
                                                   reply_markup=self.keyboard(row), parse_mode=None,
