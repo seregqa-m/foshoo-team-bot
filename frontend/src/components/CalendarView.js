@@ -25,6 +25,7 @@ const FILTERS = [
   { key: 'труппа 1', label: 'Труппа 1',  color: '#C4B5FD' },
   { key: 'труппа 2', label: 'Труппа 2',  color: '#FDE68A' },
   { key: 'лаба',     label: 'Лаба',      color: '#FCA5A5' },
+  { key: 'shows',    label: 'Спектакли', color: '#6EE7B7' },
 ];
 
 const MONTHS_FULL = ['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
@@ -36,15 +37,16 @@ const HOUR_H     = 18;
 const HEADER_H   = 42;
 const LABEL_W    = 28;
 
-function getEventColor(title, showNames, trouFilter = 'труппа 1') {
+function getEventGroup(title, showNames, trouFilter = 'труппа 1') {
   const t = title.toLowerCase();
-  if (t.includes(trouFilter) || showNames.some(s => t.includes(s))) return '#C4B5FD';
-  if (t.includes('труппа 2')) return '#FDE68A';
-  if (t.includes('лаба')) return '#FCA5A5';
-  return '#D1D5DB';
+  if (showNames.some(s => s && t.includes(s))) return 'shows';
+  if (trouFilter.trim() && t.includes(trouFilter.trim().toLowerCase())) return 'труппа 1';
+  if (t.includes('труппа 2')) return 'труппа 2';
+  if (t.includes('лаба')) return 'лаба';
+  return null;
 }
 
-function WeekCalendar({ events, showNames, trouFilter = 'труппа 1', onEventClick, onSlotClick }) {
+function WeekCalendar({ events, showNames, now, trouFilter = 'труппа 1', onEventClick, onSlotClick }) {
   const [weekOffset, setWeekOffset] = useState(0);
   const [tooltip, setTooltip] = useState(null);
 
@@ -176,10 +178,11 @@ function WeekCalendar({ events, showNames, trouFilter = 'труппа 1', onEven
               const h  = Math.max(6, y2 - y1);
               const x  = LABEL_W + dayIdx * colW + 3;
               const w  = colW - 6;
-              const color = getEventColor(e.title, showNames, trouFilter);
+              const group = getEventGroup(e.title, showNames, trouFilter);
+              const color = FILTERS.find(f => f.key === group)?.color || '#D1D5DB';
               return (
                 <rect key={idx} x={x} y={y1} width={w} height={h} rx={3}
-                  fill={color} fillOpacity={0.9} style={{ cursor: 'pointer' }}
+                  fill={color} fillOpacity={endDt.getTime() <= now ? 0.35 : 0.9} style={{ cursor: 'pointer' }}
                   onMouseEnter={() => setTooltip({ title: e.title, time: `${fmt(startDt)}–${fmt(endDt)}`, x: x + w/2, y: y1 })}
                   onMouseLeave={() => setTooltip(null)}
                   onTouchStart={() => setTooltip({ title: e.title, time: `${fmt(startDt)}–${fmt(endDt)}`, x: x + w/2, y: y1 })}
@@ -199,7 +202,7 @@ function WeekCalendar({ events, showNames, trouFilter = 'труппа 1', onEven
   );
 }
 
-function EventCard({ event, userId, onEdit, isAdmin, isPollable, poll, onPollAction }) {
+function EventCard({ event, userId, onEdit, isAdmin, isPollable, isPast, poll, onPollAction }) {
   const start = new Date(event.start_time);
   const [polling, setPolling] = useState(false);
   const [pollError, setPollError] = useState(null);
@@ -253,7 +256,7 @@ function EventCard({ event, userId, onEdit, isAdmin, isPollable, poll, onPollAct
   };
 
   return (
-    <div className="event-card" style={{ position: 'relative' }}>
+    <div className="event-card" style={{ position: 'relative', opacity: isPast ? 0.5 : 1 }}>
       {isAdmin && (
         <button
           onClick={() => onEdit(event)}
@@ -274,6 +277,7 @@ function EventCard({ event, userId, onEdit, isAdmin, isPollable, poll, onPollAct
         <div className="event-meta">
           {formatTime(event.start_time)} – {formatTime(event.end_time)}
           {event.location ? `  📍 ${event.location}` : ''}
+          {isPast ? ' · Завершено' : ''}
         </div>
         {pollError && <div style={{ fontSize: 12, color: 'var(--danger)', marginBottom: 8 }}>{pollError}</div>}
         <div className="event-actions" style={{ gap: 6, alignItems: 'center' }}>
@@ -417,10 +421,18 @@ export default function CalendarView({ userId, isAdmin, trouFilter = 'трупп
   const [showNames, setShowNames] = useState([]);
   const [calendarUrl, setCalendarUrl] = useState(null);
   const [pollSummary, setPollSummary] = useState({});
+  const [now, setNow] = useState(Date.now);
+
+  useEffect(() => {
+    if (!active) return;
+    setNow(Date.now());
+    const timer = setInterval(() => setNow(Date.now()), 30000);
+    return () => clearInterval(timer);
+  }, [active]);
 
   useEffect(() => {
     client.get('/api/sheets/shows')
-      .then(({ data }) => setShowNames((data.shows || []).map(s => s.toLowerCase())))
+      .then(({ data }) => setShowNames((data.shows || []).map(s => s.trim().toLowerCase()).filter(Boolean)))
       .catch(() => {});
     client.get('/api/calendar/meta')
       .then(({ data }) => setCalendarUrl(data.calendar_url || null))
@@ -430,7 +442,7 @@ export default function CalendarView({ userId, isAdmin, trouFilter = 'трупп
   const fetchEvents = useCallback(async () => {
     try {
       setLoading(true);
-      const res = await calendarApi.getEvents(60);
+      const res = await calendarApi.getEvents(60, true);
       setEvents(res.data.events || []);
       setError(null);
     } catch {
@@ -461,14 +473,17 @@ export default function CalendarView({ userId, isAdmin, trouFilter = 'трупп
     setModal({ start_time: fmtDt(dt), end_time: fmtDt(end) });
   };
 
-  const visibleEvents = filter === 'all'
+  const filteredEvents = filter === 'all'
     ? events
-    : filter === 'труппа 1'
-      ? events.filter(e => {
-          const t = e.title.toLowerCase();
-          return t.includes(trouFilter) || showNames.some(s => t.includes(s));
-        })
-      : events.filter(e => e.title.toLowerCase().includes(filter));
+    : events.filter(e => getEventGroup(e.title, showNames, trouFilter) === filter);
+  // Keep upcoming events handy, then show history from most recent to oldest.
+  const visibleEvents = [...filteredEvents].sort((a, b) => {
+    const aPast = new Date(a.end_time).getTime() <= now;
+    const bPast = new Date(b.end_time).getTime() <= now;
+    if (aPast !== bPast) return aPast ? 1 : -1;
+    const difference = new Date(a.start_time) - new Date(b.start_time);
+    return aPast ? -difference : difference;
+  });
 
   if (planning && isAdmin) return <PlanningView onClose={() => setPlanning(false)} dataVersion={dataVersion} />;
 
@@ -500,6 +515,7 @@ export default function CalendarView({ userId, isAdmin, trouFilter = 'трупп
         events={events}
         showNames={showNames}
         trouFilter={trouFilter}
+        now={now}
         onEventClick={isAdmin ? (e) => setModal(e) : null}
         onSlotClick={handleSlotClick}
       />
@@ -524,12 +540,11 @@ export default function CalendarView({ userId, isAdmin, trouFilter = 'трупп
       {error && <div className="alert alert-error">{error}</div>}
 
       {visibleEvents.length === 0 ? (
-        <div className="empty-state">Нет предстоящих событий</div>
+        <div className="empty-state">Нет событий</div>
       ) : (
         visibleEvents.map(e => {
-          const t = e.title.toLowerCase();
-          const isT1 = t.includes(trouFilter) || showNames.some(s => t.includes(s));
-          const isPerformance = showNames.some(s => t.includes(s));
+          const isT1 = getEventGroup(e.title, showNames, trouFilter) === 'труппа 1';
+          const isPast = new Date(e.end_time).getTime() <= now;
           return (
             <EventCard
               key={e.id}
@@ -537,7 +552,8 @@ export default function CalendarView({ userId, isAdmin, trouFilter = 'трупп
               userId={userId}
               onEdit={setModal}
               isAdmin={isAdmin}
-              isPollable={isT1 && !isPerformance}
+              isPollable={isT1 && !isPast}
+              isPast={isPast}
               poll={pollSummary[String(e.id)]}
               onPollAction={fetchPollSummary}
             />

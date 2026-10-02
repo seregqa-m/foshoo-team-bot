@@ -19,16 +19,18 @@ class CalendarService:
         self.db = db
         self.google_client = google_client
 
-    def get_upcoming_events(self, days: int = 30) -> list[CalendarEvent]:
-        """Получить предстоящие события"""
+    def get_upcoming_events(self, days: int = 30, include_past: bool = False) -> list[CalendarEvent]:
+        """Получить события, при необходимости включая сохранённую историю."""
         now = local_now()
         future = now + timedelta(days=days)
 
-        return self.db.query(CalendarEvent).filter(
-            CalendarEvent.start_time >= now,
+        query = self.db.query(CalendarEvent).filter(
             CalendarEvent.start_time <= future,
             CalendarEvent.is_cancelled == False
-        ).order_by(CalendarEvent.start_time).all()
+        )
+        if not include_past:
+            query = query.filter(CalendarEvent.start_time >= now)
+        return query.order_by(CalendarEvent.start_time).all()
 
     def get_event_by_id(self, event_id: int) -> CalendarEvent:
         """Получить событие по ID"""

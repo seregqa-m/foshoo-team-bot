@@ -26,26 +26,28 @@ class GoogleCalendarClient:
             logger.error(f"Failed to initialize Google Calendar client: {e}")
             raise
 
-    def get_events(self, calendar_id: str, days: int = 90) -> list[dict]:
+    def get_events(self, calendar_id: str, days: int = 90, past_days: int = 365) -> list[dict]:
         """
         Получить события с Google Calendar
 
         Args:
             calendar_id: ID календаря
             days: Количество дней в будущем для выборки
+            past_days: Глубина загрузки истории; более старые записи остаются в БД
 
         Returns:
             Список событий
         """
         try:
             now = datetime.now(timezone.utc)
+            start = now - timedelta(days=past_days)
             future = now + timedelta(days=days)
             events = []
             page_token = None
             while True:
                 result = self.service.events().list(
                     calendarId=calendar_id,
-                    timeMin=now.isoformat(), timeMax=future.isoformat(),
+                    timeMin=start.isoformat(), timeMax=future.isoformat(),
                     singleEvents=True, orderBy='startTime', pageToken=page_token,
                 ).execute()
                 events.extend(result.get('items', []))
@@ -53,7 +55,7 @@ class GoogleCalendarClient:
                 if not page_token:
                     break
             # A cancellation pass is allowed only after every page succeeded.
-            self.sync_window = (now, future)
+            self.sync_window = (start, future)
             logger.info(f"Fetched {len(events)} events from Google Calendar")
             return events
         except Exception as e:

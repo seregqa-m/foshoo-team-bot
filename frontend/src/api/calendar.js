@@ -1,7 +1,7 @@
 import client from './client';
 
-export const getEvents = (days = 30) => {
-  return client.get('/api/calendar/events', { params: { days } });
+export const getEvents = (days = 30, includePast = false) => {
+  return client.get('/api/calendar/events', { params: { days, include_past: includePast } });
 };
 
 export const getNextEvent = () => {

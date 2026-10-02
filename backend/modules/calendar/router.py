@@ -54,10 +54,10 @@ def get_calendar_meta():
 
 
 @router.get("/events")
-def get_events(days: int = 30, db: Session = Depends(get_db)):
-    """Получить предстоящие события"""
+def get_events(days: int = 30, db: Session = Depends(get_db), include_past: bool = False):
+    """Получить события; include_past добавляет сохранённую историю."""
     service = CalendarService(db)
-    events = service.get_upcoming_events(days)
+    events = service.get_upcoming_events(days, include_past=include_past)
     return {
         "events": [
             {
