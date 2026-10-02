@@ -55,3 +55,31 @@ class CalendarHistoryTests(unittest.TestCase):
         for call in request.call_args_list:
             self.assertEqual(call.kwargs['timeMin'], start.isoformat())
             self.assertEqual(call.kwargs['timeMax'], end.isoformat())
+
+    def test_october_11_alias_is_classified_in_calendar_api(self):
+        self.db.add(CalendarEvent(title='ЛГ[Спект]', start_time=datetime(2026, 10, 11, 19),
+                                  end_time=datetime(2026, 10, 11, 21)))
+        self.db.commit()
+        with patch('modules.calendar.services.local_now', return_value=as_local(datetime(2026, 10, 2))):
+            event = get_events(days=60, db=self.db)['events'][0]
+        self.assertEqual(event['title'], 'ЛГ[Спект]')
+        self.assertEqual(event['event_type'], 'performance')
+        self.assertEqual(event['show_name'], 'Любовь Громова')
+
+    def test_schedule_column_resolves_alias_but_does_not_assign_rehearsal(self):
+        from sheets_client import SheetsClient, SCHEDULE_SHEET
+        client = SheetsClient.__new__(SheetsClient)
+        client.api = MagicMock()
+        client.spreadsheet_id = 'test'
+        client.api.values.return_value.get.return_value.execute.return_value = {'values': [['Актёр']]}
+        client.api.get.return_value.execute.return_value = {'sheets': [{'properties': {
+            'title': SCHEDULE_SHEET, 'sheetId': 0, 'gridProperties': {'columnCount': 10},
+        }}]}
+        with patch.object(client, 'get_show_names', return_value=['Любовь Громова']):
+            count = client.ensure_schedule_columns([
+                (datetime(2026, 10, 11, 19), 'ЛГ[Спект]'),
+                (datetime(2026, 10, 12, 19), 'ЛГ[Реп]'),
+            ])
+        self.assertEqual(count, 2)
+        values = client.api.values.return_value.update.call_args.kwargs['body']['values']
+        self.assertEqual(values[1], ['ЛЮБОВЬ ГРОМОВА', ''])

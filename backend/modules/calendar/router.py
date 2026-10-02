@@ -11,6 +11,7 @@ from config import GOOGLE_CALENDAR_ID, GOOGLE_CALENDAR_JSON, GROUP_CHAT_ID
 from .models import CalendarEvent
 from .services import CalendarService
 from .google_client import GoogleCalendarClient
+from .classification import classify_event
 import os
 
 logger = logging.getLogger(__name__)
@@ -63,6 +64,7 @@ def get_events(days: int = 30, db: Session = Depends(get_db), include_past: bool
             {
                 "id": e.id,
                 "title": e.title,
+                **classify_event(e.title),
                 "description": e.description,
                 "start_time": e.start_time.isoformat(),
                 "end_time": e.end_time.isoformat(),

@@ -74,3 +74,33 @@ test('fades an event when it ends without reloading the page', async () => {
   expect(ongoing.style.opacity).toBe('0.5');
   expect(container.querySelectorAll('rect[fill-opacity]')[1].getAttribute('fill-opacity')).toBe('0.35');
 });
+
+test('shows the October 11 performance alias in the show filter and calendar', async () => {
+  calendarApi.getEvents.mockResolvedValue({ data: { events: [{
+    id: 11, title: 'ЛГ[Спект]', start_time: '2026-10-11T19:00:00', end_time: '2026-10-11T21:00:00',
+    event_type: 'performance', show_name: 'Любовь Громова',
+  }] } });
+  client.get.mockResolvedValue({ data: {} }); // Explicit types work without the Sheets catalog.
+  await act(async () => root.render(<CalendarView userId={42} isAdmin />));
+  expect(titles()).toEqual([]);
+  await act(async () => button('Спектакли').click());
+  expect(titles()).toEqual(['ЛГ[Спект]']);
+  expect(container.querySelector('.event-card').textContent).toContain('Любовь Громова');
+  expect(container.querySelector('.event-card').textContent).not.toContain('🗳️ Опрос');
+  await act(async () => button('›').click());
+  expect(container.querySelector('rect[fill-opacity]').getAttribute('fill')).toBe('#6EE7B7');
+});
+
+test('explicit rehearsal type overrides a known show name and keeps troupe color', async () => {
+  calendarApi.getEvents.mockResolvedValue({ data: { events: [
+    { ...event(1, 'Труппа 1 — Гамлет[Реп]', '19:00', '21:00'), event_type: 'rehearsal' },
+    { ...event(2, 'ЛГ[Реп]', '19:00', '21:00'), event_type: 'rehearsal', show_name: 'Любовь Громова' },
+    { ...event(3, 'Неизвестная премьера[Спект]', '19:00', '21:00'), event_type: 'performance' },
+  ] } });
+  await act(async () => root.render(<CalendarView userId={42} isAdmin />));
+  expect(titles()).toEqual(['Труппа 1 — Гамлет[Реп]', 'ЛГ[Реп]']);
+  expect(container.querySelector('.event-card').textContent).toContain('🗳️ Опрос');
+  expect(container.querySelector('rect[fill-opacity]').getAttribute('fill')).toBe('#C4B5FD');
+  await act(async () => button('Спектакли').click());
+  expect(titles()).toEqual(['Неизвестная премьера[Спект]']);
+});

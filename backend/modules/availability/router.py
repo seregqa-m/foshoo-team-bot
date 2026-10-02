@@ -12,6 +12,7 @@ from core.database import get_db
 from config import GROUP_CHAT_ID, GOOGLE_CALENDAR_JSON, GOOGLE_SHEETS_ID, ADMIN_ID
 from .models import AvailabilityCampaign, AvailabilityPoll, AvailabilityPollOption, AvailabilityVote
 from modules.calendar.models import CalendarEvent
+from modules.calendar.classification import is_troupe_event
 from modules.notifications.models import NotificationSetting
 
 logger = logging.getLogger(__name__)
@@ -63,10 +64,7 @@ def get_next_month_events(db: Session = Depends(get_db), month: str | None = Non
 
     result = []
     for e in events:
-        t = e.title.lower()
-        if troupe_filter not in t:
-            continue
-        if show_names_lower and any(s in t for s in show_names_lower):
+        if not is_troupe_event(e.title, show_names_lower, troupe_filter):
             continue
         result.append({
             "id": e.id,

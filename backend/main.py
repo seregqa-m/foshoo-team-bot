@@ -15,6 +15,7 @@ from config import LOG_LEVEL, API_HOST, API_PORT, GOOGLE_CALENDAR_JSON, GOOGLE_C
 from modules.calendar.router import router as calendar_router
 from modules.calendar.services import CalendarService
 from modules.calendar.google_client import GoogleCalendarClient
+from modules.calendar.classification import classify_event, is_performance, is_troupe_event
 from modules.polling.router import router as polling_router
 from modules.notifications.router import router as notifications_router
 from modules.availability.router import router as availability_router
@@ -145,7 +146,8 @@ def _ensure_schedule_columns(db) -> None:
             (e.start_time, e.title)
             for e in events
             if troupe_filter in e.title.lower()
-            or any(s in e.title.lower() for s in show_names_lower)
+            or classify_event(e.title, show_names_lower)["show_name"]
+            or is_performance(e.title, show_names_lower)
         ]
         if matched_events:
             added = sc.ensure_schedule_columns(matched_events)
@@ -288,10 +290,8 @@ async def _auto_create_polls():
         for event in db.query(CalendarEvent).filter(CalendarEvent.is_cancelled == False).all():
             if event.start_time.date() != target_date:
                 continue
-            if show_names_lower and any(s in event.title.lower() for s in show_names_lower):
-                continue
             from config import TROUPE_FILTER
-            if (settings.troupe_filter or TROUPE_FILTER).lower() not in event.title.lower():
+            if not is_troupe_event(event.title, show_names_lower, settings.troupe_filter or TROUPE_FILTER):
                 continue
             existing = db.query(Poll).filter(
                 Poll.calendar_event_id == event.id,
@@ -370,7 +370,7 @@ async def _send_poll_reminders():
             event = db.query(CalendarEvent).filter(CalendarEvent.id == poll.calendar_event_id).first()
             if not event or event.is_cancelled or not poll.telegram_message_id or event.start_time.date() != target_date:
                 continue
-            if show_names_lower and any(s in event.title.lower() for s in show_names_lower):
+            if is_performance(event.title, show_names_lower):
                 continue
 
             voted_usernames = {

@@ -37,12 +37,14 @@ const HOUR_H     = 18;
 const HEADER_H   = 42;
 const LABEL_W    = 28;
 
-function getEventGroup(title, showNames, trouFilter = 'труппа 1') {
-  const t = title.toLowerCase();
-  if (showNames.some(s => s && t.includes(s))) return 'shows';
+function getEventGroup(event, showNames, trouFilter = 'труппа 1') {
+  const t = (event.title || '').toLowerCase();
+  const knownShow = event.show_name || showNames.some(s => s && t.includes(s));
+  if (event.event_type === 'performance' || (!event.event_type && knownShow)) return 'shows';
   if (trouFilter.trim() && t.includes(trouFilter.trim().toLowerCase())) return 'труппа 1';
   if (t.includes('труппа 2')) return 'труппа 2';
   if (t.includes('лаба')) return 'лаба';
+  if (event.event_type === 'rehearsal' && knownShow) return 'труппа 1';
   return null;
 }
 
@@ -178,7 +180,7 @@ function WeekCalendar({ events, showNames, now, trouFilter = 'труппа 1', o
               const h  = Math.max(6, y2 - y1);
               const x  = LABEL_W + dayIdx * colW + 3;
               const w  = colW - 6;
-              const group = getEventGroup(e.title, showNames, trouFilter);
+              const group = getEventGroup(e, showNames, trouFilter);
               const color = FILTERS.find(f => f.key === group)?.color || '#D1D5DB';
               return (
                 <rect key={idx} x={x} y={y1} width={w} height={h} rx={3}
@@ -274,6 +276,9 @@ function EventCard({ event, userId, onEdit, isAdmin, isPollable, isPast, poll, o
       </div>
       <div className="event-body">
         <div className="event-title" style={{ paddingRight: isAdmin ? 24 : 0 }}>{event.title}</div>
+        {event.show_name && !event.title.toLowerCase().includes(event.show_name.toLowerCase()) && (
+          <div className="event-meta">{event.show_name}</div>
+        )}
         <div className="event-meta">
           {formatTime(event.start_time)} – {formatTime(event.end_time)}
           {event.location ? `  📍 ${event.location}` : ''}
@@ -475,7 +480,7 @@ export default function CalendarView({ userId, isAdmin, trouFilter = 'трупп
 
   const filteredEvents = filter === 'all'
     ? events
-    : events.filter(e => getEventGroup(e.title, showNames, trouFilter) === filter);
+    : events.filter(e => getEventGroup(e, showNames, trouFilter) === filter);
   // Keep upcoming events handy, then show history from most recent to oldest.
   const visibleEvents = [...filteredEvents].sort((a, b) => {
     const aPast = new Date(a.end_time).getTime() <= now;
@@ -543,7 +548,7 @@ export default function CalendarView({ userId, isAdmin, trouFilter = 'трупп
         <div className="empty-state">Нет событий</div>
       ) : (
         visibleEvents.map(e => {
-          const isT1 = getEventGroup(e.title, showNames, trouFilter) === 'труппа 1';
+          const isT1 = getEventGroup(e, showNames, trouFilter) === 'труппа 1';
           const isPast = new Date(e.end_time).getTime() <= now;
           return (
             <EventCard

@@ -15,6 +15,7 @@ import re
 import logging
 from datetime import datetime
 from modules.finance.catalog import PROJECTS as FINANCE_PROJECTS
+from modules.calendar.classification import classify_event
 
 from googleapiclient.discovery import build
 from google.oauth2 import service_account
@@ -483,7 +484,6 @@ class SheetsClient:
         last_col = len(headers)
 
         shows_raw = self.get_show_names() or []
-        show_map = {s.lower(): s for s in shows_raw}
 
         seen = set()
         missing: list[tuple[datetime, str]] = []
@@ -503,9 +503,9 @@ class SheetsClient:
         row1, row2 = [], []
         for dt, title in missing:
             row1.append(_format_schedule_header(dt))
-            title_lower = title.lower()
-            match = next((k for k in show_map if k in title_lower), None)
-            row2.append(show_map[match].upper() if match else "")
+            classification = classify_event(title, shows_raw)
+            show_name = classification["show_name"]
+            row2.append(show_name.upper() if show_name and classification["event_type"] == "performance" else "")
 
         start_col = last_col + 1
         needed_col_count = start_col + len(missing) - 1
