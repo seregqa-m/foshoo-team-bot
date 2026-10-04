@@ -769,7 +769,6 @@ async def _update_settings_handler(db: Session, args: dict, ctx: dict) -> dict:
         "poll_reminders_enabled",
         "reminder_days_before",
         "reminder_time",
-        "troupe_filter",
     } and v is not None}
     if not payload:
         raise HTTPException(status_code=400, detail="Нечего обновлять")
@@ -787,14 +786,13 @@ UPDATE_SETTINGS = Tool(
         "type": "function",
         "function": {
             "name": "update_settings",
-            "description": "Изменить глобальные настройки авто-опросов и труппы. Требует подтверждения.",
+            "description": "Изменить общие настройки автоопросов. Требует подтверждения.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "poll_reminders_enabled": {"type": "boolean", "description": "Вкл/выкл авто-опросы посещаемости"},
                     "reminder_days_before": {"type": "integer", "description": "За сколько дней до события создавать опрос (1-7)"},
                     "reminder_time": {"type": "string", "description": "Время создания опроса, формат HH:MM (МСК)"},
-                    "troupe_filter": {"type": "string", "description": "Подстрока в названии события для фильтра (например 'труппа 1')"},
                 },
                 "required": [],
             },
@@ -805,7 +803,7 @@ UPDATE_SETTINGS = Tool(
     preview_builder=lambda args: {
         "title": "Обновить настройки",
         "lines": [f"{k} → {v}" for k, v in args.items() if v is not None] or ["без изменений"],
-        "warnings": ["Настройки применяются ко всей группе"],
+        "warnings": ["Настройки применяются к автоопросам во всех настроенных чатах спектаклей"],
     },
 )
 

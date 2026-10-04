@@ -119,7 +119,7 @@ SQLite in development (`theater_bot.db` in `backend/`). `core/database.py` expos
 
 Single-page React app (`frontend/src/App.js`) with four tab views: `CalendarView`, `PollingView`, `FinanceView`, `NotificationsView` (labelled "Настройки" with ⚙️ icon). Telegram user ID is extracted from `window.Telegram.WebApp.initDataUnsafe.user` on mount and passed as `userId` prop to each view.
 
-`App.js` also fetches `/api/auth/app-config` on mount to get `trouFilter` (the configurable troupe name filter string) and passes it as a prop to `CalendarView`.
+`App.js` also fetches `/api/auth/app-config` on mount to get `trouFilter` (the read-only legacy calendar name filter) and passes it as a prop to `CalendarView`.
 
 All API calls go through `frontend/src/api/client.js` (axios instance). API base URL is configured via `REACT_APP_API_URL` env var (defaults to `http://127.0.0.1:8000`).
 
@@ -133,7 +133,7 @@ Key env vars beyond BOT_TOKEN:
 - `GOOGLE_SHEETS_ID` — spreadsheet ID for actor mapping, schedules, finances
 - `GROUP_CHAT_ID` — legacy group for application access/admin checks and migration of old publications; new poll destinations come from `theater_shows.telegram_chat_id`
 - `ADMIN_ID` — Telegram user ID of admin; the `notification_settings` row for this user acts as global app config
-- `TROUPE_FILTER` — default troupe name substring filter (default: `"труппа 1"`); can be overridden per-session via the Settings UI (stored in `notification_settings.troupe_filter`)
+- `TROUPE_FILTER` — fallback substring for matching legacy calendar titles (default: `"труппа 1"`). A previously saved `notification_settings.troupe_filter` remains effective for calendar compatibility. The «Основная группа» setting is removed from the UI, settings write API and assistant write tools; new poll destinations come from the show–chat table.
 - `SYNC_INTERVAL_MINUTES` — calendar/finance background sync interval
 
 Google Calendar integration requires `backend/credentials.json` (OAuth2 service account) and `GOOGLE_CALENDAR_ID` set in `.env`. If the credentials file is absent, sync is silently skipped. All-day events (Google returns `date` field, not `dateTime`) are handled via `CalendarService._parse_dt()`.

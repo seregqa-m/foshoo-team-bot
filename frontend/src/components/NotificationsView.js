@@ -299,7 +299,10 @@ export default function NotificationsView({ userId, isSuperAdmin = false }) {
 
   const handleSave = async () => {
     try {
-      await client.post('/api/notifications/settings', settings, { params: { user_id: userId } });
+      const { poll_reminders_enabled, reminder_days_before, reminder_time } = settings;
+      await client.post('/api/notifications/settings', {
+        poll_reminders_enabled, reminder_days_before, reminder_time,
+      }, { params: { user_id: userId } });
       setSaved(true);
       setTimeout(() => setSaved(false), 3000);
       setError(null);
@@ -360,20 +363,6 @@ export default function NotificationsView({ userId, isSuperAdmin = false }) {
       </div>
       <div style={{ fontSize: 12, color: '#888', padding: '4px 4px 0' }}>
         Напоминание отправляется автоматически за 1 день до события
-      </div>
-
-      <div className="section-label" style={{ marginTop: 16 }}>Основная группа</div>
-      <div className="card-white" style={{ padding: '14px 16px' }}>
-        <div style={{ fontSize: 13, color: '#666', marginBottom: 8 }}>
-          Подстрока в названии события для фильтрации и авто-опросов
-        </div>
-        <input
-          type="text"
-          className="form-input"
-          style={{ width: '100%' }}
-          value={settings.troupe_filter ?? 'труппа 1'}
-          onChange={e => { setSettings(s => ({ ...s, troupe_filter: e.target.value })); setSaved(false); }}
-        />
       </div>
 
       <button className="btn btn-primary" style={{ width: '100%', padding: 14, fontSize: 15, marginTop: 8 }} onClick={handleSave}>

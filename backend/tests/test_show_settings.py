@@ -27,7 +27,7 @@ class ShowSettingsTests(unittest.IsolatedAsyncioTestCase):
         Base.metadata.create_all(self.engine)
         self.Session = sessionmaker(bind=self.engine)
         self.db = self.Session()
-        self.db.add(NotificationSetting(user_id=42, current_show='Старый спектакль',
+        self.db.add(NotificationSetting(user_id=42, current_show='Старый спектакль', troupe_filter='труппа 1',
                                         poll_reminders_enabled=True, reminder_time='00:00'))
         from modules.theater.models import TheaterShow
         self.db.add_all([TheaterShow(name=name, normalized_name=name.lower(), telegram_chat_id=chat)
@@ -46,15 +46,22 @@ class ShowSettingsTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_legacy_choice_is_absent_from_settings_and_cannot_be_updated(self):
         self.assertNotIn('current_show', await get_notification_settings(user_id=42, db=self.db))
+        self.assertNotIn('troupe_filter', await get_notification_settings(user_id=42, db=self.db))
         self.assertNotIn('current_show', _collect_settings(self.db))
         # Old clients can still save other settings, but cannot revive the selector.
         await update_notification_settings(UpdateSettingsRequest(
-            current_show='Новый спектакль', reminder_time='17:30'), user_id=42, db=self.db)
+            current_show='Новый спектакль', troupe_filter='Устаревший клиент', reminder_time='17:30'), user_id=42, db=self.db)
         settings = self.db.query(NotificationSetting).one()
         self.assertEqual(settings.reminder_time, '17:30')
         self.assertEqual(settings.current_show, 'Старый спектакль')
+        self.assertEqual(settings.troupe_filter, 'труппа 1')
+        # Existing calendar matching continues to use the original value.
+        self.assertEqual(_collect_settings(self.db)['troupe_filter'], 'труппа 1')
         with self.assertRaises(HTTPException) as error:
             await _update_settings_handler(self.db, {'current_show': 'Новый спектакль'}, {})
+        self.assertEqual(error.exception.status_code, 400)
+        with self.assertRaises(HTTPException) as error:
+            await _update_settings_handler(self.db, {'troupe_filter': 'Другая группа'}, {})
         self.assertEqual(error.exception.status_code, 400)
 
     async def test_reminders_use_each_events_cast_and_ignore_the_legacy_choice(self):
