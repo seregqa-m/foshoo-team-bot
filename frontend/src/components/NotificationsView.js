@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import client from '../api/client';
 import AvailabilityCalendar from './AvailabilityCalendar';
 import SuperAdminPanel from './SuperAdminPanel';
+import TheaterPanel from './TheaterPanel';
 
 function Toggle({ checked, onChange }) {
   return (
@@ -376,6 +377,7 @@ export default function NotificationsView({ userId, isSuperAdmin = false }) {
 
       <AvailabilitySection showNames={showNames} />
       {isSuperAdmin && <SuperAdminPanel currentUserId={userId} />}
+      {isSuperAdmin && <TheaterPanel />}
     </>
   );
 }

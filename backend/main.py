@@ -21,6 +21,7 @@ from modules.notifications.router import router as notifications_router
 from modules.availability.router import router as availability_router
 from modules.planning.router import router as planning_router
 from modules.admin.router import router as admin_router
+from modules.theater.router import router as theater_router
 from modules.assistant.router import router as assistant_router
 from auth_router import router as auth_router
 from sheets_router import router as sheets_router
@@ -465,6 +466,7 @@ async def shutdown():
 # Регистрировать маршруты
 app.include_router(auth_router, dependencies=[Depends(authorize_api)])
 app.include_router(admin_router, dependencies=[Depends(authorize_api)])
+app.include_router(theater_router, dependencies=[Depends(authorize_api)])
 app.include_router(sheets_router, dependencies=[Depends(authorize_api)])
 app.include_router(finance_router, dependencies=[Depends(authorize_api)])
 app.include_router(calendar_router, dependencies=[Depends(authorize_api)])
