@@ -193,14 +193,12 @@ def _collect_settings(db: Session) -> dict[str, Any]:
     if not s:
         return {
             "troupe_filter": TROUPE_FILTER,
-            "current_show": None,
             "poll_reminders_enabled": False,
             "reminder_days_before": None,
             "reminder_time": None,
         }
     return {
         "troupe_filter": s.troupe_filter or TROUPE_FILTER,
-        "current_show": s.current_show,
         "poll_reminders_enabled": bool(s.poll_reminders_enabled),
         "reminder_days_before": s.reminder_days_before,
         "reminder_time": s.reminder_time,

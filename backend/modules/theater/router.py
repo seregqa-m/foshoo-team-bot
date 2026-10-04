@@ -83,12 +83,10 @@ class UpdateShowRequest(ShowRequest):
 @router.put('/shows/{show_id}')
 async def update_show(show_id: int, req: UpdateShowRequest, request: Request,
                       db: Session = Depends(get_db)):
+    title = None
     if req.telegram_chat_id is not None:
-        if db.get(TheaterChat, req.telegram_chat_id) is None:
-            raise HTTPException(404, 'Сначала зарегистрируйте и проверьте чат')
-        # Recheck availability after a previously successful registration.
         from bot import bot
-        await inspect_chat(bot, req.telegram_chat_id)
+        title = await inspect_chat(bot, req.telegram_chat_id)
     show = set_show(db, request.state.telegram_user.id, show_id, req.name,
-                    req.telegram_chat_id, req.expected_revision)
+                    req.telegram_chat_id, req.expected_revision, verified_chat_title=title)
     return show_data(show)

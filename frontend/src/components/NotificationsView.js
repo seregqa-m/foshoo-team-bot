@@ -304,23 +304,7 @@ export default function NotificationsView({ userId, isSuperAdmin = false }) {
       {error && <div className="alert alert-error">{error}</div>}
       {saved && <div className="alert alert-success">Настройки сохранены</div>}
 
-      <div className="section-label">Текущий репетируемый спектакль</div>
-      <div className="card-white" style={{ padding: '14px 16px' }}>
-        <div style={{ fontSize: 13, color: '#666', marginBottom: 8 }}>
-          Тегаются только задействованные в нём актёры. Если не выбран — тегаются все.
-        </div>
-        <select
-          className="select-input"
-          style={{ width: '100%' }}
-          value={settings.current_show ?? ''}
-          onChange={e => { setSettings(s => ({ ...s, current_show: e.target.value })); setSaved(false); }}
-        >
-          <option value="">— все актёры —</option>
-          {showNames.map(name => (
-            <option key={name} value={name}>{name}</option>
-          ))}
-        </select>
-      </div>
+      {isSuperAdmin && <TheaterPanel />}
 
       <div className="section-label">Авто-создание опросов</div>
       <div className="card-white">
@@ -377,7 +361,6 @@ export default function NotificationsView({ userId, isSuperAdmin = false }) {
 
       <AvailabilitySection showNames={showNames} />
       {isSuperAdmin && <SuperAdminPanel currentUserId={userId} />}
-      {isSuperAdmin && <TheaterPanel />}
     </>
   );
 }

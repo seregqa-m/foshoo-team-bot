@@ -198,19 +198,19 @@ def _show_names():
     from sheets_client import SheetsClient
     if not (GOOGLE_SHEETS_ID and os.path.exists(GOOGLE_CALENDAR_JSON)):
         return []
-    return [s.lower() for s in SheetsClient(GOOGLE_CALENDAR_JSON, GOOGLE_SHEETS_ID).get_show_names()]
+    return SheetsClient(GOOGLE_CALENDAR_JSON, GOOGLE_SHEETS_ID).get_show_names()
 
 
-def _reminder_usernames(current_show):
+def _reminder_usernames(show_name):
     from config import GOOGLE_SHEETS_ID
     from sheets_client import SheetsClient
     if not (GOOGLE_SHEETS_ID and os.path.exists(GOOGLE_CALENDAR_JSON)):
         raise RuntimeError("Google Sheets is not configured")
     client = SheetsClient(GOOGLE_CALENDAR_JSON, GOOGLE_SHEETS_ID)
     mapping = client.get_actor_mapping()
-    if not current_show:
+    if not show_name:
         return set(mapping)
-    cast = {n.lower() for n in client.get_show_cast(current_show)}
+    cast = {n.lower() for n in client.get_show_cast(show_name)}
     return {uname for uname, name in mapping.items() if name.lower() in cast}
 
 
@@ -286,13 +286,13 @@ async def _auto_create_polls():
 
         target_date = (now + timedelta(days=settings.reminder_days_before)).date()
 
-        show_names_lower = await asyncio.to_thread(_show_names)
+        show_names = await asyncio.to_thread(_show_names)
 
         for event in db.query(CalendarEvent).filter(CalendarEvent.is_cancelled == False).all():
             if event.start_time.date() != target_date:
                 continue
             from config import TROUPE_FILTER
-            if not is_troupe_event(event.title, show_names_lower, settings.troupe_filter or TROUPE_FILTER):
+            if not is_troupe_event(event.title, show_names, settings.troupe_filter or TROUPE_FILTER):
                 continue
             existing = db.query(Poll).filter(
                 Poll.calendar_event_id == event.id,
@@ -364,15 +364,20 @@ async def _send_poll_reminders():
             Poll.reminder_sent_at == None,
         ).all()
 
-        show_names_lower = await asyncio.to_thread(_show_names)
-        target_usernames = await asyncio.to_thread(_reminder_usernames, settings.current_show)
+        show_names = await asyncio.to_thread(_show_names)
+        recipients_by_show = {}
 
         for poll in polls:
             event = db.query(CalendarEvent).filter(CalendarEvent.id == poll.calendar_event_id).first()
             if not event or event.is_cancelled or not poll.telegram_message_id or event.start_time.date() != target_date:
                 continue
-            if is_performance(event.title, show_names_lower):
+            if is_performance(event.title, show_names):
                 continue
+
+            show_name = classify_event(event.title, show_names)['show_name']
+            if show_name not in recipients_by_show:
+                recipients_by_show[show_name] = await asyncio.to_thread(_reminder_usernames, show_name)
+            target_usernames = recipients_by_show[show_name]
 
             voted_usernames = {
                 v.username.lower() for v in

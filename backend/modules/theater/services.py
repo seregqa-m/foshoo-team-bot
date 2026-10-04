@@ -44,16 +44,21 @@ async def inspect_chat(bot, chat_id):
     return chat.title or str(chat.id)
 
 
+def _remember_chat(db, actor_id, chat_id, title):
+    chat = db.get(TheaterChat, chat_id, populate_existing=True)
+    if chat is None:
+        chat = TheaterChat(telegram_chat_id=chat_id, title=title)
+        db.add(chat)
+        audit(db, actor_id, 'chat_registered', chat_id=chat_id, title=title)
+    chat.title = title
+    chat.checked_at = datetime.utcnow()
+    return chat
+
+
 def register_chat(db, actor_id, chat_id, title):
     try:
         lock_management(db, actor_id)
-        chat = db.get(TheaterChat, chat_id, populate_existing=True)
-        if chat is None:
-            chat = TheaterChat(telegram_chat_id=chat_id, title=title)
-            db.add(chat)
-            audit(db, actor_id, 'chat_registered', chat_id=chat_id, title=title)
-        chat.title = title
-        chat.checked_at = datetime.utcnow()
+        chat = _remember_chat(db, actor_id, chat_id, title)
         db.commit()
         return chat
     except Exception:
@@ -88,7 +93,7 @@ def import_shows(db, actor_id, names):
         raise
 
 
-def set_show(db, actor_id, show_id, name, chat_id, expected_revision):
+def set_show(db, actor_id, show_id, name, chat_id, expected_revision, verified_chat_title=None):
     try:
         lock_management(db, actor_id)
         show = db.get(TheaterShow, show_id, populate_existing=True)
@@ -96,7 +101,7 @@ def set_show(db, actor_id, show_id, name, chat_id, expected_revision):
             raise HTTPException(404, 'Спектакль не найден')
         if show.revision != expected_revision:
             raise HTTPException(409, 'Настройки изменил другой администратор. Обновите список.')
-        if chat_id is not None and db.get(TheaterChat, chat_id) is None:
+        if chat_id is not None and verified_chat_title is None and db.get(TheaterChat, chat_id) is None:
             raise HTTPException(404, 'Сначала зарегистрируйте и проверьте чат')
         name = ' '.join(name.split())
         if not name or len(name) > 200:
@@ -105,6 +110,9 @@ def set_show(db, actor_id, show_id, name, chat_id, expected_revision):
         alias = db.get(TheaterShowAlias, normalized)
         if alias is not None and alias.show_id != show.id:
             raise HTTPException(409, 'Это название уже связано с другим спектаклем')
+        if chat_id is not None and verified_chat_title is not None:
+            _remember_chat(db, actor_id, chat_id, verified_chat_title)
+            db.flush()
         if show.name != name or show.telegram_chat_id != chat_id:
             audit(db, actor_id, 'show_updated', show_id=show.id,
                   old_name=show.name, name=name, old_chat_id=show.telegram_chat_id, chat_id=chat_id)

@@ -1,0 +1,18 @@
+.theater-panel { padding: 16px; margin-bottom: 16px; }
+.theater-panel h3 { margin-bottom: 8px; }
+.theater-panel p { font-size: 13px; margin-bottom: 8px; }
+.theater-panel__note { color: var(--muted); }
+.theater-table { width: 100%; table-layout: fixed; border-collapse: collapse; margin: 12px 0; }
+.theater-table th { text-align: left; font-size: 13px; padding-bottom: 8px; }
+.theater-table th:first-child { width: 43%; }
+.theater-table td { vertical-align: top; border-top: 1px solid var(--border); padding: 10px 0; }
+.theater-table td:first-child { padding-right: 8px; }
+.theater-table .form-input { width: 100%; min-width: 0; padding: 8px; font-size: 13px; }
+.theater-table .btn { margin-top: 6px; padding: 6px 10px; font-size: 12px; }
+.theater-table__error, .theater-table__saved { margin-top: 6px; font-size: 12px; overflow-wrap: anywhere; }
+.theater-table__error { color: var(--danger); }
+.theater-table__saved { color: var(--success); }
+.theater-panel__add { font-size: 13px; }
+.theater-panel__add summary { cursor: pointer; }
+.theater-panel__add form { display: flex; gap: 8px; margin-top: 8px; }
+.theater-panel__add input { width: 100%; min-width: 0; }

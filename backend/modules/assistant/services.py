@@ -88,7 +88,7 @@ SYSTEM_PROMPT_TEMPLATE = """Ты — Помощник FoShoo, ассистент
 - Для «перенеси занятие с воскресенья на пятницу 20:00» найди event_id в CONTEXT.upcoming_events (совпадение по дате+названию) и вызывай update_event.
 - Для «запусти опрос на субботу» найди event_id в CONTEXT.upcoming_events и вызывай create_attendance_poll.
 - Для «останови опрос про репетицию» найди poll_id в CONTEXT.active_polls (по event.title/date) и вызывай stop_poll.
-- Для «запусти опрос занятости» — если следующий месяц не назван явно, спроси. show_names по умолчанию — те что в CONTEXT.settings.current_show (если задан), иначе — уточни. event_ids получи через get_events_in_range на диапазон следующего месяца, отфильтровав по CONTEXT.settings.troupe_filter.
+- Для «запусти опрос занятости» — если следующий месяц не назван явно, спроси. show_names выбирай из CONTEXT.shows по запросу пользователя; если спектакли не названы, уточни. Единого «текущего спектакля» нет. event_ids получи через get_events_in_range на диапазон следующего месяца, отфильтровав по CONTEXT.settings.troupe_filter.
 - Для «пингани неответивших» вызывай ping_non_voters только если в CONTEXT.availability_campaign.non_voters есть люди.
 - Для «включи авто-опросы за 3 дня в 18:00» — update_settings с нужными полями.
 - Даты в tool_call — строго ISO 8601 (`YYYY-MM-DDTHH:MM:00`). Даты финансов — `DD.MM.YYYY` или пусто (сегодня).

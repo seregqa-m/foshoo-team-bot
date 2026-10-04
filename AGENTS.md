@@ -157,7 +157,7 @@ Non-voter detection cross-references `AvailabilityVote` table against actor cast
 
 1. **`_cleanup_old_polls()`** — deletes polls whose event ended more than 1 day ago
 2. **`_auto_create_polls()`** — if `poll_reminders_enabled` is on and current Moscow time ≥ `reminder_time`, finds events on `now + reminder_days_before` days, skips shows and non-`TROUPE_FILTER` events, creates poll via `PollingService` + `bot.send_poll()`
-3. **`_send_poll_reminders()`** — 1 day before each event, sends a mention message tagging only cast members of `current_show` (or all actors if not set) who haven't voted, then pins the poll message
+3. **`_send_poll_reminders()`** — 1 day before each event, resolves its show from the calendar title and tags that show's cast members who haven't voted (all actors for events without a recognized show), then pins the poll message. The legacy `current_show` column is retained for database compatibility and is no longer used.
 
 ### Known gaps
 

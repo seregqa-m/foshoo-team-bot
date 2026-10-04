@@ -125,17 +125,29 @@ class TheaterTests(unittest.TestCase):
             self.assertEqual(self.post('/shows/import').json()['added'], 0)
         self.assertEqual(len(self.catalog()['shows']), 2)
 
-    def test_unknown_chat_and_telegram_failure_leave_route_intact(self):
+    def test_save_registers_chat_directly_and_telegram_failure_leaves_route_intact(self):
         self.post('/shows', {'name': 'Урод'})
         show = self.catalog()['shows'][0]
-        self.assertEqual(self.save(show).status_code, 404)
         with patch('modules.theater.router.inspect_chat', AsyncMock(side_effect=HTTPException(502, 'offline'))):
-            self.assertEqual(self.post('/chats', {'telegram_chat_id': -1001}).status_code, 502)
+            self.assertEqual(self.save(show).status_code, 502)
         self.assertEqual(self.catalog()['chats'], [])
-        self.post('/chats', {'telegram_chat_id': -1001})
+        updated = self.save(show)
+        self.assertEqual(updated.status_code, 200)
+        self.assertEqual(self.catalog()['chats'][0]['telegram_chat_id'], -1001)
         with patch('modules.theater.router.inspect_chat', AsyncMock(side_effect=HTTPException(400, 'bot removed'))):
-            self.assertEqual(self.save(show).status_code, 400)
-        self.assertIsNone(self.catalog()['shows'][0]['telegram_chat_id'])
+            self.assertEqual(self.save(updated.json(), -1002).status_code, 400)
+        self.assertEqual(self.catalog()['shows'][0]['telegram_chat_id'], -1001)
+        self.assertEqual(len(self.catalog()['chats']), 1)
+
+    def test_stale_or_conflicting_row_does_not_register_an_unused_chat(self):
+        self.post('/shows', {'name': 'Урод'})
+        self.post('/shows', {'name': 'Слепые'})
+        original = next(s for s in self.catalog()['shows'] if s['name'] == 'Урод')
+        updated = self.save(original).json()
+        self.assertEqual(self.save(original, -1002).status_code, 409)
+        self.assertEqual(self.save(updated, -1002, 'Слепые').status_code, 409)
+        self.assertEqual([c['telegram_chat_id'] for c in self.catalog()['chats']], [-1001])
+        self.assertEqual(sum(a['action'] == 'chat_registered' for a in self.catalog()['audit']), 1)
 
     def test_chat_id_validation_and_registration_is_idempotent(self):
         for value in [True, 123, '-1001', 0, -(2**53)]:
@@ -147,6 +159,8 @@ class TheaterTests(unittest.TestCase):
         self.assertEqual(sum(a['action'] == 'chat_registered' for a in data['audit']), 1)
 
     def test_revocation_during_telegram_check_prevents_registration(self):
+        self.post('/shows', {'name': 'Урод'})
+        show = self.catalog()['shows'][0]
         async def revoke(*args):
             with self.Session() as db:
                 db.add(AppUser(telegram_user_id=84))
@@ -155,7 +169,7 @@ class TheaterTests(unittest.TestCase):
                 change_role(db, 84, 42, False)
             return 'Чат'
         with patch('modules.theater.router.inspect_chat', side_effect=revoke):
-            self.assertEqual(self.post('/chats', {'telegram_chat_id': -1001}).status_code, 403)
+            self.assertEqual(self.save(show).status_code, 403)
         with self.Session() as db:
             self.assertEqual(db.query(TheaterChat).count(), 0)
 

@@ -255,7 +255,7 @@ def _prepare_campaign(year, month_num):
             CalendarEvent.is_cancelled == False,
         ).order_by(CalendarEvent.start_time).all()
         return CreateCampaignRequest(
-            show_names=[settings.current_show] if settings and settings.current_show else shows,
+            show_names=shows,
             event_ids=[e.id for e in events if troupe in e.title.lower()
                        and not any(show.lower() in e.title.lower() for show in shows)],
         )

@@ -769,7 +769,6 @@ async def _update_settings_handler(db: Session, args: dict, ctx: dict) -> dict:
         "poll_reminders_enabled",
         "reminder_days_before",
         "reminder_time",
-        "current_show",
         "troupe_filter",
     } and v is not None}
     if not payload:
@@ -782,8 +781,7 @@ UPDATE_SETTINGS = Tool(
     name="update_settings",
     description=(
         "Обновить глобальные настройки приложения. Передавай ТОЛЬКО те поля, "
-        "которые меняются. current_show — название репетируемого спектакля из "
-        "CONTEXT.shows (пингуются только его актёры)."
+        "которые меняются. Спектакль определяется отдельно для каждого события."
     ),
     schema={
         "type": "function",
@@ -796,7 +794,6 @@ UPDATE_SETTINGS = Tool(
                     "poll_reminders_enabled": {"type": "boolean", "description": "Вкл/выкл авто-опросы посещаемости"},
                     "reminder_days_before": {"type": "integer", "description": "За сколько дней до события создавать опрос (1-7)"},
                     "reminder_time": {"type": "string", "description": "Время создания опроса, формат HH:MM (МСК)"},
-                    "current_show": {"type": "string", "description": "Название текущего репетируемого спектакля из CONTEXT.shows, или пустая строка чтобы сбросить"},
                     "troupe_filter": {"type": "string", "description": "Подстрока в названии события для фильтра (например 'труппа 1')"},
                 },
                 "required": [],
