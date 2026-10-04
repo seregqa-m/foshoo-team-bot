@@ -80,6 +80,16 @@ async def cmd_start(message: Message):
         )
 
 
+@dp.message(Command("chatid"))
+async def cmd_chat_id(message: Message):
+    """Let a group member copy the exact ID without third-party bots."""
+    if message.chat.type not in ('group', 'supergroup'):
+        await message.answer('Отправьте /chatid в группу, которую хотите привязать к спектаклю.')
+        return
+    await message.answer(f'ID этого чата: {message.chat.id}\n\n'
+                         'Скопируйте число целиком, вместе с минусом, в «Спектакли и чаты» → «ID чата».')
+
+
 @dp.message(Command("help"))
 async def cmd_help(message: Message):
     """Обработчик команды /help"""
@@ -87,6 +97,7 @@ async def cmd_help(message: Message):
         "📖 Справка\n\n"
         "Доступные команды:\n"
         "/start — главное меню и кнопка приложения\n"
+        "/chatid — показать ID группы для привязки к спектаклю\n"
         "/help — эта справка\n\n"
         "Нажми на кнопку 'Открыть приложение' чтобы начать работу!"
     )

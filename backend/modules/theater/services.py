@@ -1,7 +1,11 @@
 import asyncio
 import json
+import logging
 from datetime import datetime
 
+from aiogram.exceptions import (ClientDecodeError, TelegramBadRequest, TelegramForbiddenError,
+                                TelegramMigrateToChat, TelegramNetworkError, TelegramNotFound,
+                                TelegramRetryAfter, TelegramServerError, TelegramUnauthorizedError)
 from fastapi import HTTPException
 from sqlalchemy import update
 from sqlalchemy.exc import IntegrityError
@@ -9,6 +13,9 @@ from sqlalchemy.exc import IntegrityError
 from modules.admin.models import AdminSetup, SuperAdmin
 from modules.admin.services import BOOTSTRAP_KEY
 from .models import TheaterAudit, TheaterChat, TheaterShow, TheaterShowAlias
+
+logger = logging.getLogger(__name__)
+CHAT_INSPECTION_TIMEOUT = 15
 
 
 def normalize_name(value):
@@ -32,14 +39,49 @@ def audit(db, actor_id, action, **details):
 
 async def inspect_chat(bot, chat_id):
     """Read-only verification; never send a test message to a real chat."""
+    stage = 'getChat'
     try:
-        chat = await asyncio.wait_for(bot.get_chat(chat_id), timeout=5)
-        member = await asyncio.wait_for(bot.get_chat_member(chat_id, bot.id), timeout=5)
-    except Exception:
-        raise HTTPException(502, 'Не удалось проверить чат в Telegram. Проверьте ID и доступ бота.') from None
-    if chat.type not in ('group', 'supergroup') or chat.id != chat_id:
-        raise HTTPException(400, 'Нужен ID группы или супергруппы Telegram')
-    if member.status != 'administrator' or not member.can_pin_messages:
+        chat = await asyncio.wait_for(bot.get_chat(chat_id), timeout=CHAT_INSPECTION_TIMEOUT)
+        if chat.type not in ('group', 'supergroup') or chat.id != chat_id:
+            raise HTTPException(400, 'Нужен ID группы или супергруппы Telegram. Получите его командой /chatid в нужной группе.')
+        stage = 'getChatMember'
+        member = await asyncio.wait_for(bot.get_chat_member(chat_id, bot.id), timeout=CHAT_INSPECTION_TIMEOUT)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        # Exception strings can include token-bearing URLs and complete Telegram
+        # responses. Log only identifiers, exception type and a fixed category.
+        category = type(exc).__name__
+        status = 502
+        if isinstance(exc, TelegramMigrateToChat):
+            status = 400
+            detail = f'У этой группы изменился ID после преобразования в супергруппу. Введите новый ID: {exc.migrate_to_chat_id}.'
+        elif isinstance(exc, (asyncio.TimeoutError, TelegramNetworkError, TelegramServerError)):
+            status = 504 if isinstance(exc, asyncio.TimeoutError) else 502
+            detail = 'Сервер бота не получил ответ Telegram. Это не результат проверки прав. Повторите сохранение; если ошибка повторяется, проверьте соединение сервера с Telegram и прокси.'
+        elif isinstance(exc, TelegramRetryAfter):
+            status = 429
+            detail = f'Telegram временно ограничил запросы. Повторите сохранение через {exc.retry_after} сек.'
+        elif isinstance(exc, TelegramUnauthorizedError):
+            detail = 'Telegram отклонил авторизацию бота. Нужно проверить BOT_TOKEN на сервере.'
+        elif isinstance(exc, TelegramForbiddenError):
+            status = 400
+            detail = f'Telegram отказал боту (ID {bot.id}) в доступе к чату {chat_id}. Проверьте, что администратором добавлен именно бот этого приложения. Точный ID группы можно получить командой /chatid.'
+        elif isinstance(exc, (TelegramBadRequest, TelegramNotFound)):
+            status = 400
+            if 'chat not found' in exc.message.lower():
+                category = 'chat_not_found'
+                detail = f'Telegram не нашёл чат {chat_id} для этого бота. Отправьте /chatid в нужную группу и скопируйте полученный ID полностью.'
+            else:
+                detail = f'Telegram отклонил проверку чата {chat_id} на шаге {stage}. Получите ID командой /chatid в группе; если ID совпадает, передайте код ошибки: {category}/{stage}.'
+        elif isinstance(exc, ClientDecodeError):
+            detail = 'Бот не смог разобрать ответ Telegram. ID и права могут быть корректными; требуется проверка совместимости библиотеки Telegram на сервере (ClientDecodeError).'
+        else:
+            detail = f'Проверка чата не завершилась из-за внутренней ошибки ({category}/{stage}). Это не подтверждает проблему с ID или правами.'
+        logger.warning('Telegram chat inspection failed chat_id=%s bot_id=%s stage=%s reason=%s',
+                       chat_id, bot.id, stage, category)
+        raise HTTPException(status, detail) from None
+    if member.status != 'administrator' or not getattr(member, 'can_pin_messages', False):
         raise HTTPException(400, 'Назначьте бота администратором чата с правом закреплять сообщения')
     return chat.title or str(chat.id)
 

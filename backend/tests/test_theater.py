@@ -211,3 +211,57 @@ class TelegramInspectionTests(unittest.TestCase):
             asyncio.run(inspect_chat(bot, -1001))
         self.assertEqual(error.exception.status_code, 502)
         self.assertNotIn('secret-token', error.exception.detail)
+
+    def test_failure_categories_explain_the_actual_step_without_leaking_responses(self):
+        from aiogram.exceptions import (ClientDecodeError, TelegramBadRequest, TelegramForbiddenError,
+            TelegramMigrateToChat, TelegramNetworkError, TelegramRetryAfter, TelegramUnauthorizedError)
+        from aiogram.methods import GetChat
+        method = GetChat(chat_id=-1001)
+        cases = [
+            (TelegramBadRequest(method, 'Bad Request: chat not found'), 400, 'не нашёл чат -1001'),
+            (TelegramMigrateToChat(method, 'migrated secret-token', -100987654321), 400, '-100987654321'),
+            (TelegramForbiddenError(method, 'secret-token'), 400, 'боту (ID 1)'),
+            (TelegramNetworkError(method, 'secret-token'), 502, 'не получил ответ Telegram'),
+            (asyncio.TimeoutError('secret-token'), 504, 'не получил ответ Telegram'),
+            (TelegramRetryAfter(method, 'secret-token', 30), 429, 'через 30 сек.'),
+            (TelegramUnauthorizedError(method, 'secret-token'), 502, 'авторизацию бота'),
+            (ClientDecodeError('secret-token', ValueError('secret-token'), {'secret': 'secret-token'}), 502, 'ClientDecodeError'),
+        ]
+        for exc, status, fragment in cases:
+            with self.subTest(error=type(exc).__name__):
+                bot = SimpleNamespace(id=1, get_chat=AsyncMock(side_effect=exc))
+                with self.assertLogs('modules.theater.services', level='WARNING') as logs:
+                    with self.assertRaises(HTTPException) as error:
+                        asyncio.run(inspect_chat(bot, -1001))
+                self.assertEqual(error.exception.status_code, status)
+                self.assertIn(fragment, error.exception.detail)
+                self.assertNotIn('secret-token', error.exception.detail)
+                self.assertNotIn('secret-token', '\n'.join(logs.output))
+                self.assertIn('stage=getChat', '\n'.join(logs.output))
+
+    def test_membership_error_is_identified_separately_and_non_groups_are_not_inspected(self):
+        from aiogram.exceptions import TelegramBadRequest
+        from aiogram.methods import GetChatMember
+        bot = SimpleNamespace(id=1, get_chat=AsyncMock(return_value=SimpleNamespace(id=-1001, type='supergroup', title='Чат')),
+            get_chat_member=AsyncMock(side_effect=TelegramBadRequest(GetChatMember(chat_id=-1001, user_id=1), 'user not found')))
+        with self.assertRaises(HTTPException) as error:
+            asyncio.run(inspect_chat(bot, -1001))
+        self.assertIn('getChatMember', error.exception.detail)
+        bot.get_chat.return_value.type = 'channel'
+        bot.get_chat_member.reset_mock()
+        with self.assertRaises(HTTPException):
+            asyncio.run(inspect_chat(bot, -1001))
+        bot.get_chat_member.assert_not_called()
+
+
+class ChatIdCommandTests(unittest.IsolatedAsyncioTestCase):
+    async def test_group_command_returns_exact_signed_id_and_private_chat_gives_instructions(self):
+        from bot import cmd_chat_id
+        for kind in ('group', 'supergroup'):
+            message = SimpleNamespace(chat=SimpleNamespace(id=-1001234567890, type=kind), answer=AsyncMock())
+            await cmd_chat_id(message)
+            self.assertIn('ID этого чата: -1001234567890', message.answer.call_args.args[0])
+        message = SimpleNamespace(chat=SimpleNamespace(id=123, type='private'), answer=AsyncMock())
+        await cmd_chat_id(message)
+        self.assertIn('Отправьте /chatid в группу', message.answer.call_args.args[0])
+        self.assertNotIn('123', message.answer.call_args.args[0])
