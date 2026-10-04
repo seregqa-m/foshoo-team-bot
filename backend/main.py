@@ -80,6 +80,8 @@ def run_migrations():
             "ALTER TABLE availability_polls ADD COLUMN show_names TEXT",
             "ALTER TABLE availability_polls ADD COLUMN delivery_state TEXT",
             "ALTER TABLE availability_votes ADD COLUMN option_ids TEXT",
+            "ALTER TABLE calendar_events ADD COLUMN poll_show_id INTEGER",
+            "ALTER TABLE calendar_events ADD COLUMN poll_show_title TEXT",
         ]:
             table, column = stmt.split()[2], stmt.split()[5]
             if column not in {c["name"] for c in inspect(conn).get_columns(table)}:
@@ -295,7 +297,7 @@ async def _auto_create_polls():
     from datetime import timedelta
     from config import ADMIN_ID, TROUPE_FILTER
     from modules.calendar.models import CalendarEvent
-    from modules.theater.routing import show_aliases
+    from modules.theater.routing import show_aliases, saved_event_show
     from modules.polling.delivery import publish_event
     with SessionLocal() as db:
         settings = _poll_settings(db)
@@ -307,7 +309,8 @@ async def _auto_create_polls():
         for event in db.query(CalendarEvent).filter_by(is_cancelled=False).all():
             if not now <= event.start_time.date() <= target:
                 continue
-            if not is_troupe_event(event.title, aliases, settings.troupe_filter or TROUPE_FILTER):
+            if not (is_troupe_event(event.title, aliases, settings.troupe_filter or TROUPE_FILTER)
+                    or (saved_event_show(db, event) and not is_performance(event.title, aliases))):
                 continue
             try:
                 await publish_event(db, bot, event, ADMIN_ID, automatic=True)
@@ -321,7 +324,7 @@ async def _send_poll_reminders():
     from modules.calendar.models import CalendarEvent
     from modules.polling.models import Poll
     from modules.polling.delivery import publish_event
-    from modules.theater.routing import event_destination, poll_link, show_aliases
+    from modules.theater.routing import event_destination, poll_link, show_aliases, saved_event_show
     from modules.attendance.services import answered_usernames
     with SessionLocal() as db:
         settings = _poll_settings(db)
@@ -331,7 +334,10 @@ async def _send_poll_reminders():
         aliases = list(show_aliases(db))
         recipients = {}
         for event in db.query(CalendarEvent).filter_by(is_cancelled=False).all():
-            if event.start_time.date() != target or not is_troupe_event(event.title, aliases, settings.troupe_filter or TROUPE_FILTER):
+            if event.start_time.date() != target:
+                continue
+            if not (is_troupe_event(event.title, aliases, settings.troupe_filter or TROUPE_FILTER)
+                    or (saved_event_show(db, event) and not is_performance(event.title, aliases))):
                 continue
             try:
                 show = event_destination(db, event)

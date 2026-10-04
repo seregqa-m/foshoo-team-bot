@@ -19,6 +19,8 @@ with patch.dict(os.environ, {'BOT_TOKEN': '123456:offline-test-token', 'DATABASE
     from modules.polling.delivery import publish_event
     from modules.polling.router import pin_poll, stop_poll, get_events_poll_summary
     from modules.calendar.models import CalendarEvent
+    from modules.calendar.router import launch_poll_for_event, LaunchPollRequest, get_events
+    from modules.calendar.services import CalendarService
     from modules.theater.models import TheaterShow, TheaterShowAlias
     from modules.theater.routing import event_destination
     from modules.planning.router import read_plan
@@ -156,6 +158,156 @@ class SharedAttendanceTests(unittest.IsolatedAsyncioTestCase):
         self.send.assert_not_called()
         self.a.telegram_chat_id = None; self.db.commit()
         with self.assertRaises(HTTPException): event_destination(self.db, self.regular()[0])
+
+    async def test_unknown_event_offers_catalog_without_publishing(self):
+        self.db.add(TheaterShow(name='Без чата', normalized_name='без чата'))
+        self.db.commit()
+        for title in ['Труппа 1', 'Калий и Урод [Реп]']:
+            event, _ = self.regular(title)
+            count = self.db.query(Poll).count()
+            with patch('bot.bot.send_poll', self.send), self.assertRaises(HTTPException) as error:
+                await launch_poll_for_event(event.id, 1, self.db)
+            self.assertEqual(error.exception.status_code, 409)
+            self.assertEqual(error.exception.detail['code'], 'show_required')
+            shows = {s['name']: s for s in error.exception.detail['shows']}
+            self.assertEqual(set(shows), {'Калий', 'Урод', 'Без чата'})
+            self.assertEqual(shows['Калий']['telegram_chat_id'], -100111)
+            self.assertIsNone(shows['Без чата']['telegram_chat_id'])
+            self.assertEqual(self.db.query(Poll).count(), count)
+        self.send.assert_not_awaited()
+
+    async def test_selected_show_survives_sync_and_routes_retries_and_reminders(self):
+        event, _ = self.regular('Разбор [Реп]')
+        event.google_event_id = 'rehearsal'
+        event.end_time = datetime(2026, 10, 7, 20)
+        self.db.add(NotificationSetting(user_id=1, poll_reminders_enabled=True, reminder_time='00:00'))
+        self.db.commit()
+        with patch('bot.bot.send_poll', self.send):
+            result = await launch_poll_for_event(event.id, 1, self.db, LaunchPollRequest(show_id=self.b.id))
+            self.assertEqual(self.send.call_args.kwargs['chat_id'], -100222)
+            self.assertIn('Урод', self.send.call_args.kwargs['question'])
+            CalendarService(self.db).sync_from_google([{'id': 'rehearsal', 'summary': event.title,
+                'start': {'dateTime': event.start_time.isoformat()},
+                'end': {'dateTime': event.end_time.isoformat()}}])
+            with self.Session() as other:
+                restored = other.get(CalendarEvent, event.id)
+                self.assertEqual(restored.title, 'Разбор [Реп]')
+                self.assertEqual(event_destination(other, restored).id, self.b.id)
+                self.assertEqual(await launch_poll_for_event(event.id, 1, other), result)
+            with patch('main.SessionLocal', self.Session), patch('config.ADMIN_ID', 1), \
+                 patch('main.local_now', return_value=as_local(datetime(2026, 10, 6, 19))), \
+                 patch('main._reminder_usernames', return_value={'onlyb'}), \
+                 patch('bot.bot.send_message', AsyncMock()) as send, \
+                 patch('bot.bot.pin_chat_message', AsyncMock()) as pin:
+                await main._auto_create_polls()
+                await main._send_poll_reminders()
+            self.send.assert_awaited_once()
+            self.assertEqual(send.call_args.kwargs['chat_id'], -100222)
+            self.assertIn('@onlyb', send.call_args.kwargs['text'])
+            self.assertEqual(pin.call_args.kwargs['chat_id'], -100222)
+        with patch('modules.calendar.services.local_now', return_value=as_local(datetime(2026, 10, 6))):
+            data = get_events(db=self.db)['events'][0]
+        self.assertEqual(data['poll_show_name'], 'Урод')
+
+    async def test_selection_rechecks_chat_and_cannot_override_known_or_cancelled_event(self):
+        event, _ = self.regular('Труппа 1')
+        self.b.telegram_chat_id = None
+        self.db.commit()
+        with patch('bot.bot.send_poll', self.send):
+            for show_id in [9999, self.b.id]:
+                with self.assertRaises(HTTPException):
+                    await launch_poll_for_event(event.id, 1, self.db, LaunchPollRequest(show_id=show_id))
+                self.assertIsNone(event.poll_show_id)
+            event.title = 'Калий [Реп]'
+            self.b.telegram_chat_id = -100222
+            self.db.commit()
+            with self.assertRaises(HTTPException):
+                await launch_poll_for_event(event.id, 1, self.db, LaunchPollRequest(show_id=self.b.id))
+            event.is_cancelled = True
+            self.db.commit()
+            with self.assertRaises(HTTPException) as error:
+                await launch_poll_for_event(event.id, 1, self.db, LaunchPollRequest(show_id=self.a.id))
+            self.assertEqual(error.exception.status_code, 404)
+        self.send.assert_not_awaited()
+
+    async def test_renamed_event_requires_resolution_again_and_old_poll_keeps_destination(self):
+        event, _ = self.regular('Труппа 1')
+        with patch('bot.bot.send_poll', self.send):
+            result = await launch_poll_for_event(event.id, 1, self.db, LaunchPollRequest(show_id=self.a.id))
+        old_poll = self.db.get(Poll, result['poll_id'])
+        event.title = 'Другая репетиция [Реп]'
+        self.db.commit()
+        with self.assertRaises(HTTPException) as error:
+            await launch_poll_for_event(event.id, 1, self.db)
+        self.assertEqual(error.exception.detail['code'], 'show_required')
+        event.title = 'Урод [Реп]'
+        self.db.commit()
+        self.assertEqual(event_destination(self.db, event).id, self.b.id)
+        self.assertEqual(old_poll.telegram_chat_id, -100111)
+
+    async def test_selection_is_kept_on_rejected_send_and_retry_does_not_duplicate(self):
+        event, _ = self.regular('Труппа 1')
+        denied = TelegramForbiddenError(method=SendPoll(chat_id=-100111, question='?', options=['a', 'b']), message='forbidden')
+        with patch('bot.bot.send_poll', AsyncMock(side_effect=denied)):
+            with self.assertRaises(HTTPException):
+                await launch_poll_for_event(event.id, 1, self.db, LaunchPollRequest(show_id=self.a.id))
+        failed = self.db.query(Poll).filter_by(calendar_event_id=event.id, delivery_state='failed').one()
+        with patch('bot.bot.send_poll', self.send):
+            result = await launch_poll_for_event(event.id, 1, self.db)
+            await launch_poll_for_event(event.id, 1, self.db, LaunchPollRequest(show_id=self.a.id))
+        self.assertEqual(result['poll_id'], failed.id)
+        self.send.assert_awaited_once()
+
+    def test_poll_selection_http_contract_and_admin_access(self):
+        from fastapi import Depends, FastAPI
+        from fastapi.testclient import TestClient
+        from core.access import authorize_api, TelegramUser
+        from core.database import get_db
+        from modules.calendar.router import router
+        event, _ = self.regular('Труппа 1')
+        app = FastAPI(dependencies=[Depends(authorize_api)])
+        app.include_router(router)
+        def database():
+            with self.Session() as db:
+                yield db
+        app.dependency_overrides[get_db] = database
+        with TestClient(app) as client, patch('bot.bot.send_poll', self.send), \
+             patch('core.access.verify_init_data', return_value=TelegramUser(1, 'admin')), \
+             patch('core.access._permissions', AsyncMock(return_value=(True, True, False))) as permissions:
+            url = f'/api/calendar/events/{event.id}/poll?user_id=1'
+            response = client.post(url)
+            self.assertEqual(response.status_code, 409)
+            self.assertEqual(response.json()['detail']['code'], 'show_required')
+            self.assertEqual(client.post(url, json={'show_id': 'wrong'}).status_code, 422)
+            permissions.return_value = (True, False, False)
+            self.assertEqual(client.post(url, json={'show_id': self.a.id}).status_code, 403)
+            self.send.assert_not_awaited()
+            permissions.return_value = (True, True, False)
+            response = client.post(url, json={'show_id': self.a.id})
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json()['telegram_chat_id'], -100111)
+            self.assertEqual(client.post(url).status_code, 200)
+            self.send.assert_awaited_once()
+
+    def test_calendar_selection_migration_preserves_events_and_saved_choice(self):
+        from sqlalchemy import text
+        event, _ = self.regular('Труппа 1')
+        event_id, show_id = event.id, self.a.id
+        self.db.close()
+        with self.engine.begin() as conn:
+            conn.execute(text('ALTER TABLE calendar_events DROP COLUMN poll_show_id'))
+            conn.execute(text('ALTER TABLE calendar_events DROP COLUMN poll_show_title'))
+        with patch('main.engine', self.engine):
+            main.run_migrations()
+            restored = self.db.get(CalendarEvent, event_id)
+            self.assertEqual(restored.title, 'Труппа 1')
+            self.assertIsNone(restored.poll_show_id)
+            restored.poll_show_id = show_id
+            restored.poll_show_title = restored.title
+            self.db.commit()
+            main.run_migrations()
+        self.db.expire_all()
+        self.assertEqual(event_destination(self.db, restored).id, show_id)
 
     async def test_campaign_deduplicates_chats_and_preserves_history(self):
         req = CreateCampaignRequest(show_names=['Калий', 'Урод'], dates=[self.day])

@@ -15,6 +15,9 @@ class CalendarEvent(Base):
     start_time = Column(CalendarDateTime, index=True)
     end_time = Column(CalendarDateTime)
     location = Column(String, nullable=True)
+    # A manual poll destination belongs to this event, not to every rehearsal.
+    poll_show_id = Column(Integer, nullable=True)
+    poll_show_title = Column(String, nullable=True)
     is_cancelled = Column(Boolean, default=False)
     last_synced = Column(DateTime, default=datetime.utcnow)
     created_at = Column(DateTime, default=datetime.utcnow)

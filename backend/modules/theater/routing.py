@@ -31,10 +31,42 @@ def resolve_show(db, title, *, exact=False):
 
 
 def event_destination(db, event):
-    show = resolve_show(db, event.title)
+    try:
+        show = saved_event_show(db, event) or resolve_show(db, event.title)
+    except HTTPException as exc:
+        raise ShowSelectionRequired() from exc
     if not show.telegram_chat_id:
         raise HTTPException(409, f'Для «{show.name}» не указан ID чата в настройках')
     return show
+
+
+class ShowSelectionRequired(HTTPException):
+    def __init__(self):
+        super().__init__(409, 'Не удалось определить спектакль. Выберите его для этой репетиции.')
+
+
+def saved_event_show(db, event):
+    # A renamed calendar event must be resolved again, not sent to an old show.
+    if event.poll_show_id and event.poll_show_title == event.title:
+        return db.get(TheaterShow, event.poll_show_id)
+    return None
+
+
+def select_event_show(db, event, show_id):
+    show = db.get(TheaterShow, show_id)
+    if not show:
+        raise ShowSelectionRequired()
+    try:
+        current = saved_event_show(db, event) or resolve_show(db, event.title)
+    except HTTPException:
+        current = None
+    if current and current.id != show.id:
+        raise HTTPException(409, f'Для репетиции уже определён спектакль «{current.name}». Обновите календарь.')
+    if not show.telegram_chat_id:
+        raise HTTPException(409, f'Для «{show.name}» не указан ID чата в настройках «Спектакли и чаты»')
+    event.poll_show_id = show.id
+    event.poll_show_title = event.title
+    db.commit()
 
 
 def campaign_destinations(db, names):

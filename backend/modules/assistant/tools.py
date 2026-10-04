@@ -599,7 +599,13 @@ async def _create_attendance_poll_handler(db: Session, args: dict, ctx: dict) ->
     event_id = int(args.get("event_id") or 0)
     if not event_id:
         raise HTTPException(status_code=400, detail="event_id обязателен")
-    return await launch_poll_for_event(event_id=event_id, user_id=ctx.get("user_id"), db=db)
+    try:
+        return await launch_poll_for_event(event_id=event_id, user_id=ctx.get("user_id"), db=db)
+    except HTTPException as exc:
+        if isinstance(exc.detail, dict) and exc.detail.get('code') == 'show_required':
+            raise HTTPException(409, 'Не удалось определить спектакль. Откройте эту репетицию в календаре '
+                                'и нажмите «Опрос», чтобы выбрать спектакль из списка.') from exc
+        raise
 
 
 CREATE_ATTENDANCE_POLL = Tool(

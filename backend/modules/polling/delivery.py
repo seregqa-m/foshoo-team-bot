@@ -7,7 +7,7 @@ from fastapi import HTTPException
 
 from .models import Poll
 from .services import PollingService
-from modules.theater.routing import event_destination
+from modules.theater.routing import event_destination, select_event_show
 
 delivery_lock = asyncio.Lock()
 
@@ -34,10 +34,14 @@ async def send_publication(db, bot, poll, *, question, options, multiple=False):
     db.commit()
 
 
-async def publish_event(db, bot, event, user_id, *, automatic=False):
+async def publish_event(db, bot, event, user_id, *, automatic=False, show_id=None):
     from babel.dates import format_date
     async with delivery_lock:
         db.expire_all()
+        if event.is_cancelled:
+            raise HTTPException(404, 'Событие не найдено или отменено')
+        if show_id is not None:
+            select_event_show(db, event, show_id)
         show = event_destination(db, event)
         day = event.start_time.date()
         # Existing publications retain their original day and chat after edits.

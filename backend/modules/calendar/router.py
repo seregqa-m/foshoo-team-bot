@@ -3,7 +3,7 @@ FastAPI router для календаря
 """
 import logging
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from datetime import datetime
 from sqlalchemy.orm import Session
 from core.database import get_db
@@ -12,6 +12,8 @@ from .models import CalendarEvent
 from .services import CalendarService
 from .google_client import GoogleCalendarClient
 from .classification import classify_event
+from modules.theater.routing import saved_event_show, ShowSelectionRequired
+from modules.theater.models import TheaterShow, TheaterChat
 import os
 
 logger = logging.getLogger(__name__)
@@ -32,6 +34,10 @@ class UpdateEventRequest(BaseModel):
     end_time: str = None
     location: str = None
     description: str = None
+
+
+class LaunchPollRequest(BaseModel):
+    show_id: int = Field(strict=True, gt=0)
 
 
 def get_google_client():
@@ -65,6 +71,7 @@ def get_events(days: int = 30, db: Session = Depends(get_db), include_past: bool
                 "id": e.id,
                 "title": e.title,
                 **classify_event(e.title),
+                "poll_show_name": show.name if (show := saved_event_show(db, e)) else None,
                 "description": e.description,
                 "start_time": e.start_time.isoformat(),
                 "end_time": e.end_time.isoformat(),
@@ -199,7 +206,8 @@ def update_event(
 async def launch_poll_for_event(
     event_id: int,
     user_id: int = None,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    request: LaunchPollRequest | None = None,
 ):
     """Создать опрос о посещаемости для события и отправить его в Telegram-группу"""
     from bot import bot
@@ -209,7 +217,19 @@ async def launch_poll_for_event(
     event = CalendarService(db).get_event_by_id(event_id)
     if not event or event.is_cancelled:
         raise HTTPException(404, 'Событие не найдено или отменено')
-    return await publish_event(db, bot, event, user_id)
+    try:
+        return await publish_event(db, bot, event, user_id,
+                                   show_id=request.show_id if request else None)
+    except ShowSelectionRequired as exc:
+        chats = {chat.telegram_chat_id: chat.title for chat in db.query(TheaterChat).all()}
+        raise HTTPException(409, {
+            'code': 'show_required',
+            'message': exc.detail,
+            'shows': [{'id': show.id, 'name': show.name,
+                       'telegram_chat_id': show.telegram_chat_id,
+                       'chat_title': chats.get(show.telegram_chat_id)}
+                      for show in db.query(TheaterShow).order_by(TheaterShow.name).all()],
+        }) from exc
 
 
 @router.delete("/events/{event_id}")

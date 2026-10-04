@@ -24,8 +24,8 @@ export const deleteEvent = (eventId) => {
   return client.delete(`/api/calendar/events/${eventId}`);
 };
 
-export const launchPoll = (eventId, userId) => {
-  return client.post(`/api/calendar/events/${eventId}/poll`, null, {
+export const launchPoll = (eventId, userId, showId = null) => {
+  return client.post(`/api/calendar/events/${eventId}/poll`, showId === null ? null : { show_id: showId }, {
     params: { user_id: userId },
   });
 };

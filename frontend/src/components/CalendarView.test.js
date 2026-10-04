@@ -5,7 +5,7 @@ import client from '../api/client';
 import * as calendarApi from '../api/calendar';
 
 jest.mock('../api/client', () => ({ __esModule: true, default: { get: jest.fn() } }));
-jest.mock('../api/calendar', () => ({ getEvents: jest.fn() }));
+jest.mock('../api/calendar', () => ({ getEvents: jest.fn(), launchPoll: jest.fn() }));
 jest.mock('./PlanningView', () => () => null);
 
 let root, container;
@@ -21,6 +21,7 @@ beforeEach(() => {
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
+  calendarApi.launchPoll.mockReset();
   client.get.mockImplementation(url => Promise.resolve({ data: url.endsWith('/shows') ? { shows: ['Гамлет', ''] } : {} }));
   calendarApi.getEvents.mockResolvedValue({ data: { events: [
     event(1, 'Труппа 1 — вчерашний разбор', '10:00', '11:00'),
@@ -103,4 +104,81 @@ test('explicit rehearsal type overrides a known show name and keeps troupe color
   expect(container.querySelector('rect[fill-opacity]').getAttribute('fill')).toBe('#C4B5FD');
   await act(async () => button('Спектакли').click());
   expect(titles()).toEqual(['Неизвестная премьера[Спект]']);
+});
+
+const chooseShowError = (shows = [
+  { id: 10, name: 'Гамлет', telegram_chat_id: -100111, chat_title: 'Репетиции Гамлета' },
+  { id: 11, name: 'Урод', telegram_chat_id: -100222, chat_title: 'Урод' },
+  { id: 12, name: 'Без чата', telegram_chat_id: null },
+]) => ({ response: { status: 409, data: { detail: { code: 'show_required', shows } } } });
+
+test('offers existing shows for an unknown rehearsal and sends only after selection', async () => {
+  calendarApi.getEvents.mockResolvedValue({ data: { events: [
+    { ...event(7, 'Разбор [Реп]', '19:00', '21:00'), event_type: 'rehearsal' },
+  ] } });
+  calendarApi.launchPoll.mockRejectedValueOnce(chooseShowError()).mockResolvedValue({ data: { status: 'sent' } });
+  await act(async () => root.render(<CalendarView userId={42} isAdmin />));
+  await act(async () => button('🗳️ Опрос').click());
+  expect(calendarApi.launchPoll).toHaveBeenCalledWith(7, 42, null);
+  const select = container.querySelector('#poll-show-7');
+  expect([...select.options].map(o => o.textContent)).toEqual([
+    'Выберите спектакль', 'Гамлет', 'Урод', 'Без чата — чат не настроен',
+  ]);
+  expect(select.options[3].disabled).toBe(true);
+  expect(button('Отправить опрос').disabled).toBe(true);
+  await act(async () => { select.value = '10'; select.dispatchEvent(new Event('change', { bubbles: true })); });
+  expect(container.textContent).toContain('Опрос и напоминания пойдут в чат «Репетиции Гамлета»');
+  expect(calendarApi.launchPoll).toHaveBeenCalledTimes(1);
+  await act(async () => button('Отправить опрос').click());
+  expect(calendarApi.launchPoll).toHaveBeenLastCalledWith(7, 42, 10);
+  expect(container.querySelector('#poll-show-7')).toBeNull();
+  expect(calendarApi.getEvents).toHaveBeenCalledTimes(2);
+});
+
+test('cancelling show selection sends no poll', async () => {
+  calendarApi.launchPoll.mockRejectedValueOnce(chooseShowError());
+  await act(async () => root.render(<CalendarView userId={42} isAdmin />));
+  await act(async () => button('🗳️ Опрос').click());
+  await act(async () => button('Отмена').click());
+  expect(container.querySelector('select')).toBeNull();
+  expect(button('🗳️ Опрос')).toBeDefined();
+  expect(calendarApi.launchPoll).toHaveBeenCalledTimes(1);
+});
+
+test('empty show catalog explains where to configure it', async () => {
+  calendarApi.launchPoll.mockRejectedValueOnce(chooseShowError([]));
+  await act(async () => root.render(<CalendarView userId={42} isAdmin />));
+  await act(async () => button('🗳️ Опрос').click());
+  expect(container.textContent).toContain('Список спектаклей пуст');
+  expect(button('Отправить опрос')).toBeUndefined();
+});
+
+test('keeps selection and displays a send failure so it can be retried', async () => {
+  calendarApi.launchPoll.mockRejectedValueOnce(chooseShowError())
+    .mockRejectedValueOnce({ response: { data: { detail: 'Telegram отклонил отправку' } } });
+  await act(async () => root.render(<CalendarView userId={42} isAdmin />));
+  await act(async () => button('🗳️ Опрос').click());
+  const select = container.querySelector('select');
+  await act(async () => { select.value = '11'; select.dispatchEvent(new Event('change', { bubbles: true })); });
+  await act(async () => button('Отправить опрос').click());
+  expect(container.textContent).toContain('Telegram отклонил отправку');
+  expect(select.value).toBe('11');
+  expect(button('Отправить опрос').disabled).toBe(false);
+});
+
+test('recognized show sends immediately and saved selection is visible after reload', async () => {
+  calendarApi.getEvents.mockResolvedValue({ data: { events: [
+    { ...event(7, 'Разбор [Реп]', '19:00', '21:00'), event_type: 'rehearsal', poll_show_name: 'Гамлет' },
+  ] } });
+  calendarApi.launchPoll.mockResolvedValue({ data: { status: 'sent' } });
+  await act(async () => root.render(<CalendarView userId={42} isAdmin />));
+  expect(container.querySelector('.event-body').textContent).toContain('Гамлет');
+  await act(async () => button('🗳️ Опрос').click());
+  expect(calendarApi.launchPoll).toHaveBeenCalledWith(7, 42, null);
+  expect(container.querySelector('select')).toBeNull();
+});
+
+test('non-admin has no launch button', async () => {
+  await act(async () => root.render(<CalendarView userId={42} />));
+  expect(button('🗳️ Опрос')).toBeUndefined();
 });

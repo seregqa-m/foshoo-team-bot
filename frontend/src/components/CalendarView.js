@@ -44,7 +44,7 @@ function getEventGroup(event, showNames, trouFilter = 'труппа 1') {
   if (trouFilter.trim() && t.includes(trouFilter.trim().toLowerCase())) return 'труппа 1';
   if (t.includes('труппа 2')) return 'труппа 2';
   if (t.includes('лаба')) return 'лаба';
-  if (event.event_type === 'rehearsal' && knownShow) return 'труппа 1';
+  if (event.event_type === 'rehearsal' || event.poll_show_name) return 'труппа 1';
   return null;
 }
 
@@ -208,10 +208,13 @@ function EventCard({ event, userId, onEdit, isAdmin, isPollable, isPast, poll, o
   const start = new Date(event.start_time);
   const [polling, setPolling] = useState(false);
   const [pollError, setPollError] = useState(null);
+  const [pollShows, setPollShows] = useState(null);
+  const [selectedShowId, setSelectedShowId] = useState('');
+  const selectedShow = pollShows?.find(show => String(show.id) === selectedShowId);
 
-  const handlePoll = async () => {
+  const handlePoll = async (showId = null) => {
     if (!userId) { setPollError('Нет userId'); return; }
-    if (poll) {
+    if (poll && showId === null) {
       const date = poll.created_at
         ? new Date(poll.created_at).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' })
         : '—';
@@ -223,10 +226,18 @@ function EventCard({ event, userId, onEdit, isAdmin, isPollable, isPast, poll, o
     try {
       setPolling(true);
       setPollError(null);
-      await calendarApi.launchPoll(event.id, userId);
+      await calendarApi.launchPoll(event.id, userId, showId);
+      setPollShows(null);
+      setSelectedShowId('');
       onPollAction && onPollAction();
     } catch (e) {
-      setPollError(e.response?.data?.detail || 'Ошибка');
+      const detail = e.response?.data?.detail;
+      if (detail?.code === 'show_required') {
+        setPollShows(detail.shows || []);
+        setSelectedShowId('');
+      } else {
+        setPollError(typeof detail === 'string' ? detail : detail?.message || 'Не удалось запустить опрос');
+      }
     } finally {
       setPolling(false);
     }
@@ -276,8 +287,8 @@ function EventCard({ event, userId, onEdit, isAdmin, isPollable, isPast, poll, o
       </div>
       <div className="event-body">
         <div className="event-title" style={{ paddingRight: isAdmin ? 24 : 0 }}>{event.title}</div>
-        {event.show_name && !event.title.toLowerCase().includes(event.show_name.toLowerCase()) && (
-          <div className="event-meta">{event.show_name}</div>
+        {(event.poll_show_name || event.show_name) && !event.title.toLowerCase().includes((event.poll_show_name || event.show_name).toLowerCase()) && (
+          <div className="event-meta">{event.poll_show_name || event.show_name}</div>
         )}
         <div className="event-meta">
           {formatTime(event.start_time)} – {formatTime(event.end_time)}
@@ -285,9 +296,46 @@ function EventCard({ event, userId, onEdit, isAdmin, isPollable, isPast, poll, o
           {isPast ? ' · Завершено' : ''}
         </div>
         {pollError && <div style={{ fontSize: 12, color: 'var(--danger)', marginBottom: 8 }}>{pollError}</div>}
+        {pollShows !== null && (
+          <div style={{ margin: '10px 0' }}>
+            <label htmlFor={`poll-show-${event.id}`} style={{ display: 'block', marginBottom: 8 }}>
+              Не удалось определить спектакль. Выберите его для этой репетиции:
+            </label>
+            {pollShows.length > 0 ? (
+              <>
+                <select id={`poll-show-${event.id}`} value={selectedShowId} disabled={polling}
+                  onChange={e => { setSelectedShowId(e.target.value); setPollError(null); }}
+                  style={{ width: '100%', marginBottom: 8 }}>
+                  <option value="">Выберите спектакль</option>
+                  {pollShows.map(show => (
+                    <option key={show.id} value={show.id} disabled={!show.telegram_chat_id}>
+                      {show.name}{show.telegram_chat_id ? '' : ' — чат не настроен'}
+                    </option>
+                  ))}
+                </select>
+                {selectedShow && (
+                  <div className="event-meta" style={{ marginBottom: 8 }}>
+                    Опрос и напоминания пойдут в чат «{selectedShow.chat_title || selectedShow.name}».
+                  </div>
+                )}
+                {!pollShows.some(show => show.telegram_chat_id) && (
+                  <div className="event-meta">Попросите суперадмина указать чаты в настройках «Спектакли и чаты».</div>
+                )}
+                <button className="btn btn-primary" disabled={polling || !selectedShow?.telegram_chat_id}
+                  onClick={() => handlePoll(Number(selectedShowId))}>
+                  {polling ? 'Отправляем…' : 'Отправить опрос'}
+                </button>
+              </>
+            ) : (
+              <div className="event-meta">Список спектаклей пуст. Попросите суперадмина добавить их в настройках «Спектакли и чаты».</div>
+            )}
+            <button className="btn btn-secondary" disabled={polling} style={{ marginLeft: 8 }}
+              onClick={() => { setPollShows(null); setSelectedShowId(''); setPollError(null); }}>Отмена</button>
+          </div>
+        )}
         <div className="event-actions" style={{ gap: 6, alignItems: 'center' }}>
-          {isPollable && (
-            <button className="btn btn-secondary" onClick={handlePoll} disabled={polling} style={{ fontSize: 13, padding: '5px 10px' }}>
+          {isAdmin && isPollable && pollShows === null && (
+            <button className="btn btn-secondary" onClick={() => handlePoll()} disabled={polling} style={{ fontSize: 13, padding: '5px 10px' }}>
               {polling ? '⌛' : '🗳️ Опрос'}
             </button>
           )}
@@ -560,7 +608,7 @@ export default function CalendarView({ userId, isAdmin, trouFilter = 'трупп
               isPollable={isT1 && !isPast}
               isPast={isPast}
               poll={pollSummary[String(e.id)]}
-              onPollAction={fetchPollSummary}
+              onPollAction={() => { fetchPollSummary(); fetchEvents(); }}
             />
           );
         })
