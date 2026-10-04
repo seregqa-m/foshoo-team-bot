@@ -538,7 +538,7 @@ class SheetsClient:
         logger.info(f"Sheets: добавлено {len(missing)} столбцов в График [составы]")
         return len(missing)
 
-    def record_poll_answer(self, telegram_username: str, event_dt: datetime, answer: str) -> bool:
+    def record_poll_answer(self, telegram_username: str, event_dt: datetime, answer: str, *, actor_name: str = None) -> bool:
         """
         Записать ответ актёра в таблицу.
         answer: "yes" → "да", "no" → "нет", "unknown"/"retracted" → очистить ячейку.
@@ -552,7 +552,7 @@ class SheetsClient:
             sheet_value = ""  # "не знаю" или отзыв голоса → пустая ячейка
 
         mapping = self.get_actor_mapping()
-        actor_name = mapping.get(telegram_username.lower())
+        actor_name = actor_name or mapping.get(telegram_username.lower())
         if not actor_name:
             logger.warning(f"Sheets: unknown username @{telegram_username}")
             return False
@@ -562,12 +562,17 @@ class SheetsClient:
             logger.warning(f"Sheets: actor '{actor_name}' not found in schedule sheet")
             return False
 
-        col = self.find_date_column(event_dt)
-        if not col:
+        result = self.api.values().get(spreadsheetId=self.spreadsheet_id,
+                                       range=f"{SCHEDULE_SHEET}!1:1").execute()
+        headers = result.get('values', [[]])[0]
+        columns = [_col_num_to_letter(i + 1) for i, header in enumerate(headers)
+                   if (parsed := _parse_header_date(header, event_dt.year)) and parsed.date() == event_dt.date()]
+        if not columns:
             logger.warning(f"Sheets: date {event_dt} not found in schedule sheet headers")
             return False
 
-        self.write_attendance(row, col, sheet_value)
+        for col in columns:
+            self.write_attendance(row, col, sheet_value)
         return True
 
 

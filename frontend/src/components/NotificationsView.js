@@ -30,9 +30,10 @@ export function AvailabilitySection({ showNames }) {
   const [pinging, setPinging] = useState(false);
   const [sending, setSending] = useState(false);
   const [formError, setFormError] = useState(null);
+  const [unconfirmed, setUnconfirmed] = useState(false);
 
-  const loadCampaign = () => {
-    client.get('/api/availability/current')
+  const loadCampaign = campaignId => {
+    client.get('/api/availability/current', campaignId ? { params: { campaign_id: campaignId } } : undefined)
       .then(r => setCampaign(r.data.campaign || null))
       .catch(() => { setCampaign(null); setFormError('Не удалось загрузить опрос занятости'); });
   };
@@ -42,6 +43,7 @@ export function AvailabilitySection({ showNames }) {
   const openForm = () => {
     setFormError(null);
     setRequestedMonth(null);
+    setUnconfirmed(false);
     setShowForm(true);
   };
 
@@ -105,15 +107,24 @@ export function AvailabilitySection({ showNames }) {
     if (sending || datesLoading || !month) return;
     if (!selectedShows.length) { setFormError('Выберите хотя бы один спектакль'); return; }
     if (!selectedDates.length) { setFormError('Выберите хотя бы одну дату'); return; }
+    if (unconfirmed && !window.confirm('Telegram не подтвердил отправку. Проверьте указанные чаты: если опрос уже появился, повторять не нужно. Подтверждаете, что его нет, и повторить отправку?')) return;
     setSending(true);
     setFormError(null);
     try {
-      await client.post('/api/availability/campaign', {
+      const { data } = await client.post('/api/availability/campaign', {
         show_names: selectedShows,
         dates: selectedDates,
+        ...(unconfirmed ? { retry_unconfirmed: true } : {}),
       });
-      setShowForm(false);
-      loadCampaign();
+      if (data.errors?.length) {
+        setUnconfirmed(data.errors.some(e => ['uncertain', 'sending'].includes(e.delivery_state)));
+        setFormError(data.errors.map(e => `Чат ${e.chat_id}: ${e.error}`).join(' '));
+      } else {
+        setUnconfirmed(false);
+        setShowForm(false);
+      }
+      setNonVoters(null);
+      loadCampaign(data.campaign_id);
     } catch (e) {
       setFormError(e.response?.data?.detail || 'Ошибка отправки');
     } finally {
@@ -122,14 +133,19 @@ export function AvailabilitySection({ showNames }) {
   };
 
   const loadNonVoters = async () => {
-    const r = await client.get('/api/availability/non-voters');
-    setNonVoters(r.data.non_voters || []);
+    try {
+      const r = await client.get('/api/availability/non-voters', { params: { campaign_id: campaign.id } });
+      setNonVoters(r.data.non_voters || []);
+    } catch (e) { setFormError(e.response?.data?.detail || 'Не удалось загрузить неответивших'); }
   };
 
   const handlePing = async () => {
     setPinging(true);
     try {
-      await client.post('/api/availability/ping-non-voters');
+      const { data } = await client.post('/api/availability/ping-non-voters', null, { params: { campaign_id: campaign.id } });
+      setFormError(data.errors?.length ? data.errors.map(e => `Чат ${e.chat_id}: ${e.error}`).join(' ') : null);
+    } catch (e) {
+      setFormError(e.response?.data?.detail || 'Не удалось отправить напоминание');
     } finally {
       setPinging(false);
     }
@@ -144,7 +160,7 @@ export function AvailabilitySection({ showNames }) {
 
   return (
     <>
-      <div className="section-label" style={{ marginTop: 16 }}>Опрос занятости для спектов</div>
+      <div className="section-label" style={{ marginTop: 16 }}>Опрос занятости</div>
 
       {campaign === undefined ? (
         <div className="card-white" style={{ padding: '12px 16px', color: '#888', fontSize: 13 }}>Загрузка...</div>
@@ -154,8 +170,11 @@ export function AvailabilitySection({ showNames }) {
             Опрос на {monthLabel(campaign.month)}
           </div>
           <div style={{ fontSize: 13, color: '#666', marginBottom: 8 }}>
-            {campaign.show_names?.join(', ')} · {campaign.polls.reduce((s, p) => s + p.voter_count, 0)} ответов
+            {campaign.show_names?.join(', ')}
           </div>
+          {campaign.polls.map(p => <div key={p.id} style={{ fontSize: 12, marginBottom: 6 }}>
+            {p.show_names?.join(', ')} · {p.telegram_message_id ? (p.tg_link ? <a href={p.tg_link} target="_blank" rel="noreferrer">Открыть опрос</a> : 'Отправлен') : 'Не отправлен'}
+          </div>)}
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             <button className="btn btn-secondary" style={{ fontSize: 13 }} onClick={loadNonVoters}>
               Посмотреть неответивших
@@ -184,16 +203,18 @@ export function AvailabilitySection({ showNames }) {
         <div className="card-white" style={{ padding: '14px 16px' }}>
           <div style={{ fontSize: 13, color: '#666', marginBottom: 10 }}>Опрос ещё не запускался</div>
           <button className="btn btn-primary" style={{ fontSize: 13 }} onClick={openForm}>
-            Запустить опрос занятости для спектов
+            Запустить опрос занятости
           </button>
         </div>
       )}
 
+      {!showForm && formError && <div className="alert alert-error">{formError}</div>}
       {showForm && (
         <div className="card-white" style={{ padding: '14px 16px', marginTop: 8 }}>
           <div style={{ fontWeight: 600, marginBottom: 10 }}>Новый опрос</div>
+          <p style={{ fontSize: 13 }}>Ответы общие на каждую дату для всех спектаклей. Чаты задаются в «Спектакли и чаты». Повторная отправка тех же дат в те же чаты не создаёт копии.</p>
 
-          <div style={{ fontSize: 13, color: '#666', marginBottom: 6 }}>Спектакли для опроса:</div>
+          <div style={{ fontSize: 13, color: '#666', marginBottom: 6 }}>В чаты каких спектаклей отправить опрос:</div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 14 }}>
             {showNames.map(name => (
               <button
@@ -237,7 +258,7 @@ export function AvailabilitySection({ showNames }) {
 
           <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
             <button className="btn btn-primary" style={{ flex: 1, fontSize: 13 }} onClick={handleSend} disabled={sending || datesLoading || !month || !selectedDates.length}>
-              {sending ? 'Отправка...' : 'Отправить в чат'}
+              {sending ? 'Отправка...' : 'Отправить в чаты'}
             </button>
             <button className="btn btn-secondary" style={{ fontSize: 13 }} onClick={() => setShowForm(false)} disabled={sending}>
               Отмена

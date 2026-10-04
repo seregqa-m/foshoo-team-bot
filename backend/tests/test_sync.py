@@ -163,12 +163,15 @@ class AppLifecycleTests(unittest.IsolatedAsyncioTestCase):
             for n in range(10):
                 db.add(CalendarEvent(title='Test', start_time=as_local(datetime(2026, 10, n + 1, 19)), end_time=as_local(datetime(2026, 10, n + 1, 21))))
             db.commit()
+            from modules.theater.models import TheaterShow
+            db.add(TheaterShow(name='Test', normalized_name='test', telegram_chat_id=-100123))
+            db.commit()
             ids = [e.id for e in db.query(CalendarEvent).all()]
             msg = SimpleNamespace(poll=SimpleNamespace(id='tg-test'), message_id=123)
-            with patch('modules.availability.router.GROUP_CHAT_ID', -100123), patch('modules.availability.router._ensure_campaign_columns'), patch('bot.bot.send_poll', AsyncMock(side_effect=[msg, RuntimeError('timeout')])) as send:
-                with self.assertRaises(HTTPException):
-                    await create_campaign(CreateCampaignRequest(event_ids=ids, show_names=['Test']), db)
-                sent = db.query(AvailabilityPoll).one()
+            with patch('modules.availability.router._ensure_campaign_columns'), patch('bot.bot.send_poll', AsyncMock(side_effect=[msg, RuntimeError('timeout')])) as send:
+                result = await create_campaign(CreateCampaignRequest(event_ids=ids, show_names=['Test']), db)
+                self.assertEqual(result['status'], 'partial')
+                sent = db.query(AvailabilityPoll).filter(AvailabilityPoll.telegram_poll_id.isnot(None)).one()
                 self.assertEqual(sent.telegram_poll_id, 'tg-test')
                 self.assertEqual(len(sent.options), 9)
                 self.assertEqual(send.call_args_list[0].kwargs['options'][-1], 'Ни одна из дат')

@@ -37,6 +37,8 @@ def build_plan(source, month):
     first = date.fromisoformat(month + '-01')
     shows = {}
     warnings = []
+    for name in source.get('catalog', []):
+        shows.setdefault(norm(name), {'name': name, 'roles': {}, 'incomplete': False})
     for row in source['casts'][1:]:
         name = str(row[0]).strip() if row else ''
         if not name:
@@ -68,6 +70,8 @@ def build_plan(source, month):
             warnings.append('В старых заголовках графика нет года: они показаны в выбранном году. Проверьте даты перед назначением.')
     slots.sort(key=lambda s: (s['date'], s['time'], s['index']))
     for slot in slots:
+        slot['assigned_show'] = source.get('show_aliases', {}).get(norm(slot['assigned_show']), slot['assigned_show'])
+    for slot in slots:
         slot['duplicate'] = sum(s['date'] == slot['date'] and s['time'] == slot['time'] for s in slots) > 1
     if any(s['duplicate'] for s in slots):
         warnings.append('В графике есть повторяющиеся столбцы одной даты и времени. Объедините их в таблице перед назначением.')
@@ -81,9 +85,16 @@ def build_plan(source, month):
                     matches = actor_rows.get(actor_key, [])
                     raw = str(matches[0][1][slot['index']]).strip() if len(matches) == 1 and len(matches[0][1]) > slot['index'] else ''
                     value = norm(raw)
+                    answer = source.get('availability', {}).get(slot['date'], {}).get(actor_key)
+                    if answer is not None and value in ('да', 'нет', ''):
+                        value = {'yes': 'да', 'no': 'нет'}.get(answer, '')
                     if len(matches) != 1:
                         status = 'unknown'
                         reason = 'Нет однозначной строки в графике'
+                    elif answer is not None and value not in ('да', 'нет', '') and answer != 'yes':
+                        status = 'no' if answer == 'no' else 'unknown'
+                        reason = f'Ответ изменён после назначения: {raw}'
+                        warnings.append(f"{actor_name}: проверьте назначение на {slot['date']} — ответ изменён.")
                     elif value == 'да':
                         status, reason = 'yes', 'Свободен'
                     elif value == 'нет':

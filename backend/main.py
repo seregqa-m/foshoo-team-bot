@@ -22,6 +22,7 @@ from modules.availability.router import router as availability_router
 from modules.planning.router import router as planning_router
 from modules.admin.router import router as admin_router
 from modules.theater.router import router as theater_router
+import modules.attendance.models  # noqa: common person/day answers must survive poll cleanup
 from modules.assistant.router import router as assistant_router
 from auth_router import router as auth_router
 from sheets_router import router as sheets_router
@@ -70,10 +71,26 @@ def run_migrations():
             "ALTER TABLE notification_settings ADD COLUMN troupe_filter TEXT DEFAULT 'труппа 1'",
             "ALTER TABLE notification_settings ADD COLUMN current_show TEXT",
             "ALTER TABLE availability_poll_options ADD COLUMN selected_date DATE",
+            "ALTER TABLE polls ADD COLUMN telegram_chat_id BIGINT",
+            "ALTER TABLE polls ADD COLUMN selected_date DATE",
+            "ALTER TABLE polls ADD COLUMN show_id INTEGER",
+            "ALTER TABLE polls ADD COLUMN delivery_state TEXT",
+            "ALTER TABLE availability_campaigns ADD COLUMN request_key TEXT",
+            "ALTER TABLE availability_polls ADD COLUMN telegram_chat_id BIGINT",
+            "ALTER TABLE availability_polls ADD COLUMN show_names TEXT",
+            "ALTER TABLE availability_polls ADD COLUMN delivery_state TEXT",
+            "ALTER TABLE availability_votes ADD COLUMN option_ids TEXT",
         ]:
             table, column = stmt.split()[2], stmt.split()[5]
             if column not in {c["name"] for c in inspect(conn).get_columns(table)}:
                 conn.execute(text(stmt))
+        # Snapshot legacy destinations/dates once; future event moves must not move votes.
+        from config import GROUP_CHAT_ID
+        if GROUP_CHAT_ID:
+            for table in ('polls', 'availability_polls'):
+                conn.execute(text(f'UPDATE {table} SET telegram_chat_id=:chat WHERE telegram_chat_id IS NULL AND telegram_message_id IS NOT NULL'), {'chat': GROUP_CHAT_ID})
+        conn.execute(text('UPDATE polls SET selected_date=(SELECT substr(start_time, 1, 10) FROM calendar_events WHERE calendar_events.id=polls.calendar_event_id) WHERE selected_date IS NULL'))
+        conn.execute(text('UPDATE availability_poll_options SET selected_date=(SELECT substr(start_time, 1, 10) FROM calendar_events WHERE calendar_events.id=availability_poll_options.calendar_event_id) WHERE selected_date IS NULL'))
 
 
 async def _run_bot():
@@ -201,17 +218,19 @@ def _show_names():
     return SheetsClient(GOOGLE_CALENDAR_JSON, GOOGLE_SHEETS_ID).get_show_names()
 
 
-def _reminder_usernames(show_name):
+def _reminder_usernames(db, show_name):
     from config import GOOGLE_SHEETS_ID
     from sheets_client import SheetsClient
+    from modules.theater.routing import cast_usernames
     if not (GOOGLE_SHEETS_ID and os.path.exists(GOOGLE_CALENDAR_JSON)):
-        raise RuntimeError("Google Sheets is not configured")
-    client = SheetsClient(GOOGLE_CALENDAR_JSON, GOOGLE_SHEETS_ID)
-    mapping = client.get_actor_mapping()
-    if not show_name:
-        return set(mapping)
-    cast = {n.lower() for n in client.get_show_cast(show_name)}
-    return {uname for uname, name in mapping.items() if name.lower() in cast}
+        raise RuntimeError('Google Sheets is not configured')
+    return cast_usernames(db, [show_name], SheetsClient(GOOGLE_CALENDAR_JSON, GOOGLE_SHEETS_ID))
+
+
+def _export_attendance():
+    from modules.attendance.services import export_pending
+    with SessionLocal() as db:
+        export_pending(db)
 
 
 async def poll_reminder_background():
@@ -231,11 +250,15 @@ async def poll_reminder_background():
             await _send_poll_reminders()
         except Exception as e:
             logger.error(f"❌ Reminder check failed: {e}")
+        try:
+            await asyncio.to_thread(_export_attendance)
+        except Exception:
+            logger.exception('Attendance export failed; will retry')
         await asyncio.sleep(60)
 
 
 async def _cleanup_old_polls():
-    """Удалить опросы у которых событие закончилось вчера или раньше."""
+    """Archive expired publications while retaining their vote history."""
     from datetime import datetime, timedelta
     from modules.polling.models import Poll, PollVote
     from modules.calendar.models import CalendarEvent
@@ -245,11 +268,10 @@ async def _cleanup_old_polls():
     try:
         old_polls = db.query(Poll).join(
             CalendarEvent, Poll.calendar_event_id == CalendarEvent.id
-        ).filter(CalendarEvent.end_time < cutoff).all()
+        ).filter(CalendarEvent.end_time < cutoff, Poll.is_active == True).all()
 
         for poll in old_polls:
-            db.query(PollVote).filter(PollVote.poll_id == poll.id).delete()
-            db.delete(poll)
+            poll.is_active = False
         if old_polls:
             db.commit()
             logger.info(f"🗑 Cleaned up {len(old_polls)} old poll(s)")
@@ -257,169 +279,86 @@ async def _cleanup_old_polls():
         db.close()
 
 
-async def _auto_create_polls():
-    """Автоматически создать опрос в группе за N дней до события."""
-    from datetime import datetime, timedelta
-    from modules.polling.models import Poll
-    from modules.polling.services import PollingService
+def _poll_settings(db):
+    from config import ADMIN_ID
     from modules.notifications.models import NotificationSetting
-    from modules.calendar.models import CalendarEvent
-    from config import ADMIN_ID, GROUP_CHAT_ID, GOOGLE_CALENDAR_JSON, GOOGLE_SHEETS_ID
-    import os
-
-    if not GROUP_CHAT_ID:
-        return
-
+    settings = db.query(NotificationSetting).filter_by(user_id=ADMIN_ID).first()
+    if not settings or not settings.poll_reminders_enabled:
+        return None
     now = local_now()
-    db = SessionLocal()
-    try:
-        settings = db.query(NotificationSetting).filter(
-            NotificationSetting.user_id == ADMIN_ID
-        ).first()
-        if not (settings and settings.poll_reminders_enabled):
+    if (now.hour, now.minute) < tuple(map(int, settings.reminder_time.split(':'))):
+        return None
+    return settings
+
+
+async def _auto_create_polls():
+    from datetime import timedelta
+    from config import ADMIN_ID, TROUPE_FILTER
+    from modules.calendar.models import CalendarEvent
+    from modules.theater.routing import show_aliases
+    from modules.polling.delivery import publish_event
+    with SessionLocal() as db:
+        settings = _poll_settings(db)
+        if not settings:
             return
-
-        moscow_now = now
-        h, m = map(int, settings.reminder_time.split(":"))
-        if (moscow_now.hour, moscow_now.minute) < (h, m):
-            return
-
-        target_date = (now + timedelta(days=settings.reminder_days_before)).date()
-
-        show_names = await asyncio.to_thread(_show_names)
-
-        for event in db.query(CalendarEvent).filter(CalendarEvent.is_cancelled == False).all():
-            if event.start_time.date() != target_date:
+        now = local_now().date()
+        target = now + timedelta(days=settings.reminder_days_before)
+        aliases = list(show_aliases(db))
+        for event in db.query(CalendarEvent).filter_by(is_cancelled=False).all():
+            if not now <= event.start_time.date() <= target:
                 continue
-            from config import TROUPE_FILTER
-            if not is_troupe_event(event.title, show_names, settings.troupe_filter or TROUPE_FILTER):
+            if not is_troupe_event(event.title, aliases, settings.troupe_filter or TROUPE_FILTER):
                 continue
-            existing = db.query(Poll).filter(
-                Poll.calendar_event_id == event.id,
-                Poll.is_active == True,
-            ).first()
-            if existing and existing.telegram_message_id:
-                continue  # уже отправлен в Telegram
-
-            from babel.dates import format_date
-            dt = event.start_time
-            date_str = f"в {format_date(dt, 'EEEE', locale='ru_RU')} {format_date(dt, 'd MMM', locale='ru_RU')} в {dt.strftime('%H:%M')}"
-
-            poll_service = PollingService(db)
-            poll = existing or poll_service.create_poll(
-                title=f"Кто будет {date_str}?",
-                created_by=ADMIN_ID,
-                expires_in_hours=settings.reminder_days_before * 24 + 48,
-                calendar_event_id=event.id,
-            )
             try:
-                message = await bot.send_poll(
-                    chat_id=GROUP_CHAT_ID,
-                    question=f"Кто будет {date_str}?",
-                    options=["Буду ✅", "Не буду ❌", "Опоздаю ⏰", "Не знаю 🤷"],
-                    is_anonymous=False,
-                    allows_multiple_answers=False,
-                )
-                poll_service.save_telegram_ids(poll.id, message.poll.id, message.message_id)
-                logger.info(f"✅ Auto poll created: '{event.title}' on {target_date} → poll {poll.id}")
-            except Exception as e:
-                logger.error(f"❌ Auto poll send failed for event {event.id}: {e}")
-    finally:
-        db.close()
+                await publish_event(db, bot, event, ADMIN_ID, automatic=True)
+            except Exception as exc:
+                logger.warning('Auto poll skipped for event %s: %s', event.id, exc)
 
 
 async def _send_poll_reminders():
-    """Отправить напоминание об опросе за 1 день до события и закрепить опрос."""
     from datetime import datetime, timedelta
-    from modules.polling.models import Poll, PollVote
-    from modules.notifications.models import NotificationSetting
-    from config import ADMIN_ID, GROUP_CHAT_ID, GOOGLE_CALENDAR_JSON, GOOGLE_SHEETS_ID
-    import os
-
-    if not GROUP_CHAT_ID:
-        return
-
-    now = local_now()
-    db = SessionLocal()
-    try:
-        settings = db.query(NotificationSetting).filter(
-            NotificationSetting.user_id == ADMIN_ID
-        ).first()
-        reminder_time_str = settings.reminder_time if settings else "18:00"
-        if not (settings and settings.poll_reminders_enabled):
+    from config import ADMIN_ID, TROUPE_FILTER
+    from modules.calendar.models import CalendarEvent
+    from modules.polling.models import Poll
+    from modules.polling.delivery import publish_event
+    from modules.theater.routing import event_destination, poll_link, show_aliases
+    from modules.attendance.services import answered_usernames
+    with SessionLocal() as db:
+        settings = _poll_settings(db)
+        if not settings:
             return
-
-        moscow_now = now
-        h, m = map(int, reminder_time_str.split(":"))
-        if (moscow_now.hour, moscow_now.minute) < (h, m):
-            return
-
-        target_date = (now + timedelta(days=1)).date()  # всегда за 1 день
-
-        from modules.calendar.models import CalendarEvent
-        polls = db.query(Poll).join(
-            CalendarEvent, Poll.calendar_event_id == CalendarEvent.id
-        ).filter(
-            Poll.is_active == True,
-            Poll.reminder_sent_at == None,
-        ).all()
-
-        show_names = await asyncio.to_thread(_show_names)
-        recipients_by_show = {}
-
-        for poll in polls:
-            event = db.query(CalendarEvent).filter(CalendarEvent.id == poll.calendar_event_id).first()
-            if not event or event.is_cancelled or not poll.telegram_message_id or event.start_time.date() != target_date:
+        target = (local_now() + timedelta(days=1)).date()
+        aliases = list(show_aliases(db))
+        recipients = {}
+        for event in db.query(CalendarEvent).filter_by(is_cancelled=False).all():
+            if event.start_time.date() != target or not is_troupe_event(event.title, aliases, settings.troupe_filter or TROUPE_FILTER):
                 continue
-            if is_performance(event.title, show_names):
-                continue
-
-            show_name = classify_event(event.title, show_names)['show_name']
-            if show_name not in recipients_by_show:
-                recipients_by_show[show_name] = await asyncio.to_thread(_reminder_usernames, show_name)
-            target_usernames = recipients_by_show[show_name]
-
-            voted_usernames = {
-                v.username.lower() for v in
-                db.query(PollVote).filter(
-                    PollVote.poll_id == poll.id,
-                    PollVote.answer.in_(["yes", "no"]),
-                    PollVote.username != None,
-                ).all()
-                if v.username
-            }
-
-            unvoted_mentions = [f"@{name}" for name in sorted(target_usernames - voted_usernames)]
-
-            if not unvoted_mentions:
+            try:
+                show = event_destination(db, event)
+                result = await publish_event(db, bot, event, ADMIN_ID, automatic=True)
+                poll = db.get(Poll, result['poll_id'])
+                if not poll.is_active or poll.reminder_sent_at:
+                    continue
+                if show.id not in recipients:
+                    recipients[show.id] = await asyncio.to_thread(_reminder_usernames, db, show.name)
+                missing = recipients[show.id] - answered_usernames(db, target)
+                db.refresh(show)
+                if show.telegram_chat_id != poll.telegram_chat_id:
+                    continue
+                if missing:
+                    link = poll_link(poll.telegram_chat_id, poll.telegram_message_id)
+                    text = f'{show.name}: отметьте присутствие {event.start_time:%d.%m в %H:%M}!\n' + ' '.join('@' + u for u in sorted(missing))
+                    if link:
+                        text += '\n\n' + link
+                    await bot.send_message(chat_id=poll.telegram_chat_id, text=text)
                 poll.reminder_sent_at = datetime.utcnow()
                 db.commit()
-                continue
-
-            date_str = event.start_time.strftime("%d.%m в %H:%M")
-            mentions = " ".join(unvoted_mentions)
-            poll_link = ""
-            if poll.telegram_message_id and GROUP_CHAT_ID:
-                group_id = str(GROUP_CHAT_ID)[4:] if str(GROUP_CHAT_ID).startswith("-100") else str(abs(GROUP_CHAT_ID))
-                poll_link = f"\n\nhttps://t.me/c/{group_id}/{poll.telegram_message_id}"
-
-            await bot.send_message(chat_id=GROUP_CHAT_ID,
-                                   text=f"ребят, отметьте присутствие {date_str}!\n{mentions}{poll_link}")
-
-            if poll.telegram_message_id:
                 try:
-                    await bot.pin_chat_message(chat_id=GROUP_CHAT_ID,
-                                               message_id=poll.telegram_message_id,
-                                               disable_notification=True)
-                except Exception as e:
-                    logger.warning(f"Pin poll failed: {e}")
-
-            poll.reminder_sent_at = datetime.utcnow()
-            db.commit()
-            logger.info(f"✅ Reminder sent for poll {poll.id}, event {event.start_time.date()}")
-
-    finally:
-        db.close()
+                    await bot.pin_chat_message(chat_id=poll.telegram_chat_id, message_id=poll.telegram_message_id, disable_notification=True)
+                except Exception:
+                    logger.warning('Could not pin poll %s', poll.id)
+            except Exception as exc:
+                logger.warning('Reminder skipped for event %s: %s', event.id, exc)
 
 
 # Инициализировать БД

@@ -6,7 +6,7 @@ from typing import Literal
 
 logger = logging.getLogger(__name__)
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from core.database import get_db
@@ -40,14 +40,12 @@ async def get_events_poll_summary(db: Session = Depends(get_db)):
             continue
         seen.add(eid)
         votes = db.query(PollVote).filter(PollVote.poll_id == poll.id).all()
-        tg_link = None
-        if poll.telegram_message_id:
-            from config import GROUP_CHAT_ID
-            if GROUP_CHAT_ID:
-                cid = str(abs(GROUP_CHAT_ID))
-                if cid.startswith('100'):
-                    cid = cid[3:]
-                tg_link = f"https://t.me/c/{cid}/{poll.telegram_message_id}"
+        from modules.theater.routing import poll_link
+        from modules.calendar.models import CalendarEvent
+        event = db.get(CalendarEvent, eid)
+        if not event or (poll.selected_date and poll.selected_date != event.start_time.date()):
+            continue
+        tg_link = poll_link(poll.telegram_chat_id, poll.telegram_message_id)
         summary[str(eid)] = {
             "poll_id": poll.id,
             "attending": sum(1 for v in votes if v.answer == "yes"),
@@ -123,14 +121,13 @@ async def get_poll_results(poll_id: int, db: Session = Depends(get_db)):
 async def stop_poll(poll_id: int, db: Session = Depends(get_db)):
     """Остановить опрос: закрыть в Telegram и пометить неактивным в БД."""
     from bot import bot
-    from config import GROUP_CHAT_ID
     service = PollingService(db)
     poll = service.get_poll(poll_id)
     if not poll:
         raise HTTPException(status_code=404, detail="Poll not found")
-    if poll.telegram_message_id and GROUP_CHAT_ID:
+    if poll.telegram_message_id and poll.telegram_chat_id:
         try:
-            await bot.stop_poll(chat_id=GROUP_CHAT_ID, message_id=poll.telegram_message_id)
+            await bot.stop_poll(chat_id=poll.telegram_chat_id, message_id=poll.telegram_message_id)
         except Exception as e:
             logger.warning(f"stop_poll telegram failed: {e}")
     poll.is_active = False
@@ -142,15 +139,14 @@ async def stop_poll(poll_id: int, db: Session = Depends(get_db)):
 async def pin_poll(poll_id: int, db: Session = Depends(get_db)):
     """Закрепить сообщение с опросом в группе."""
     from bot import bot
-    from config import GROUP_CHAT_ID
     service = PollingService(db)
     poll = service.get_poll(poll_id)
     if not poll:
         raise HTTPException(status_code=404, detail="Poll not found")
-    if not poll.telegram_message_id or not GROUP_CHAT_ID:
-        raise HTTPException(status_code=400, detail="Нет Telegram message_id или GROUP_CHAT_ID")
+    if not poll.telegram_message_id or not poll.telegram_chat_id:
+        raise HTTPException(status_code=400, detail="У опроса не сохранён чат или сообщение Telegram")
     try:
-        await bot.pin_chat_message(chat_id=GROUP_CHAT_ID, message_id=poll.telegram_message_id, disable_notification=True)
+        await bot.pin_chat_message(chat_id=poll.telegram_chat_id, message_id=poll.telegram_message_id, disable_notification=True)
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e))
     return {"status": "pinned"}
@@ -179,6 +175,7 @@ async def delete_poll(poll_id: int, force: bool = False, db: Session = Depends(g
 async def vote(
     poll_id: int,
     request: VoteRequest,
+    http_request: Request,
     user_id: int = None,
     db: Session = Depends(get_db)
 ):
@@ -191,6 +188,11 @@ async def vote(
     from datetime import datetime
     if not poll or not poll.is_active or poll.expires_at <= datetime.utcnow():
         raise HTTPException(409, "Опрос закрыт или не существует")
-    vote_result = service.vote(poll_id, user_id, request.answer)
+    actor = getattr(http_request.state, 'telegram_user', None)
+    import asyncio
+    vote_result = await asyncio.to_thread(service.vote, poll_id, user_id, request.answer,
+                                         username=getattr(actor, 'username', None))
+    from modules.attendance.services import export_pending
+    await asyncio.to_thread(export_pending, db)
 
     return {"status": "voted", "answer": vote_result.answer if vote_result else "retracted"}

@@ -15,6 +15,9 @@ from core.time import local_now, as_local
 from sheets_client import SheetsClient
 from modules.calendar.google_client import GoogleCalendarClient
 from modules.calendar.models import CalendarEvent
+from modules.attendance.services import planning_answers, answer_lock
+from modules.theater.routing import show_aliases
+from modules.theater.services import normalize_name
 from .models import PlanningAssignment
 from .services import build_plan, assignment_updates
 
@@ -36,9 +39,19 @@ def get_client():
     return SheetsClient(GOOGLE_CALENDAR_JSON, GOOGLE_SHEETS_ID)
 
 
-def read_plan(client, month):
+def read_plan(client, month, db):
     try:
         source = client.get_planning_data()
+        aliases = show_aliases(db)
+        if aliases:
+            source['catalog'] = sorted({show.name for show in aliases.values()})
+            for row in source['casts'][1:]:
+                if row and normalize_name(row[0]) in aliases:
+                    row[0] = aliases[normalize_name(row[0])].name
+            source['show_aliases'] = {key: show.name for key, show in aliases.items()}
+        answers = planning_answers(db, month, client)
+        if answers:
+            source['availability'] = answers
         return source, build_plan(source, month)
     except Exception as exc:
         logger.exception('Cannot read cast planning')
@@ -53,7 +66,7 @@ def get_planning(month: str | None = None, db: Session = Depends(get_db)):
         date.fromisoformat(month + '-01')
     except ValueError as exc:
         raise HTTPException(422, 'Месяц должен быть в формате ГГГГ-ММ') from exc
-    plan = read_plan(get_client(), month)[1]
+    plan = read_plan(get_client(), month, db)[1]
     for op in db.query(PlanningAssignment).filter_by(month=month).all():
         slot = next((s for s in plan['slots'] if s['column'] == op.column), None)
         if slot:
@@ -99,14 +112,14 @@ def assign_show(req: AssignRequest, db: Session = Depends(get_db)):
     request_data = {**req.model_dump(mode='json', exclude={'expected_fingerprint'}),
                     'start_time': start.isoformat(), 'end_time': end.isoformat(), 'location': req.location.strip()}
     operation_id = hashlib.sha256(f'{GOOGLE_SHEETS_ID}:{GOOGLE_CALENDAR_ID}:{req.month}:{req.column}'.encode()).hexdigest()
-    with _write_lock:
+    with _write_lock, answer_lock:
         op = db.get(PlanningAssignment, operation_id)
         if op and json.loads(op.payload)['request'] != request_data:
             raise HTTPException(409, 'Для этой даты уже начато назначение. Обновите сводку и завершите его.')
         if op and op.status == 'complete':
             return {'status': 'assigned', 'show_name': req.show_name}
         client = get_client()
-        source, plan = read_plan(client, req.month)
+        source, plan = read_plan(client, req.month, db)
         slot = next((s for s in plan['slots'] if s['column'] == req.column), None)
         if not slot or start.date().isoformat() != slot['date']:
             raise HTTPException(409, 'Дата события не совпадает с выбранной датой графика')
@@ -137,12 +150,13 @@ def assign_show(req: AssignRequest, db: Session = Depends(get_db)):
             google.ensure_planned_event(GOOGLE_CALENDAR_ID, operation_id, event_data)
             event = db.query(CalendarEvent).filter_by(google_event_id=operation_id).first()
             if not event:
-                event = CalendarEvent(google_event_id=operation_id, title=req.show_name, start_time=start,
+                event = CalendarEvent(google_event_id=operation_id, title=event_data['summary'], start_time=start,
                     end_time=end, location=req.location.strip(), description=event_data['description'], last_synced=datetime.utcnow())
                 db.add(event)
             op.status = 'calendar_created'
             db.commit()
-            latest_source, latest_plan = read_plan(client, req.month)
+            db.expire_all()
+            latest_source, latest_plan = read_plan(client, req.month, db)
             if not _sheet_writes_applied(latest_source, updates):
                 if latest_plan['fingerprint'] != json.loads(op.payload)['fingerprint']:
                     raise HTTPException(409, 'Событие создано, но ответы в графике изменились. Проверьте состав и событие перед дальнейшими действиями.')

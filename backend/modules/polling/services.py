@@ -5,6 +5,7 @@ import logging
 from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
 from .models import Poll, PollVote
+from modules.attendance.services import answer_lock, record_answers
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +32,11 @@ class PollingService:
             created_by=created_by,
             expires_at=datetime.utcnow() + timedelta(hours=expires_in_hours),
         )
+        if calendar_event_id:
+            from modules.calendar.models import CalendarEvent
+            event = self.db.get(CalendarEvent, calendar_event_id)
+            if event:
+                poll.selected_date = event.start_time.date()
         self.db.add(poll)
         self.db.commit()
         self.db.refresh(poll)
@@ -50,21 +56,31 @@ class PollingService:
         ).all()
 
     def vote(self, poll_id: int, user_id: int, answer: str, username: str = None) -> PollVote:
+        with answer_lock:
+            return self._vote(poll_id, user_id, answer, username)
+
+    def _vote(self, poll_id, user_id, answer, username):
         """Добавить голос в опрос"""
         existing_vote = self.db.query(PollVote).filter(
             PollVote.poll_id == poll_id,
             PollVote.user_id == user_id
         ).first()
 
+        username = username or (existing_vote.username if existing_vote else None)
+        if answer not in {"yes", "no", "maybe", "unknown", "retracted"}:
+            raise ValueError("Unknown poll answer")
+        poll = self.get_poll(poll_id)
+        if poll and poll.selected_date:
+            record_answers(self.db, user_id, username, f'poll:{poll_id}:{poll.created_at.isoformat()}', {poll.selected_date: answer})
+
         if answer == "retracted":
             if existing_vote:
                 self.db.delete(existing_vote)
             self.db.commit()
             return None
-        if answer not in {"yes", "no", "maybe", "unknown"}:
-            raise ValueError("Unknown poll answer")
         if existing_vote:
             existing_vote.answer = answer
+            existing_vote.voted_at = datetime.utcnow()
             if username:
                 existing_vote.username = username
         else:

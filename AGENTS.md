@@ -131,7 +131,7 @@ Key env vars beyond BOT_TOKEN:
 - `GOOGLE_CALENDAR_JSON` — path to service account JSON (default: `backend/credentials.json`)
 - `GOOGLE_CALENDAR_ID` — calendar ID for sync
 - `GOOGLE_SHEETS_ID` — spreadsheet ID for actor mapping, schedules, finances
-- `GROUP_CHAT_ID` — Telegram group where polls are sent
+- `GROUP_CHAT_ID` — legacy group for application access/admin checks and migration of old publications; new poll destinations come from `theater_shows.telegram_chat_id`
 - `ADMIN_ID` — Telegram user ID of admin; the `notification_settings` row for this user acts as global app config
 - `TROUPE_FILTER` — default troupe name substring filter (default: `"труппа 1"`); can be overridden per-session via the Settings UI (stored in `notification_settings.troupe_filter`)
 - `SYNC_INTERVAL_MINUTES` — calendar/finance background sync interval
@@ -140,29 +140,28 @@ Google Calendar integration requires `backend/credentials.json` (OAuth2 service 
 
 Calendar sync (`sync_from_google`) tracks which event IDs were returned by Google and marks any DB events not in the response as `is_cancelled=True`. Associated active polls are deactivated at the same time.
 
-### Availability campaigns
+### Shared attendance and multi-chat polls
 
-The "Опрос занятости" feature (`modules/availability/`) lets admins run a monthly availability survey:
-1. Admin picks shows and upcoming calendar dates → `POST /api/availability/campaign`
-2. Backend sends Telegram native multi-answer polls (batched in groups of 10, Telegram's limit)
-3. `bot.py` routes `poll_answer` updates: regular polls → existing logic; availability polls → `_handle_availability_answer()` which writes "да"/"нет" per option to Google Sheets "График [составы]"
-4. Admin can view non-voters (`GET /api/availability/non-voters`) and ping them (`POST /api/availability/ping-non-voters`)
-5. Only the latest campaign is kept — creating a new one deletes the old one
+The confirmed key for availability is **(Telegram user_id, local calendar date)**, never show, chat or time slot. Both regular and monthly polls update `modules/attendance/`. The latest changed answer for each date wins. Duplicate delivery and unchanged dates in a multi-answer poll do not overwrite newer answers elsewhere. Retraction clears only the currently authoritative source; it never revives an older vote.
 
-Non-voter detection cross-references `AvailabilityVote` table against actor cast lists from the "Составы спектаклей" sheet tab.
+`DayAnswer` is the current answer, `AnswerSource` deduplicates per-publication payloads, `AnswerHistory` retains accepted changes, and `PollUpdate` deduplicates Telegram updates. Regular polls and availability options freeze their dates. A moved event needs new-day answers; a different show on the same date uses existing answers. Preserve these invariants.
 
-### Poll auto-creation and reminders
+The existing cast planner merges the common answers into Sheets data and includes every show in the theater catalog, retaining legacy Sheets shows. Unknown casts remain incomplete. Roles are still maintained in Sheets; attendance export must never overwrite a role cell. Planner assignment and export share `answer_lock`. Export failures retain the committed answer and are retried by the background worker. Once a common answer exists, a manual yes/no edit in Sheets does not override it.
 
-`poll_reminder_background()` runs every 60 seconds and calls three functions:
+Availability campaigns publish one copy per distinct mapped chat, with up to 9 dates plus «Ни одна из дат». Selecting that option alone means no on every date; when combined with dates, explicit selected dates win. Unselected dates become no only after that part is answered. Campaign history is retained. Same dates/destinations reuse existing publications; confirmed delivery failures can retry without duplicating success. An unconfirmed send requires explicit checking of the chat before retry. A bot-triggered campaign is scoped to shows mapped to that chat and requires its admin or a superadmin.
 
-1. **`_cleanup_old_polls()`** — deletes polls whose event ended more than 1 day ago
-2. **`_auto_create_polls()`** — if `poll_reminders_enabled` is on and current Moscow time ≥ `reminder_time`, finds events on `now + reminder_days_before` days, skips shows and non-`TROUPE_FILTER` events, creates poll via `PollingService` + `bot.send_poll()`
-3. **`_send_poll_reminders()`** — 1 day before each event, resolves its show from the calendar title and tags that show's cast members who haven't voted (all actors for events without a recognized show), then pins the poll message. The legacy `current_show` column is retained for database compatibility and is no longer used.
+New sends resolve the show through `modules/theater/routing.py`, using the catalog and saved aliases. Missing or ambiguous show/chat is an error, with no `GROUP_CHAT_ID` fallback. Calendar rehearsal titles should include the show and `[Реп]`, e.g. `Урод [Реп]`. Pin/stop/link operations always use the publication's stored chat. New reminders use the current mapping and the current Sheets cast, excluding anyone who answered that date in either poll type or another chat.
+
+`poll_reminder_background()` archives old polls, publishes configured rehearsals within the configured days-before window (retrying missed sends), sends next-day reminders, and retries Sheets exports every minute. It respects `poll_reminders_enabled` and `reminder_time`. An explicitly stopped poll is not reopened by the automatic job. The legacy `current_show` column remains unused.
+
+Startup migrations preserve old publications, backfill their chat from `GROUP_CHAT_ID` and snapshot their current event date once. No source rows or existing Sheets answers are deleted. Legacy availability votes lack option choices, so do not invent historical yes/no answers from their mere presence.
+
+Application access is still through existing superadmins, legacy group admins and Sheets actor mapping; adding a destination does not grant global administration or finance access. No new membership/role editor is part of this change.
 
 ### Known gaps
 
 - **Notification dispatcher legacy** — `NotificationService` still stores `Notification` rows but the actual dispatch is handled by `poll_reminder_background()`, not a notification service. The old rows are unused.
-- **user_id is an unauthenticated query param** — polls and notification endpoints accept `?user_id=N` without JWT/HMAC verification. Acceptable for an internal admin tool but not for public use.
+- **Telegram identity** — all API routers require signed Telegram initData; any supplied `user_id` must match the authenticated identity. Poll/calendar/settings writes require admin access.
 - **Frontend API URL is baked at build time** — `REACT_APP_API_URL` must be set before `npm run build` for production. Dev server (`npm start`) uses `127.0.0.1:8000` by default.
 
 ### Bot + uvicorn coexistence

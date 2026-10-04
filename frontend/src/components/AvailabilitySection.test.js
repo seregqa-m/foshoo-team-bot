@@ -9,7 +9,7 @@ const button = text => [...container.querySelectorAll('button')].find(b => b.tex
 const day = n => container.querySelectorAll('.availability-calendar__day')[n - 1];
 const open = async () => {
   await act(async () => root.render(<AvailabilitySection showNames={['Урод']} />));
-  await act(async () => button('Запустить опрос занятости для спектов').click());
+  await act(async () => button('Запустить опрос занятости').click());
 };
 beforeEach(() => {
   global.IS_REACT_ACT_ENVIRONMENT = true;
@@ -37,7 +37,7 @@ test('preselects unique calendar dates and sends only the final selected dates',
   await act(async () => { day(3).click(); day(7).click(); button('Урод').click(); });
   expect(day(3).getAttribute('aria-pressed')).toBe('false');
   expect(day(7).getAttribute('aria-pressed')).toBe('true');
-  await act(async () => button('Отправить в чат').click());
+  await act(async () => button('Отправить в чаты').click());
   expect(client.post).toHaveBeenCalledWith('/api/availability/campaign', {
     show_names: ['Урод'], dates: ['2026-10-07', '2026-10-10'],
   });
@@ -46,18 +46,18 @@ test('preselects unique calendar dates and sends only the final selected dates',
 test('a month without events still allows adding any date, but cannot send an empty selection', async () => {
   events = [];
   await open();
-  expect(button('Отправить в чат').disabled).toBe(true);
+  expect(button('Отправить в чаты').disabled).toBe(true);
   await act(async () => day(31).click());
-  expect(button('Отправить в чат').disabled).toBe(false);
+  expect(button('Отправить в чаты').disabled).toBe(false);
   await act(async () => day(31).click());
-  expect(button('Отправить в чат').disabled).toBe(true);
+  expect(button('Отправить в чаты').disabled).toBe(true);
 });
 
 test('failed loading cannot send stale dates and can be retried', async () => {
   const original = client.get.getMockImplementation();
   client.get.mockImplementation(url => url.endsWith('/next-month-events') ? Promise.reject(new Error('offline')) : original(url));
   await open();
-  expect(button('Отправить в чат').disabled).toBe(true);
+  expect(button('Отправить в чаты').disabled).toBe(true);
   expect(container.textContent).toContain('Не удалось загрузить даты');
   client.get.mockImplementation(original);
   await act(async () => button('Повторить загрузку').click());
@@ -96,9 +96,9 @@ test('changing month loads its dates and sends only that month', async () => {
   expect(day(5).getAttribute('aria-pressed')).toBe('true');
   expect(day(7).getAttribute('aria-pressed')).toBe('false');
   await act(async () => { day(8).click(); button('Урод').click(); });
-  await act(async () => button('Отправить в чат').click());
+  await act(async () => button('Отправить в чаты').click());
   expect(client.post).toHaveBeenCalledWith('/api/availability/campaign', { show_names: ['Урод'], dates: ['2026-11-05', '2026-11-08'] });
-  await act(async () => button('Запустить опрос занятости для спектов').click());
+  await act(async () => button('Запустить опрос занятости').click());
   expect(container.querySelector('input[type="month"]').value).toBe('2026-10');
 });
 
@@ -110,7 +110,7 @@ test('fast month changes ignore late responses, cross the year boundary, and blo
   await open();
   for (let i = 0; i < 3; i++) {
     await act(async () => container.querySelector('[aria-label="Следующий месяц"]').click());
-    expect(button('Отправить в чат').disabled).toBe(true);
+    expect(button('Отправить в чаты').disabled).toBe(true);
   }
   expect(container.querySelector('input[type="month"]').value).toBe('2027-01');
   await act(async () => pending['2027-01']({ data: { month: '2027-01', events: [] } }));
@@ -118,6 +118,37 @@ test('fast month changes ignore late responses, cross the year boundary, and blo
   expect(container.querySelector('input[type="month"]').value).toBe('2027-01');
   expect(container.textContent).toContain('Выбрано дат: 0');
   await act(async () => { day(1).click(); button('Урод').click(); });
-  await act(async () => button('Отправить в чат').click());
+  await act(async () => button('Отправить в чаты').click());
   expect(client.post).toHaveBeenCalledWith('/api/availability/campaign', { show_names: ['Урод'], dates: ['2027-01-01'] });
+});
+
+test('partial delivery shows the affected chat and retains selection for a retry', async () => {
+  await open();
+  await act(async () => button('Урод').click());
+  client.post.mockResolvedValue({ data: { status: 'partial', errors: [{ chat_id: -10042, delivery_state: 'failed', error: 'Проверьте права бота' }] } });
+  await act(async () => button('Отправить в чаты').click());
+  expect(container.textContent).toContain('Чат -10042: Проверьте права бота');
+  expect(button('Отправить в чаты')).toBeTruthy();
+  expect(day(3).getAttribute('aria-pressed')).toBe('true');
+  client.post.mockResolvedValue({ data: { status: 'sent', errors: [] } });
+  await act(async () => button('Отправить в чаты').click());
+  expect(button('Отправить в чаты')).toBeUndefined();
+});
+
+test('retry after an unconfirmed send requires explicit confirmation that no copy appeared', async () => {
+  await open();
+  await act(async () => button('Урод').click());
+  client.post.mockResolvedValue({ data: { status: 'partial', errors: [{ chat_id: -10042, delivery_state: 'uncertain', error: 'Проверьте чат' }] } });
+  await act(async () => button('Отправить в чаты').click());
+  const confirm = jest.spyOn(window, 'confirm').mockReturnValue(false);
+  try {
+    await act(async () => button('Отправить в чаты').click());
+    expect(client.post).toHaveBeenCalledTimes(1);
+    confirm.mockReturnValue(true);
+    client.post.mockResolvedValue({ data: { status: 'sent', errors: [] } });
+    await act(async () => button('Отправить в чаты').click());
+    expect(client.post).toHaveBeenLastCalledWith('/api/availability/campaign', {
+      show_names: ['Урод'], dates: ['2026-10-03', '2026-10-10'], retry_unconfirmed: true,
+    });
+  } finally { confirm.mockRestore(); }
 });

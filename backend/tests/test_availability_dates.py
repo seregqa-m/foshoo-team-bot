@@ -22,6 +22,9 @@ class AvailabilityDateTests(unittest.IsolatedAsyncioTestCase):
         self.engine = create_engine('sqlite://')
         Base.metadata.create_all(self.engine)
         self.db = sessionmaker(bind=self.engine)()
+        from modules.theater.models import TheaterShow
+        self.db.add(TheaterShow(name='Урод', normalized_name='урод', telegram_chat_id=-1001))
+        self.db.commit()
 
     def tearDown(self):
         self.db.close()
@@ -30,7 +33,7 @@ class AvailabilityDateTests(unittest.IsolatedAsyncioTestCase):
     async def test_manual_dates_are_sorted_deduplicated_and_persisted_without_events(self):
         req = CreateCampaignRequest(show_names=['Урод'], dates=['2026-10-10', '2026-10-07', '2026-10-07'])
         send = AsyncMock(return_value=SimpleNamespace(poll=SimpleNamespace(id='test'), message_id=1))
-        with patch('modules.availability.router.GROUP_CHAT_ID', -1001), patch('bot.bot.send_poll', send), patch('modules.availability.router._ensure_campaign_columns') as columns:
+        with patch('bot.bot.send_poll', send), patch('modules.availability.router._ensure_campaign_columns') as columns:
             result = await create_campaign(req, self.db)
         self.assertEqual(result['events_count'], 2)
         self.assertEqual(self.db.query(CalendarEvent).count(), 0)
@@ -42,8 +45,8 @@ class AvailabilityDateTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_full_month_splits_into_polls_without_losing_dates(self):
         req = CreateCampaignRequest(show_names=['Урод'], dates=[date(2026, 10, n) for n in range(1, 32)])
-        send = AsyncMock(side_effect=[SimpleNamespace(poll=SimpleNamespace(id=str(n)), message_id=n) for n in range(4)])
-        with patch('modules.availability.router.GROUP_CHAT_ID', -1001), patch('bot.bot.send_poll', send), patch('modules.availability.router._ensure_campaign_columns'):
+        send = AsyncMock(side_effect=[SimpleNamespace(poll=SimpleNamespace(id=str(n)), message_id=n + 1) for n in range(4)])
+        with patch('bot.bot.send_poll', send), patch('modules.availability.router._ensure_campaign_columns'):
             result = await create_campaign(req, self.db)
         self.assertEqual(result['polls_count'], 4)
         self.assertEqual(self.db.query(AvailabilityPollOption).count(), 31)
@@ -70,11 +73,11 @@ class AvailabilityDateTests(unittest.IsolatedAsyncioTestCase):
         self.db.commit()
         sheets = MagicMock()
         with patch('config.GOOGLE_SHEETS_ID', 'test'), patch('os.path.exists', return_value=True), patch('sheets_client.SheetsClient', return_value=sheets):
-            for selected, expected in [([0], ['yes', 'no']), ([2], ['no', 'no']), ([], ['retracted', 'retracted'])]:
+            for selected, expected in [([0], ['yes', 'no']), ([2], ['no']), ([], ['retracted', 'retracted'])]:
                 sheets.reset_mock()
                 _handle_availability_answer(SimpleNamespace(user=SimpleNamespace(id=42, username='actor'), option_ids=selected), poll, self.db)
                 self.assertEqual([c.args[2] for c in sheets.record_poll_answer.call_args_list], expected)
-                self.assertEqual([c.args[1].date() for c in sheets.record_poll_answer.call_args_list], [date(2026, 10, 1), date(2026, 10, 2)])
+                self.assertEqual([c.args[1].date() for c in sheets.record_poll_answer.call_args_list], [date(2026, 10, 1)] if selected == [2] else [date(2026, 10, 1), date(2026, 10, 2)])
 
     def test_date_check_includes_manual_dates(self):
         sheets = MagicMock()

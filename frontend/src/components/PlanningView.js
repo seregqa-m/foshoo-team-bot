@@ -149,7 +149,7 @@ export default function PlanningView({ onClose, dataVersion = 0 }) {
               </tr>)}</tbody>
             </table>
           </div>}
-        <p className="planning-note">Ответы читаются из «График [составы]», куда их записывает бот. Один человек занимает одну роль. Назначение на другую дату не меняет остальные ответы.</p>
+        <p className="planning-note">Ответы из всех чатов и обоих типов опросов общие на дату. Последнее изменение ответа учитывается для всех спектаклей. Один человек занимает одну роль. Назначение на другую дату не меняет остальные ответы.</p>
       </>}
       {selectedSlot && selectedCell && <CastDialog key={`${selectedSlot.column}:${selectedCell.show}`} slot={selectedSlot} cell={selectedCell}
         month={data.month} fingerprint={data.fingerprint} timezone={data.timezone} onClose={() => setSelected(null)} onSaved={saved} />}

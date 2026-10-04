@@ -348,7 +348,7 @@ class ModerationTests(unittest.IsolatedAsyncioTestCase):
             await dp.feed_update(app_bot, Update(update_id=125, message=self.forwarded(message())))
             check.assert_awaited_once()
             self.assertEqual(check.call_args.args[2], 125)
-        with patch('bot._detect_availability_intent') as detect:
+        with patch('bot._chat_shows', return_value=[]), patch('bot._detect_availability_intent') as detect:
             await handle_group_message(message(text='Запустим опрос на октябрь'))
             detect.assert_not_called()
 

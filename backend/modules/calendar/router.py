@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from datetime import datetime
 from sqlalchemy.orm import Session
 from core.database import get_db
-from config import GOOGLE_CALENDAR_ID, GOOGLE_CALENDAR_JSON, GROUP_CHAT_ID
+from config import GOOGLE_CALENDAR_ID, GOOGLE_CALENDAR_JSON
 from .models import CalendarEvent
 from .services import CalendarService
 from .google_client import GoogleCalendarClient
@@ -203,61 +203,13 @@ async def launch_poll_for_event(
 ):
     """Создать опрос о посещаемости для события и отправить его в Telegram-группу"""
     from bot import bot
-    from modules.polling.services import PollingService
-
+    from modules.polling.delivery import publish_event
     if not user_id:
-        raise HTTPException(status_code=400, detail="user_id required")
-    if not GROUP_CHAT_ID:
-        raise HTTPException(
-            status_code=400,
-            detail="GROUP_CHAT_ID не настроен. Добавьте бота в группу и укажите GROUP_CHAT_ID в .env"
-        )
-
-    cal_service = CalendarService(db)
-    event = cal_service.get_event_by_id(event_id)
+        raise HTTPException(400, 'user_id required')
+    event = CalendarService(db).get_event_by_id(event_id)
     if not event or event.is_cancelled:
-        raise HTTPException(status_code=404, detail="Событие не найдено или отменено")
-
-    from babel.dates import format_date
-    dt = event.start_time
-    day_name = format_date(dt, 'EEEE', locale='ru_RU')
-    month_day = format_date(dt, 'd MMM', locale='ru_RU')
-    date_str = f"в {day_name} {month_day} в {dt.strftime('%H:%M')}"
-
-    from modules.polling.models import Poll
-    existing = db.query(Poll).filter(
-        Poll.calendar_event_id == event_id,
-        Poll.is_active == True,
-    ).first()
-    if existing:
-        raise HTTPException(status_code=409,
-            detail=f"Для этого события уже есть активный опрос (id={existing.id})")
-
-    poll_service = PollingService(db)
-    poll = poll_service.create_poll(
-        title=f"Кто будет {date_str}?",
-        created_by=user_id,
-        expires_in_hours=48,
-        calendar_event_id=event_id,
-    )
-
-    try:
-        message = await bot.send_poll(
-            chat_id=GROUP_CHAT_ID,
-            question=f"Кто будет {date_str}?",
-            options=["Буду ✅", "Не буду ❌", "Опоздаю ⏰", "Не знаю 🤷"],
-            is_anonymous=False,
-            allows_multiple_answers=False,
-        )
-        poll_service.save_telegram_ids(poll.id, message.poll.id, message.message_id)
-    except Exception as e:
-        logger.error(f"Failed to send Telegram poll: {e}")
-        raise HTTPException(
-            status_code=502,
-            detail=f"Опрос сохранён в БД (id={poll.id}), но отправка в Telegram не удалась: {e}"
-        )
-
-    return {"poll_id": poll.id, "telegram_message_id": message.message_id, "status": "sent"}
+        raise HTTPException(404, 'Событие не найдено или отменено')
+    return await publish_event(db, bot, event, user_id)
 
 
 @router.delete("/events/{event_id}")

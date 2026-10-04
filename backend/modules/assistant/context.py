@@ -267,31 +267,14 @@ def _collect_availability_campaign(db: Session, actor_mapping: dict) -> Optional
     except Exception:
         pass
 
-    total_voters = 0
-    for poll in campaign.polls:
-        total_voters += len({v.username for v in poll.votes if v.username})
-
-    non_voters: list[str] = []
-    if actor_mapping and show_names:
-        try:
-            from sheets_client import SheetsClient
-            sc = SheetsClient(GOOGLE_CALENDAR_JSON, GOOGLE_SHEETS_ID)
-            cast_usernames: set[str] = set()
-            name_to_uname = {name.lower(): u for u, name in actor_mapping.items()}
-            for show in show_names:
-                cast = _cached_sheets(f"cast:{show}", lambda s=show: sc.get_show_cast(s)) or []
-                cast_names = {n.lower() for n in cast}
-                cast_usernames |= {name_to_uname[n] for n in cast_names if n in name_to_uname}
-            for uname in cast_usernames:
-                voted_all = True
-                for poll in campaign.polls:
-                    if not any(v.username and v.username.lower() == uname for v in poll.votes):
-                        voted_all = False
-                        break
-                if not voted_all:
-                    non_voters.append(uname)
-        except Exception as e:
-            logger.warning(f"non_voters compute failed in context: {e}")
+    total_voters = len({v.user_id for poll in campaign.polls for v in poll.votes})
+    non_voters = None
+    try:
+        from modules.availability.router import _campaign_non_voters
+        groups = _campaign_non_voters(db, campaign)
+        non_voters = sorted({u for users in groups.values() for u in users})
+    except Exception as exc:
+        logger.warning('Cannot calculate shared non-voters in context: %s', exc)
 
     return {
         "id": campaign.id,
@@ -299,7 +282,10 @@ def _collect_availability_campaign(db: Session, actor_mapping: dict) -> Optional
         "shows": show_names,
         "polls_count": len(campaign.polls),
         "voters_count": total_voters,
-        "non_voters": sorted(non_voters),
+        "non_voters": non_voters,
+        "response_scope": "Ответы общие на дату; non_voters учитывает также другие опросы и чаты",
+        "publications": [{"chat_id": p.telegram_chat_id, "state": p.delivery_state,
+                          "message_id": p.telegram_message_id} for p in campaign.polls],
     }
 
 
@@ -335,6 +321,12 @@ def build_context(
     sc = _sheets_client()
     sheets = _sheets_snapshot(sc)
     actor_mapping = sheets["actor_mapping"]
+    from modules.theater.routing import show_aliases
+    from modules.theater.services import normalize_name
+    aliases = show_aliases(db)
+    names = {show.name for show in aliases.values()}
+    names.update(aliases[normalize_name(name)].name if normalize_name(name) in aliases else name
+                 for name in sheets.get('shows', []))
 
     upcoming = _collect_upcoming_events(db)
     recent_exp, recent_inc = _collect_recent_transactions(db)
@@ -352,7 +344,7 @@ def build_context(
         "settings": settings,
         "projects": FINANCE_PROJECTS,
         "expense_types": FINANCE_EXPENSE_TYPES,
-        "shows": sheets.get("shows", []),
+        "shows": sorted(names),
         "actors": [{"name": name, "username": u} for u, name in actor_mapping.items()],
         "upcoming_events": upcoming,
         "active_polls": active_polls,

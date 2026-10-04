@@ -23,12 +23,15 @@ from sqlalchemy.orm import sessionmaker
 
 class ShowSettingsTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
-        self.engine = create_engine('sqlite://')
+        self.engine = create_engine('sqlite://', connect_args={'check_same_thread': False})
         Base.metadata.create_all(self.engine)
         self.Session = sessionmaker(bind=self.engine)
         self.db = self.Session()
         self.db.add(NotificationSetting(user_id=42, current_show='Старый спектакль',
                                         poll_reminders_enabled=True, reminder_time='00:00'))
+        from modules.theater.models import TheaterShow
+        self.db.add_all([TheaterShow(name=name, normalized_name=name.lower(), telegram_chat_id=chat)
+                         for name, chat in [('Любовь Громова', -1001), ('Урод', -1002)]])
         self.db.commit()
         for target, value in [('config.ADMIN_ID', 42), ('config.GROUP_CHAT_ID', -1001),
                               ('modules.notifications.router.ADMIN_ID', 42),
@@ -59,7 +62,7 @@ class ShowSettingsTests(unittest.IsolatedAsyncioTestCase):
             event = CalendarEvent(title=title, start_time=datetime(2026, 10, 5, 18 + index))
             self.db.add(event)
             self.db.flush()
-            poll = Poll(calendar_event_id=event.id, telegram_message_id=100 + index)
+            poll = Poll(calendar_event_id=event.id, selected_date=event.start_time.date(), telegram_chat_id=-1001-index, telegram_message_id=100 + index)
             self.db.add(poll)
             self.db.flush()
             if index == 0:
@@ -74,22 +77,20 @@ class ShowSettingsTests(unittest.IsolatedAsyncioTestCase):
             sheets.return_value.get_show_names.return_value = ['Любовь Громова', 'Урод']
             sheets.return_value.get_actor_mapping.return_value = {
                 'gromova': 'Аня', 'urod': 'Борис', 'both': 'Вера', 'voted': 'Глеб'}
-            sheets.return_value.get_show_cast.side_effect = lambda name: {
-                'Любовь Громова': ['Аня', 'Вера', 'Глеб'], 'Урод': ['Борис', 'Вера']}[name]
+            sheets.return_value.get_planning_data.return_value = {'casts': [['Спектакль', 'Роль', 'Актёр']] +
+                [[show, 'роль', actor] for show, actors in {'Любовь Громова': ['Аня', 'Вера', 'Глеб'], 'Урод': ['Борис', 'Вера']}.items() for actor in actors] }
             await main._send_poll_reminders()
-        self.assertEqual(send.await_count, 3)
+        self.assertEqual(send.await_count, 2)
         texts = {call.kwargs['text'].rsplit('/', 1)[-1]: call.kwargs['text'] for call in send.await_args_list}
         self.assertIn('@gromova', texts['100'])
         self.assertNotIn('@urod', texts['100'])
         self.assertNotIn('@voted', texts['100'])
         self.assertIn('@urod', texts['101'])
         self.assertNotIn('@gromova', texts['101'])
-        for username in ['gromova', 'urod', 'voted', 'both']:
-            self.assertIn('@' + username, texts['102'])
-        self.assertTrue(all(call.kwargs['chat_id'] == -1001 for call in send.await_args_list))
+        self.assertEqual([call.kwargs['chat_id'] for call in send.await_args_list], [-1001, -1002])
 
     def test_monthly_campaign_is_not_limited_by_the_legacy_choice(self):
         with patch('core.database.SessionLocal', self.Session), patch('sheets_client.SheetsClient') as sheets:
             sheets.return_value.get_show_names.return_value = ['Урод', 'Любовь Громова']
             campaign = _prepare_campaign(2026, 10)
-        self.assertEqual(campaign.show_names, ['Урод', 'Любовь Громова'])
+        self.assertEqual(set(campaign.show_names), {'Урод', 'Любовь Громова'})

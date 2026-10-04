@@ -689,7 +689,7 @@ CREATE_AVAILABILITY_CAMPAIGN = Tool(
         "show_names — список спектаклей из CONTEXT.shows (обычно те что «в "
         "работе»). event_ids — даты из CONTEXT.upcoming_events (или получи "
         "полный список через get_events_in_range на следующий месяц). "
-        "Старая кампания удалится."
+        "Ответы на дату общие со всеми опросами. Опросы отправятся в настроенные чаты выбранных спектаклей; история сохраняется."
     ),
     schema={
         "type": "function",
@@ -707,7 +707,7 @@ CREATE_AVAILABILITY_CAMPAIGN = Tool(
                     "event_ids": {
                         "type": "array",
                         "items": {"type": "integer"},
-                        "description": "ID событий (даты). До 20.",
+                        "description": "ID событий одного месяца; одинаковые даты объединяются.",
                     },
                 },
                 "required": ["show_names", "event_ids"],
@@ -723,8 +723,8 @@ CREATE_AVAILABILITY_CAMPAIGN = Tool(
             f"Дат: {len(args.get('event_ids') or [])}",
         ],
         "warnings": [
-            "Старая кампания опроса будет удалена",
-            "Новые опросы уйдут в Telegram-группу (батчами по 10)",
+            "Опросы уйдут в чаты выбранных спектаклей из настроек (по 9 дат и «Ни одна из дат»)",
+            "Ответы на даты общие для всех спектаклей",
         ],
     },
 )
@@ -738,23 +738,23 @@ async def _ping_non_voters_handler(db: Session, args: dict, ctx: dict) -> dict:
 PING_NON_VOTERS = Tool(
     name="ping_non_voters",
     description=(
-        "Опубликовать в группе тег для актёров, кто ещё не ответил на текущий "
-        "опрос занятости. Действует только если есть активная кампания."
+        "Опубликовать в чатах выбранных спектаклей теги тех, кто ещё не ответил на даты кампании. "
+        "Ответы из других опросов и чатов тоже учитываются."
     ),
     schema={
         "type": "function",
         "function": {
             "name": "ping_non_voters",
-            "description": "Публичный пинг в Telegram-группе. Требует подтверждения.",
+            "description": "Публичный пинг в чатах выбранных спектаклей. Требует подтверждения.",
             "parameters": {"type": "object", "properties": {}, "required": []},
         },
     },
     handler=_ping_non_voters_handler,
     safety_level="confirm",
     preview_builder=lambda args: {
-        "title": "Пингануть в группе неответивших",
+        "title": "Напомнить неответившим в чатах спектаклей",
         "lines": ["Список неответивших — в CONTEXT.availability_campaign.non_voters"],
-        "warnings": ["Публичное упоминание в Telegram-группе"],
+        "warnings": ["Упоминания только в чатах соответствующих спектаклей"],
     },
 )
 

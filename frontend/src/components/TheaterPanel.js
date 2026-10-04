@@ -100,7 +100,7 @@ export default function TheaterPanel() {
     <h3>Спектакли и чаты</h3>
     <p>Укажите ID чата напротив спектакля и сохраните строку. Пустое поле снимает привязку.</p>
     <p>Бот должен быть администратором группы с правом закреплять сообщения.</p>
-    <p className="theater-panel__note">Привязки сохраняются. Отправка опросов и напоминаний в эти чаты ещё не включена.</p>
+    <p className="theater-panel__note">Опросы репетиций и напоминания отправляются в чат указанного спектакля. В названии репетиции укажите спектакль и [Реп], например «Урод [Реп]».</p>
     {error && <div className="alert alert-error" role="alert">{error}</div>}
     {message && <div className="alert alert-success" role="status">{message}</div>}
     {loading && <p role="status">Загружаем спектакли…</p>}

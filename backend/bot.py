@@ -100,71 +100,43 @@ _vote_lock = asyncio.Lock()
 
 
 @dp.poll_answer()
-async def handle_poll_answer(poll_answer: PollAnswer):
+async def handle_poll_answer(poll_answer: PollAnswer, event_update=None):
     async with _vote_lock:
-        await asyncio.to_thread(_process_poll_answer, poll_answer)
+        await asyncio.to_thread(_process_poll_answer, poll_answer,
+                                event_update.update_id if event_update else None)
 
 
-def _process_poll_answer(poll_answer: PollAnswer):
-    """Сохранить ответ на Telegram-опрос в БД и записать явку в Google Sheets"""
+def _process_poll_answer(poll_answer: PollAnswer, update_id=None):
+    """Persist the publication vote and the shared person/day answer atomically."""
     from core.database import SessionLocal
     from modules.polling.services import PollingService
-    from modules.polling.models import Poll, PollVote
-    from modules.calendar.models import CalendarEvent
-    from modules.availability.models import AvailabilityPoll as AvailPoll, \
-        AvailabilityPollOption, AvailabilityVote
+    from modules.polling.models import Poll
+    from modules.availability.models import AvailabilityPoll
+    from modules.attendance.services import answer_lock, accept_update, export_pending
 
-    db = SessionLocal()
-    try:
-        # Проверить сначала — это опрос занятости?
-        avail_poll = db.query(AvailPoll).filter(
-            AvailPoll.telegram_poll_id == poll_answer.poll_id
-        ).first()
-        if avail_poll:
-            _handle_availability_answer(poll_answer, avail_poll, db)
-            return
-
-        answer = "retracted" if not poll_answer.option_ids else _POLL_ANSWER_MAP.get(poll_answer.option_ids[0])
-        if not answer:
-            logger.warning(f"Unknown poll option index: {poll_answer.option_ids[0]}")
-            return
-
-        poll = db.query(Poll).filter(Poll.telegram_poll_id == poll_answer.poll_id).first()
-        if not poll:
-            logger.warning(f"No DB poll for telegram_poll_id={poll_answer.poll_id}")
-            return
-
-        PollingService(db).vote(poll.id, poll_answer.user.id, answer, username=poll_answer.user.username)
-
-        # Записать явку в Google Sheets
-        username = poll_answer.user.username
-        if username and poll.calendar_event_id:
-            # Пропускаем если у пользователя есть ответ в более новом опросе на то же событие
-            has_newer_vote = db.query(PollVote).join(Poll).filter(
-                Poll.calendar_event_id == poll.calendar_event_id,
-                Poll.id > poll.id,
-                PollVote.user_id == poll_answer.user.id,
-            ).first()
-            if has_newer_vote:
-                logger.info(f"Sheets: skip older poll {poll.id}, user {poll_answer.user.id} has newer vote")
-                return
-            try:
-                from config import GOOGLE_CALENDAR_JSON, GOOGLE_SHEETS_ID
-                from sheets_client import SheetsClient
-                import os
-                if GOOGLE_SHEETS_ID and os.path.exists(GOOGLE_CALENDAR_JSON):
-                    event = db.query(CalendarEvent).filter(
-                        CalendarEvent.id == poll.calendar_event_id
-                    ).first()
-                    if event:
-                        client = SheetsClient(GOOGLE_CALENDAR_JSON, GOOGLE_SHEETS_ID)
-                        client.record_poll_answer(username, event.start_time, answer)
-            except Exception as e:
-                logger.error(f"Sheets write error: {e}")
-    except Exception as e:
-        logger.error(f"poll_answer handler error: {e}")
-    finally:
-        db.close()
+    if not poll_answer.user:
+        return  # anonymous chat votes cannot identify an actor
+    with SessionLocal() as db:
+        try:
+            with answer_lock:
+                if not accept_update(db, update_id):
+                    return
+                availability = db.query(AvailabilityPoll).filter_by(telegram_poll_id=poll_answer.poll_id).first()
+                if availability:
+                    _handle_availability_answer(poll_answer, availability, db, export=False)
+                else:
+                    poll = db.query(Poll).filter_by(telegram_poll_id=poll_answer.poll_id).first()
+                    if not poll or not poll.is_active:
+                        return
+                    answer = 'retracted' if not poll_answer.option_ids else (
+                        _POLL_ANSWER_MAP.get(poll_answer.option_ids[0]) if len(poll_answer.option_ids) == 1 else None)
+                    if answer is None:
+                        return
+                    PollingService(db).vote(poll.id, poll_answer.user.id, answer, poll_answer.user.username)
+            export_pending(db)
+        except Exception:
+            db.rollback()
+            logger.exception('poll_answer handler error')
 
 
 # ──────────────── Availability intent detection ──────────────── #
@@ -215,7 +187,7 @@ async def _llm_confirm_intent(text: str, month_label: str) -> bool:
 
 @dp.message(F.chat.type.in_({"group", "supergroup"}))
 async def handle_group_message(message: Message):
-    if message.chat.id != GROUP_CHAT_ID:
+    if not await asyncio.to_thread(_chat_shows, message.chat.id):
         return
     if not message.text:
         return
@@ -235,46 +207,64 @@ async def handle_group_message(message: Message):
     await message.reply(f"Запустить опрос занятости на {month_label}?", reply_markup=kb)
 
 
-def _prepare_campaign(year, month_num):
+def _chat_shows(chat_id):
+    from core.database import SessionLocal
+    from modules.theater.models import TheaterShow
+    with SessionLocal() as db:
+        return [s.name for s in db.query(TheaterShow).filter_by(telegram_chat_id=chat_id)]
+
+
+def _prepare_campaign(year, month_num, chat_id=None):
     import calendar
     from datetime import datetime
     from core.database import SessionLocal
     from modules.calendar.models import CalendarEvent
+    from modules.theater.models import TheaterShow
+    from modules.theater.routing import show_aliases
+    from modules.calendar.classification import is_troupe_event
     from modules.notifications.models import NotificationSetting
     from modules.availability.router import CreateCampaignRequest
-    from config import ADMIN_ID, GOOGLE_CALENDAR_JSON, GOOGLE_SHEETS_ID, TROUPE_FILTER
-    from sheets_client import SheetsClient
-    shows = SheetsClient(GOOGLE_CALENDAR_JSON, GOOGLE_SHEETS_ID).get_show_names()
+    from config import ADMIN_ID, TROUPE_FILTER
     first = datetime(year, month_num, 1)
     last = datetime(year, month_num, calendar.monthrange(year, month_num)[1], 23, 59, 59)
     with SessionLocal() as db:
+        query = db.query(TheaterShow)
+        if chat_id is not None:
+            query = query.filter_by(telegram_chat_id=chat_id)
+        shows = [s.name for s in query.all()]
         settings = db.query(NotificationSetting).filter_by(user_id=ADMIN_ID).first()
         troupe = ((settings.troupe_filter if settings else None) or TROUPE_FILTER).lower()
+        aliases = list(show_aliases(db))
         events = db.query(CalendarEvent).filter(
             CalendarEvent.start_time >= first, CalendarEvent.start_time <= last,
             CalendarEvent.is_cancelled == False,
         ).order_by(CalendarEvent.start_time).all()
-        return CreateCampaignRequest(
-            show_names=shows,
-            event_ids=[e.id for e in events if troupe in e.title.lower()
-                       and not any(show.lower() in e.title.lower() for show in shows)],
-        )
+        return CreateCampaignRequest(show_names=shows,
+            event_ids=[e.id for e in events if is_troupe_event(e.title, aliases, troupe)])
 
 
-async def _launch_campaign_for_month(year: int, month_num: int) -> dict:
+async def _launch_campaign_for_month(year: int, month_num: int, chat_id: int) -> dict:
     from core.database import SessionLocal
     from modules.availability.router import create_campaign
-    req = await asyncio.to_thread(_prepare_campaign, year, month_num)
+    req = await asyncio.to_thread(_prepare_campaign, year, month_num, chat_id)
     with SessionLocal() as db:
         result = await create_campaign(req, db)
-    return {"ok": True, **result}
+    return {'ok': result['status'] == 'sent', 'error': '; '.join(e['error'] for e in result.get('errors', [])), **result}
 
 
 @dp.callback_query(F.data.startswith("avail_start_"))
 async def on_avail_start(callback: CallbackQuery):
-    from core.access import is_admin
-    from config import GROUP_CHAT_ID
-    if callback.message.chat.id != GROUP_CHAT_ID or not await is_admin(callback.from_user.id):
+    from core.access import is_super_admin
+    chat_id = callback.message.chat.id
+    configured = await asyncio.to_thread(_chat_shows, chat_id)
+    allowed = bool(configured) and await is_super_admin(callback.from_user.id)
+    if configured and not allowed:
+        try:
+            member = await bot.get_chat_member(chat_id, callback.from_user.id)
+            allowed = member.status in ('creator', 'administrator')
+        except Exception:
+            allowed = False
+    if not allowed:
         await callback.answer("Доступно только администратору группы", show_alert=True)
         return
     await callback.answer()
@@ -284,7 +274,7 @@ async def on_avail_start(callback: CallbackQuery):
     year, month_num = int(parts[2]), int(parts[3])
 
     try:
-        result = await _launch_campaign_for_month(year, month_num)
+        result = await _launch_campaign_for_month(year, month_num, chat_id)
         if result["ok"]:
             await callback.message.reply(
                 f"✅ Опрос занятости запущен: {result['polls_count']} опрос(а) "
@@ -303,61 +293,35 @@ async def on_avail_cancel(callback: CallbackQuery):
     await callback.message.edit_reply_markup(reply_markup=None)
 
 
-def _handle_availability_answer(poll_answer, avail_poll, db):
-    """Обработать ответ на опрос занятости: записать да/нет в Google Sheets."""
-    from modules.availability.models import AvailabilityPollOption, AvailabilityVote
-    from modules.calendar.models import CalendarEvent
+def _handle_availability_answer(poll_answer, avail_poll, db, *, export=True):
+    import json
+    from datetime import datetime
+    from modules.availability.models import AvailabilityVote
+    from modules.attendance.services import answer_lock, record_answers, option_day, export_pending
 
-    # Зафиксировать факт голосования (upsert по user_id + poll_id)
-    existing_vote = db.query(AvailabilityVote).filter(
-        AvailabilityVote.poll_id == avail_poll.id,
-        AvailabilityVote.user_id == poll_answer.user.id,
-    ).first()
-    username = poll_answer.user.username or (existing_vote.username if existing_vote else None)
-    if not poll_answer.option_ids:
-        if existing_vote:
-            db.delete(existing_vote)
-    elif not existing_vote:
-        db.add(AvailabilityVote(
-            poll_id=avail_poll.id,
-            user_id=poll_answer.user.id,
-            username=username,
-        ))
-
-    if existing_vote and username:
-        existing_vote.username = username
-    db.commit()
-    if not username:
-        logger.warning("Cannot write attendance: Telegram username is missing")
-        return
-    selected = set(poll_answer.option_ids)
-    options = db.query(AvailabilityPollOption).filter(
-        AvailabilityPollOption.poll_id == avail_poll.id
-    ).all()
-
-    try:
-        from config import GOOGLE_CALENDAR_JSON, GOOGLE_SHEETS_ID
-        from sheets_client import SheetsClient
-        import os
-        if not (GOOGLE_SHEETS_ID and os.path.exists(GOOGLE_CALENDAR_JSON)):
-            db.commit()
+    with answer_lock:
+        selected = set(poll_answer.option_ids)
+        options = avail_poll.options
+        valid = {o.option_index for o in options}
+        # Telegram permits combining "none" with dates. Treat it as no dates only
+        # when selected alone; explicit selected dates otherwise take precedence.
+        if not selected.issubset(valid | {len(options)}):
             return
-        client = SheetsClient(GOOGLE_CALENDAR_JSON, GOOGLE_SHEETS_ID)
-        for opt in options:
-            answer = ("yes" if opt.option_index in selected else "no") if selected else "retracted"
-            if opt.selected_date:
-                from datetime import datetime
-                target_date = datetime.combine(opt.selected_date, datetime.min.time())
-            else:
-                event = db.query(CalendarEvent).filter(
-                    CalendarEvent.id == opt.calendar_event_id
-                ).first()
-                target_date = event.start_time if event else None
-            if target_date:
-                client.record_poll_answer(username, target_date, answer)
-    except Exception as e:
-        logger.error(f"Availability sheets write error: {e}")
-
-    db.commit()
-    logger.info(f"Availability vote saved: poll={avail_poll.id} user=@{username} "
-                f"selected={list(selected)}")
+        existing = db.query(AvailabilityVote).filter_by(poll_id=avail_poll.id, user_id=poll_answer.user.id).first()
+        username = poll_answer.user.username or (existing.username if existing else None)
+        if not selected:
+            if existing:
+                db.delete(existing)
+        else:
+            if not existing:
+                existing = AvailabilityVote(poll_id=avail_poll.id, user_id=poll_answer.user.id)
+                db.add(existing)
+            existing.username = username
+            existing.option_ids = json.dumps(sorted(selected))
+            existing.voted_at = datetime.utcnow()
+        answers = {day: ('yes' if opt.option_index in selected else 'no') if selected else 'retracted'
+                   for opt in options if (day := option_day(opt, db))}
+        record_answers(db, poll_answer.user.id, username, f'availability:{avail_poll.id}', answers)
+        db.commit()
+    if export:
+        export_pending(db)

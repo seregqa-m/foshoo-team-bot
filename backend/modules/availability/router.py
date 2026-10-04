@@ -1,5 +1,6 @@
 import asyncio
 import json
+import hashlib
 from core.time import local_now
 import logging
 import os
@@ -9,7 +10,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from core.database import get_db
-from config import GROUP_CHAT_ID, GOOGLE_CALENDAR_JSON, GOOGLE_SHEETS_ID, ADMIN_ID
+from config import GOOGLE_CALENDAR_JSON, GOOGLE_SHEETS_ID, ADMIN_ID
+from modules.theater.routing import campaign_destinations, cast_usernames, poll_link
+from modules.attendance.services import answered_usernames, option_day
 from .models import AvailabilityCampaign, AvailabilityPoll, AvailabilityPollOption, AvailabilityVote
 from modules.calendar.models import CalendarEvent
 from modules.calendar.classification import is_troupe_event
@@ -104,11 +107,9 @@ def check_dates(event_ids: str = "", dates: str = "", db: Session = Depends(get_
 
 
 @router.get("/current")
-def get_current(db: Session = Depends(get_db)):
+def get_current(db: Session = Depends(get_db), campaign_id: int | None = None):
     """Текущая кампания с опросами и количеством проголосовавших."""
-    campaign = db.query(AvailabilityCampaign).order_by(
-        AvailabilityCampaign.id.desc()
-    ).first()
+    campaign = _find_campaign(db, campaign_id)
     if not campaign:
         return {"campaign": None}
 
@@ -119,6 +120,10 @@ def get_current(db: Session = Depends(get_db)):
             "id": poll.id,
             "telegram_poll_id": poll.telegram_poll_id,
             "telegram_message_id": poll.telegram_message_id,
+            "telegram_chat_id": poll.telegram_chat_id,
+            "show_names": json.loads(poll.show_names or campaign.show_names),
+            "delivery_state": poll.delivery_state,
+            "tg_link": poll_link(poll.telegram_chat_id, poll.telegram_message_id),
             "voter_count": len(voters),
             "options": [
                 {"option_index": o.option_index, "date_label": o.date_label,
@@ -139,87 +144,74 @@ def get_current(db: Session = Depends(get_db)):
     }
 
 
-@router.get("/non-voters")
-def get_non_voters(db: Session = Depends(get_db)):
-    """Список usernames из состава выбранных спектаклей, кто не ответил хотя бы на один опрос."""
-    campaign = db.query(AvailabilityCampaign).order_by(
-        AvailabilityCampaign.id.desc()
-    ).first()
-    if not campaign or not campaign.polls:
-        return {"non_voters": []}
+def _find_campaign(db, campaign_id=None):
+    if campaign_id is not None:
+        campaign = db.get(AvailabilityCampaign, campaign_id)
+        if not campaign:
+            raise HTTPException(404, 'Опрос занятости не найден')
+        return campaign
+    return db.query(AvailabilityCampaign).order_by(AvailabilityCampaign.id.desc()).first()
 
-    show_names = json.loads(campaign.show_names)
 
+def _campaign_non_voters(db, campaign):
     if not GOOGLE_SHEETS_ID or not os.path.exists(GOOGLE_CALENDAR_JSON):
-        raise HTTPException(503, "Google Sheets не настроен")
-
+        raise HTTPException(503, 'Google Sheets не настроен')
+    from sheets_client import SheetsClient
+    client = SheetsClient(GOOGLE_CALENDAR_JSON, GOOGLE_SHEETS_ID)
+    destinations = campaign_destinations(db, json.loads(campaign.show_names))
+    dates = {option_day(o, db) for p in campaign.polls for o in p.options} - {None}
+    answered = {day: answered_usernames(db, day) for day in dates}
     try:
-        from sheets_client import SheetsClient
-        client = SheetsClient(GOOGLE_CALENDAR_JSON, GOOGLE_SHEETS_ID)
-        mapping = client.get_actor_mapping()  # {username: name}
-        cast_usernames: set[str] = set()
-        for show in show_names:
-            cast_names = {n.lower() for n in client.get_show_cast(show)}
-            name_to_uname = {name.lower(): uname for uname, name in mapping.items()}
-            cast_usernames |= {name_to_uname[n] for n in cast_names if n in name_to_uname}
-    except Exception as e:
-        logger.error(f"non_voters cast lookup failed: {e}")
-        raise HTTPException(502, "Не удалось прочитать состав") from e
-
-    non_voters = []
-    for uname in cast_usernames:
-        for poll in campaign.polls:
-            voted = any(v.username and v.username.lower() == uname for v in poll.votes)
-            if not voted:
-                non_voters.append(uname)
-                break
-
-    return {"non_voters": sorted(non_voters)}
+        return {chat: sorted(username for username in cast_usernames(db, names, client)
+                             if any(username not in answered[day] for day in dates))
+                for chat, names in destinations.items()}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(502, 'Не удалось прочитать состав') from exc
 
 
-@router.post("/ping-non-voters")
-async def ping_non_voters(db: Session = Depends(get_db)):
-    """Отправить в чат напоминание с тегами тех, кто не ответил на опрос занятости."""
+@router.get('/non-voters')
+def get_non_voters(db: Session = Depends(get_db), campaign_id: int | None = None):
+    campaign = _find_campaign(db, campaign_id)
+    groups = _campaign_non_voters(db, campaign) if campaign and campaign.polls else {}
+    return {'non_voters': sorted({u for users in groups.values() for u in users}),
+            'chats': [{'chat_id': chat, 'non_voters': users} for chat, users in groups.items()]}
+
+
+@router.post('/ping-non-voters')
+async def ping_non_voters(db: Session = Depends(get_db), campaign_id: int | None = None):
     from bot import bot
-    from babel.dates import format_date
-
-    if not GROUP_CHAT_ID:
-        raise HTTPException(status_code=400, detail="GROUP_CHAT_ID не настроен")
-
-    campaign = db.query(AvailabilityCampaign).order_by(
-        AvailabilityCampaign.id.desc()
-    ).first()
+    campaign = _find_campaign(db, campaign_id)
     if not campaign:
-        raise HTTPException(status_code=404, detail="Нет активного опроса")
-
-    non_voters = (await asyncio.to_thread(get_non_voters, db))["non_voters"]
-
-    if not non_voters:
-        return {"status": "all_answered", "count": 0}
-
-    month_label = format_date(date.fromisoformat(campaign.month + "-01"), "MMMM yyyy", locale="ru_RU")
-
-    mentions = " ".join(f"@{u}" for u in sorted(non_voters))
-
-    poll_links = []
-    for poll in campaign.polls:
-        if poll.telegram_message_id:
-            group_id = str(GROUP_CHAT_ID)[4:] if str(GROUP_CHAT_ID).startswith("-100") \
-                else str(abs(GROUP_CHAT_ID))
-            poll_links.append(f"https://t.me/c/{group_id}/{poll.telegram_message_id}")
-
-    text = f"ребят, ещё не отметили занятость на {month_label}!\n{mentions}"
-    if poll_links:
-        text += "\n\n" + "\n".join(poll_links)
-
-    await bot.send_message(chat_id=GROUP_CHAT_ID, text=text)
-    return {"status": "sent", "count": len(non_voters)}
+        raise HTTPException(404, 'Нет активного опроса')
+    groups = await asyncio.to_thread(_campaign_non_voters, db, campaign)
+    sent, errors = set(), []
+    for chat, users in groups.items():
+        if not users:
+            continue
+        publications = [p for p in campaign.polls if p.telegram_chat_id == chat and p.telegram_message_id]
+        if not publications:
+            errors.append({'chat_id': chat, 'error': 'В этом чате ещё нет опроса. Запустите его для выбранных дат.'})
+            continue
+        links = [link for p in publications if (link := poll_link(chat, p.telegram_message_id))]
+        message = f'Отметьте занятость на {campaign.month}!\n' + ' '.join('@' + u for u in users)
+        if links:
+            message += '\n\n' + '\n'.join(links)
+        try:
+            await bot.send_message(chat_id=chat, text=message)
+            sent.update(users)
+        except Exception:
+            logger.exception('Availability reminder failed for chat %s', chat)
+            errors.append({'chat_id': chat, 'error': 'Не удалось отправить напоминание'})
+    return {'status': 'partial' if errors else 'sent' if sent else 'all_answered', 'count': len(sent), 'errors': errors}
 
 
 class CreateCampaignRequest(BaseModel):
     show_names: list[str]
     event_ids: list[int] | None = None
     dates: list[date] | None = None
+    retry_unconfirmed: bool = False
 
 
 def _campaign_dates(req: CreateCampaignRequest, db: Session):
@@ -246,78 +238,59 @@ def _campaign_dates(req: CreateCampaignRequest, db: Session):
     return selected
 
 
-@router.post("/campaign")
+@router.post('/campaign')
 async def create_campaign(req: CreateCampaignRequest, db: Session = Depends(get_db)):
-    """Удалить старую кампанию, создать новую, отправить опросы в Telegram."""
     from bot import bot
     from babel.dates import format_date
-
-    if not GROUP_CHAT_ID:
-        raise HTTPException(status_code=400, detail="GROUP_CHAT_ID не настроен")
+    from modules.polling.delivery import delivery_lock, send_publication
     if not req.show_names:
-        raise HTTPException(status_code=400, detail="Не выбраны спектакли")
+        raise HTTPException(400, 'Не выбраны спектакли')
     selected = _campaign_dates(req, db)
-
-    await asyncio.to_thread(_ensure_campaign_columns, [
-        (datetime.combine(d, datetime.min.time()), title) for d, _, title in selected
-    ])
-    old_ids = [c.id for c in db.query(AvailabilityCampaign).all()]
-
-    month = selected[0][0].strftime("%Y-%m")
-    month_label = format_date(selected[0][0], "MMMM yyyy", locale="ru_RU")
-
-    campaign = AvailabilityCampaign(
-        month=month,
-        show_names=json.dumps(req.show_names, ensure_ascii=False),
-    )
-    db.add(campaign)
-    db.flush()
-
-    db.commit()
-    # Reserve an option for actors unavailable on every date. Empty options mean retraction.
-    batches = [selected[i:i+9] for i in range(0, len(selected), 9)]
-    poll_suffix = f" (часть {{}}/{len(batches)})" if len(batches) > 1 else ""
-
-    for batch_idx, batch in enumerate(batches):
-        options = [_date_label(d) for d, _, _ in batch]
-        question = f"Отметьте даты когда вы свободны для спектаклей — {month_label}" + (
-            poll_suffix.format(batch_idx + 1) if poll_suffix else ""
-        )
-
-        try:
-            message = await bot.send_poll(
-                chat_id=GROUP_CHAT_ID,
-                question=question,
-                options=options + ["Ни одна из дат"],
-                is_anonymous=False,
-                allows_multiple_answers=True,
-            )
-        except Exception as e:
-            db.rollback()
-            raise HTTPException(status_code=502, detail=f"Ошибка отправки в Telegram: {e}")
-
-        poll = AvailabilityPoll(
-            campaign_id=campaign.id,
-            telegram_poll_id=message.poll.id,
-            telegram_message_id=message.message_id,
-        )
-        db.add(poll)
-        db.flush()
-
-        for i, (selected_date, event_id, _) in enumerate(batch):
-            db.add(AvailabilityPollOption(
-                poll_id=poll.id,
-                option_index=i,
-                calendar_event_id=event_id,
-                selected_date=selected_date,
-                date_label=_date_label(selected_date),
-            ))
-        db.commit()  # Preserve the mapping if sending a later poll fails.
-
-    for old in db.query(AvailabilityCampaign).filter(AvailabilityCampaign.id.in_(old_ids)).all():
-        db.delete(old)
-    db.commit()
-    return {"status": "sent", "month": month, "polls_count": len(batches), "events_count": len(selected)}
+    destinations = campaign_destinations(db, req.show_names)
+    month = selected[0][0].strftime('%Y-%m')
+    key = hashlib.sha256(json.dumps({'dates': [d.isoformat() for d, _, _ in selected],
+                                    'chats': destinations}, sort_keys=True).encode()).hexdigest()
+    async with delivery_lock:
+        campaign = db.query(AvailabilityCampaign).filter_by(request_key=key).order_by(AvailabilityCampaign.id.desc()).first()
+        if not campaign:
+            await asyncio.to_thread(_ensure_campaign_columns, [
+                (datetime.combine(d, datetime.min.time()), title) for d, _, title in selected])
+            campaign = AvailabilityCampaign(month=month, request_key=key,
+                show_names=json.dumps(sorted({name for names in destinations.values() for name in names}), ensure_ascii=False))
+            db.add(campaign)
+            db.flush()
+            for chat, names in destinations.items():
+                for start in range(0, len(selected), 9):
+                    poll = AvailabilityPoll(campaign_id=campaign.id, telegram_chat_id=chat,
+                        show_names=json.dumps(names, ensure_ascii=False), delivery_state='pending')
+                    db.add(poll)
+                    db.flush()
+                    for i, (day, event_id, _) in enumerate(selected[start:start+9]):
+                        db.add(AvailabilityPollOption(poll_id=poll.id, option_index=i,
+                            calendar_event_id=event_id, selected_date=day, date_label=_date_label(day)))
+            db.commit()
+        errors = []
+        for poll in campaign.polls:
+            try:
+                if poll.telegram_message_id:
+                    continue
+                db.expire_all()
+                current = campaign_destinations(db, json.loads(poll.show_names or campaign.show_names))
+                if set(current) != {poll.telegram_chat_id}:
+                    raise HTTPException(409, 'Чат спектакля изменился. Обновите настройки и запустите опрос заново.')
+                if req.retry_unconfirmed and not poll.telegram_message_id and poll.delivery_state in ('sending', 'uncertain'):
+                    poll.delivery_state = 'pending'
+                    db.commit()
+                await send_publication(db, bot, poll,
+                    question=f"В какие даты вы свободны? {format_date(selected[0][0], 'MMMM yyyy', locale='ru_RU')}",
+                    options=[o.date_label for o in sorted(poll.options, key=lambda o: o.option_index)] + ['Ни одна из дат'],
+                    multiple=True)
+            except HTTPException as exc:
+                errors.append({'chat_id': poll.telegram_chat_id, 'poll_id': poll.id,
+                               'delivery_state': poll.delivery_state, 'error': exc.detail})
+        return {'status': 'partial' if errors else 'sent', 'campaign_id': campaign.id,
+                'month': month, 'polls_count': sum(bool(p.telegram_message_id) for p in campaign.polls),
+                'events_count': len(selected), 'errors': errors}
 
 
 def _ensure_campaign_columns(events):

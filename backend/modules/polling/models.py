@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Boolean
+from sqlalchemy import Column, Integer, BigInteger, String, Date, DateTime, ForeignKey, Boolean
 from sqlalchemy.orm import relationship
 from core.database import Base
 from datetime import datetime
@@ -18,6 +18,10 @@ class Poll(Base):
     is_active = Column(Boolean, default=True)
     telegram_poll_id = Column(String, nullable=True)
     telegram_message_id = Column(Integer, nullable=True)
+    telegram_chat_id = Column(BigInteger, nullable=True)
+    selected_date = Column(Date, nullable=True)
+    show_id = Column(Integer, nullable=True)
+    delivery_state = Column(String, nullable=True)
     reminder_sent_at = Column(DateTime, nullable=True)
 
     votes = relationship("PollVote", back_populates="poll", cascade="all, delete-orphan")
