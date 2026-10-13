@@ -1,0 +1,324 @@
+<style>
+  #foshoo-preview { --fo-bg: light-dark(#f4f5f7,#15181d); --fo-paper: light-dark(#ffffff,#21252c); --fo-text: light-dark(#202731,#eef1f6); --fo-muted: light-dark(#5e6876,#a7b0bd); --fo-line: light-dark(#e3e7ed,#3a414d); --fo-accent: light-dark(#245bd8,#9bbaff); --fo-onaccent: light-dark(#ffffff,#102951); --fo-soft: light-dark(#eaf0ff,#283752); --fo-green: light-dark(#236c50,#92dab8); --fo-greenbg: light-dark(#e9f5ed,#233d32); --fo-warn: light-dark(#89570a,#f4c77b); --fo-warnbg: light-dark(#fff4df,#433626); --fo-red: light-dark(#ab3745,#ffabb3); --fo-redbg: light-dark(#fceef0,#432b33); color:var(--fo-text); font:400 14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; width:100%; }
+  #foshoo-preview * { box-sizing:border-box; }
+  #foshoo-preview button, #foshoo-preview input, #foshoo-preview select, #foshoo-preview textarea { font:inherit; }
+  #foshoo-preview button { color:inherit; }
+  #foshoo-preview button:disabled { opacity:.45; cursor:default; }
+  #foshoo-preview button:focus-visible, #foshoo-preview input:focus-visible, #foshoo-preview select:focus-visible, #foshoo-preview textarea:focus-visible { outline:3px solid var(--fo-accent); outline-offset:3px; }
+  #foshoo-preview h2, #foshoo-preview h3, #foshoo-preview p { margin:0; }
+  #foshoo-preview h2 { font-size:25px; line-height:1.2; font-weight:500; letter-spacing:-.6px; }
+  #foshoo-preview h3 { font-size:16px; line-height:1.35; font-weight:500; }
+  #foshoo-preview strong { font-weight:500; }
+  #foshoo-preview .fo-stage { max-width:450px; margin:auto; }
+  #foshoo-preview .fo-review { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:8px; padding:0 0 12px; color:var(--fo-muted); font-size:12px; }
+  #foshoo-preview .fo-review select { border:1px solid var(--fo-line); border-radius:8px; padding:8px; background:var(--fo-paper); color:var(--fo-text); }
+  #foshoo-preview .fo-jumps { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:5px; margin:0 0 12px; }
+  #foshoo-preview .fo-jump { border:1px solid var(--fo-line); background:var(--fo-paper); border-radius:9px; padding:9px 3px; font-size:12px; min-height:44px; }
+  #foshoo-preview .fo-jump[aria-pressed="true"] { color:var(--fo-accent); border-color:var(--fo-accent); background:var(--fo-soft); }
+  #foshoo-preview .fo-phone { background:var(--fo-bg); border:1px solid var(--fo-line); border-radius:22px; overflow:clip; }
+  #foshoo-preview .fo-top { background:var(--fo-paper); border-bottom:1px solid var(--fo-line); padding:15px 18px; display:flex; justify-content:space-between; align-items:center; gap:12px; }
+  #foshoo-preview .fo-brand { font-size:18px; font-weight:500; letter-spacing:-.6px; }
+  #foshoo-preview .fo-overline { font-size:11px; letter-spacing:1px; text-transform:uppercase; color:var(--fo-muted); }
+  #foshoo-preview .fo-role { font-size:12px; color:var(--fo-muted); }
+  #foshoo-preview .fo-content { padding:20px 16px; display:grid; gap:20px; min-height:570px; align-content:start; }
+  #foshoo-preview[data-density="compact"] .fo-content { gap:14px; }
+  #foshoo-preview .fo-heading { display:grid; gap:6px; }
+  #foshoo-preview .fo-small { font-size:12px; color:var(--fo-muted); }
+  #foshoo-preview .fo-section { display:grid; gap:10px; }
+  #foshoo-preview .fo-section-head { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+  #foshoo-preview .fo-panel { border:1px solid var(--fo-line); background:var(--fo-paper); border-radius:14px; padding:16px; display:grid; gap:12px; min-width:0; }
+  #foshoo-preview[data-density="compact"] .fo-panel { padding:12px; gap:9px; }
+  #foshoo-preview .fo-panel.fo-emphasis { border-color:var(--fo-accent); }
+  #foshoo-preview .fo-row { display:flex; gap:10px; justify-content:space-between; align-items:center; min-width:0; }
+  #foshoo-preview .fo-row > :first-child { min-width:0; }
+  #foshoo-preview .fo-stack { display:grid; gap:4px; min-width:0; }
+  #foshoo-preview .fo-badge { display:inline-flex; align-items:center; gap:5px; font-size:11px; font-weight:500; border-radius:6px; padding:4px 7px; width:fit-content; white-space:normal; color:var(--fo-muted); background:var(--fo-bg); }
+  #foshoo-preview .fo-good { color:var(--fo-green); background:var(--fo-greenbg); }
+  #foshoo-preview .fo-wait { color:var(--fo-warn); background:var(--fo-warnbg); }
+  #foshoo-preview .fo-bad { color:var(--fo-red); background:var(--fo-redbg); }
+  #foshoo-preview .fo-neutral { color:var(--fo-accent); background:var(--fo-soft); }
+  #foshoo-preview .fo-button { border:1px solid var(--fo-line); border-radius:10px; padding:10px 13px; min-height:44px; background:var(--fo-paper); font-weight:500; text-align:center; display:inline-flex; align-items:center; justify-content:center; gap:7px; overflow-wrap:anywhere; }
+  #foshoo-preview .fo-primary { background:var(--fo-accent); color:var(--fo-onaccent); border-color:var(--fo-accent); }
+  #foshoo-preview .fo-text-button { border:0; padding:6px 0; background:transparent; color:var(--fo-accent); font-size:12px; min-height:36px; text-align:left; display:inline-flex; align-items:center; gap:5px; }
+  #foshoo-preview .fo-actions { display:flex; flex-wrap:wrap; gap:8px; }
+  #foshoo-preview .fo-actions > .fo-button { flex:1; }
+  #foshoo-preview .fo-full { width:100%; }
+  #foshoo-preview .fo-note { padding:12px; border-radius:10px; color:var(--fo-muted); background:var(--fo-paper); border:1px solid var(--fo-line); font-size:12px; }
+  #foshoo-preview .fo-alert { padding:12px; border-radius:10px; background:var(--fo-warnbg); color:var(--fo-warn); font-size:12px; }
+  #foshoo-preview .fo-date { display:grid; align-content:center; text-align:center; background:var(--fo-bg); border-radius:10px; padding:8px 10px; flex:none; }
+  #foshoo-preview .fo-date strong { font-size:22px; line-height:1.2; }
+  #foshoo-preview .fo-date span { font-size:11px; color:var(--fo-muted); }
+  #foshoo-preview .fo-divider { height:1px; background:var(--fo-line); border:0; margin:0; }
+  #foshoo-preview .fo-segment { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:4px; }
+  #foshoo-preview .fo-segment.fo-two { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  #foshoo-preview .fo-segment button { min-height:42px; padding:9px 4px; border-radius:8px; border:1px solid var(--fo-line); background:var(--fo-paper); font-size:12px; }
+  #foshoo-preview .fo-segment button[aria-pressed="true"] { background:var(--fo-soft); border-color:var(--fo-accent); color:var(--fo-accent); font-weight:500; }
+  #foshoo-preview .fo-field { display:grid; gap:5px; font-size:12px; color:var(--fo-muted); }
+  #foshoo-preview textarea, #foshoo-preview input[type="text"] { width:100%; border:1px solid var(--fo-line); border-radius:9px; background:var(--fo-paper); color:var(--fo-text); padding:10px; font-size:16px; resize:vertical; }
+  #foshoo-preview input[type="checkbox"] { width:18px; height:18px; accent-color:var(--fo-accent); flex:none; }
+  #foshoo-preview .fo-person { display:flex; align-items:center; gap:9px; min-height:48px; padding:7px 0; }
+  #foshoo-preview .fo-person + .fo-person { border-top:1px solid var(--fo-line); }
+  #foshoo-preview .fo-person .fo-stack { flex:1; }
+  #foshoo-preview .fo-avatar { width:30px; height:30px; border-radius:50%; background:var(--fo-soft); color:var(--fo-accent); display:grid; place-items:center; flex:none; font-size:11px; }
+  #foshoo-preview .fo-counts { display:flex; flex-wrap:wrap; gap:5px; }
+  #foshoo-preview .fo-progress { height:5px; background:var(--fo-bg); border-radius:3px; overflow:hidden; }
+  #foshoo-preview .fo-progress span { height:100%; background:var(--fo-accent); display:block; }
+  #foshoo-preview .fo-bottom { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); padding:8px 5px 10px; border-top:1px solid var(--fo-line); background:var(--fo-paper); }
+  #foshoo-preview .fo-bottom button { background:transparent; border:0; padding:6px 1px; display:grid; gap:4px; justify-items:center; color:var(--fo-muted); font-size:11px; min-height:44px; }
+  #foshoo-preview .fo-bottom button[aria-current="page"] { color:var(--fo-accent); }
+  #foshoo-preview .fo-icon { display:inline-flex; width:17px; height:17px; flex:none; align-items:center; justify-content:center; }
+  #foshoo-preview .fo-icon svg { width:17px; height:17px; }
+  #foshoo-preview .fo-toast { color:var(--fo-green); background:var(--fo-greenbg); border-bottom:1px solid var(--fo-line); padding:10px 16px; font-size:12px; }
+  #foshoo-preview .fo-toast:empty { display:none; }
+  #foshoo-preview .fo-details { display:grid; gap:12px; }
+  #foshoo-preview .fo-summary { padding:14px; background:var(--fo-soft); border-radius:11px; display:grid; gap:8px; }
+  #foshoo-preview .fo-saving { text-align:center; color:var(--fo-muted); font-size:12px; }
+  #foshoo-preview .fo-calendar-line { display:flex; gap:12px; align-items:center; }
+  @media(max-width:370px) { #foshoo-preview .fo-content { padding:16px 12px; } #foshoo-preview .fo-panel { padding:12px; } #foshoo-preview h2 { font-size:23px; } #foshoo-preview .fo-jump { font-size:11px; } }
+</style>
+<div id="foshoo-preview" aria-label="FoShoo: макет интерфейса">
+  <div class="fo-stage">
+    <div class="fo-review">
+      <span>Макет · все данные условные</span>
+      <label>Смотрим как <select id="fo-role-picker" aria-label="Роль для просмотра макета"><option value="member">Участник</option><option value="superadmin">Суперадмин</option></select></label>
+    </div>
+    <nav class="fo-jumps" aria-label="Экраны макета">
+      <button type="button" class="fo-jump cursor-interaction" data-screen="home">1. Моё</button>
+      <button type="button" class="fo-jump cursor-interaction" data-screen="availability">2. Ответы</button>
+      <button type="button" class="fo-jump cursor-interaction" data-screen="slot">3. Слот</button>
+      <button type="button" class="fo-jump cursor-interaction" data-screen="event">4. Репетиция</button>
+    </nav>
+    <div class="fo-phone">
+      <header class="fo-top"><div class="fo-stack"><span class="fo-brand">FoShoo<span style="color:var(--fo-accent)">.</span></span><span class="fo-overline">Театр в одном месте</span></div><span class="fo-role" id="fo-role-label"></span></header>
+      <div class="fo-toast" id="fo-notice" role="status" aria-live="polite"></div>
+      <main class="fo-content" id="fo-view"></main>
+      <nav class="fo-bottom" aria-label="Разделы приложения">
+        <button type="button" class="cursor-interaction" data-screen="home" data-mainnav="home"><span class="fo-icon"><i data-lucide="house" aria-hidden="true"></i></span>Моё</button>
+        <button type="button" class="cursor-interaction" data-screen="slot" data-mainnav="slot"><span class="fo-icon"><i data-lucide="calendar-days" aria-hidden="true"></i></span>Планирование</button>
+        <button type="button" disabled aria-label="Театр — вне этих четырёх макетов"><span class="fo-icon"><i data-lucide="drama" aria-hidden="true"></i></span>Театр</button>
+        <button type="button" disabled aria-label="Финансы — вне этих четырёх макетов"><span class="fo-icon"><i data-lucide="wallet" aria-hidden="true"></i></span>Финансы</button>
+      </nav>
+    </div>
+  </div>
+</div>
+<script>
+(() => {
+  const root = document.getElementById('foshoo-preview');
+  const view = root.querySelector('#fo-view');
+  const notice = root.querySelector('#fo-notice');
+  const picker = root.querySelector('#fo-role-picker');
+  const dates = [
+    {day:'Среда, 14 октября',short:'14 октября',time:'19:00–22:00'},
+    {day:'Суббота, 17 октября',short:'17 октября',time:'12:00–15:00'},
+    {day:'Воскресенье, 18 октября',short:'18 октября',time:'12:00–15:00'}
+  ];
+  const people = {
+    me:{name:'Вы',initials:'ВЫ',role:'Роль А'},
+    misha:{name:'Миша К.',initials:'МК',role:'Роль Б'},
+    lena:{name:'Лена П.',initials:'ЛП',role:'Роль В'},
+    kirill:{name:'Кирилл Н.',initials:'КН',role:'Роль Г'},
+    varya:{name:'Варя С.',initials:'ВС',role:'Роль В'},
+    denis:{name:'Денис М.',initials:'ДМ',role:'Роль Г'}
+  };
+  const shows = {
+    kalium:{title:'Цианистый калий',chat:'Чат «Калий»',members:['me','misha','lena','kirill'],answers:{misha:'yes',lena:'no',kirill:null}},
+    urod:{title:'Урод',chat:'Чат «Урод»',members:['me','misha','varya','denis'],answers:{misha:'yes',varya:'yes',denis:'yes'}}
+  };
+  const chats = {kalium:'Чат «Калий»',urod:'Чат «Урод»',theater:'Общий чат театра'};
+  const initialEvent = () => ({show:'kalium',day:'Воскресенье, 11 октября',time:'12:00–15:00',task:'Прогон первой части',members:['me','misha','lena','kirill'],answers:{me:'yes',misha:'yes',lena:'no',kirill:'yes'},fresh:{me:false,misha:true,lena:true,kirill:false},request:true});
+  const defaults = () => ({version:1,screen:'home',role:'member',answers:[null,'yes',null],draft:[null,'yes',null],sent:['kalium'],show:'urod',kind:'rehearsal',selected:['me','misha','varya','denis'],task:'Прогон первой части',approved:null,existing:initialEvent(),event:initialEvent()});
+  const options = {homeOrder:'answers',density:'comfortable'};
+  let state = defaults();
+  let detail = false, preview = false, addChats = false, editAnswer = false;
+  let eventDraft = 'yes';
+  let chosenChats = [];
+  let message = '';
+  const screens = ['home','availability','slot','event'];
+  const esc = value => String(value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const icon = name => '<span class="fo-icon"><i data-lucide="'+name+'" aria-hidden="true"></i></span>';
+  const badge = (text,kind='') => '<span class="fo-badge '+kind+'">'+esc(text)+'</span>';
+  const button = (text,action,primary=false,extra='') => '<button type="button" class="fo-button cursor-interaction '+(primary?'fo-primary':'')+'" data-action="'+action+'" '+extra+'>'+text+'</button>';
+  const link = (text,action) => '<button type="button" class="fo-text-button cursor-interaction" data-action="'+action+'">'+text+'</button>';
+  const labels = {yes:'Могу',no:'Не могу',maybe:'Пока не знаю'};
+  const label = value => labels[value] || 'Нет ответа';
+  const answerClass = value => value==='yes'?'fo-good':value==='no'?'fo-bad':'fo-wait';
+  const admin = () => state.role === 'superadmin';
+  const answer = (show,id) => id === 'me' ? state.answers[1] : shows[show].answers[id];
+  const fullCast = show => shows[show].members.every(id=>answer(show,id)==='yes');
+  const filled = () => state.answers.filter(Boolean).length;
+  const dirty = () => JSON.stringify(state.answers)!==JSON.stringify(state.draft);
+  function persist() {
+    if (!window.openai?.setWidgetState) return;
+    const snapshot = {modelContent:{mockup:'FoShoo v1',screen:state.screen,role:state.role,answers:state.answers,selectedShow:shows[state.show].title,event:state.approved?{show:shows[state.approved.show].title,day:state.approved.day}:null,homeOrder:options.homeOrder},privateContent:{state,options}};
+    window.openai.setWidgetState(snapshot).catch(()=>{});
+  }
+  function restore(saved) {
+    const value = saved?.privateContent?.state;
+    if (!value || value.version!==1) return;
+    const next = {...defaults(),...value};
+    next.screen=screens.includes(next.screen)?next.screen:'home';
+    next.role=next.role==='superadmin'?'superadmin':'member';
+    next.show=shows[next.show]?next.show:'urod';
+    for(const key of ['answers','draft']) next[key] = Array.isArray(next[key]) && next[key].length===3 ? next[key].map(x=>['yes','no','maybe'].includes(x)?x:null) : defaults()[key];
+    next.selected=Array.isArray(next.selected)?next.selected.filter(id=>shows[next.show].members.includes(id)):shows[next.show].members.slice();
+    next.sent=Array.isArray(next.sent)?next.sent.filter(id=>chats[id]):['kalium'];
+    if(!next.event || !shows[next.event.show] || !Array.isArray(next.event.members) || !next.event.answers || !next.event.fresh) next.event=initialEvent();
+    state=next;
+    const oldOptions=saved.privateContent.options;
+    if(oldOptions){options.homeOrder=oldOptions.homeOrder==='schedule'?'schedule':'answers';options.density=oldOptions.density==='compact'?'compact':'comfortable';}
+  }
+  function navigate(screen) {
+    state.screen=screen; detail=false;preview=false;editAnswer=false;message='';
+    render();persist();
+  }
+  function eventTile(event,created=false) {
+    return '<div class="fo-panel"><div class="fo-calendar-line"><div class="fo-date"><strong>'+(created?'17':'11')+'</strong><span>октября</span></div><div class="fo-stack">'+badge(event.kind==='performance'?'Показ':'Репетиция','fo-neutral')+'<h3>'+esc(shows[event.show].title)+'</h3><p class="fo-small">'+esc(event.time)+' · Основной зал</p></div></div><div class="fo-row"><span class="fo-small">Утверждено · '+(event.members.includes('me')?'вы в составе':'без вашего участия')+'</span>'+link('Открыть →',created?'open-created':'open-existing')+'</div></div>';
+  }
+  function home() {
+    const pending=[['existing',state.existing],['created',state.approved]].filter(([,e])=>e&&e.request&&e.members.includes('me')&&!e.fresh.me);
+    const todo='<section class="fo-section"><div class="fo-section-head"><h3>Нужно ответить</h3>'+badge(String((filled()<3?1:0)+pending.length))+'</div>'+(filled()<3?'<div class="fo-panel fo-emphasis"><div class="fo-row"><strong>Свободные слоты на неделю</strong>'+badge('До 12 окт.','fo-wait')+'</div><p class="fo-small">14–18 октября · '+filled()+' из 3 ответов</p><div class="fo-progress"><span style="width:'+(filled()/3*100)+'%"></span></div>'+button('Отметить доступность','availability',true)+'</div>':'<div class="fo-note">Доступность на неделю заполнена. '+link('Изменить ответы','availability')+'</div>')+pending.map(([key,e])=>'<div class="fo-panel"><div class="fo-stack"><strong>Подтвердите планы на '+(e.kind==='performance'?'показ':'репетицию')+'</strong><p class="fo-small">'+esc(shows[e.show].title)+' · '+esc(e.day.toLowerCase())+'</p></div><span class="fo-small">Ранее: '+label(e.answers.me).toLowerCase()+'</span><div class="fo-actions">'+button('Всё в силе','home-confirm-'+key,true)+button('Изменились','home-change-'+key)+'</div></div>').join('')+'</section>';
+    const upcoming='<section class="fo-section"><div class="fo-section-head"><h3>Ближайшее участие</h3>'+link('Свободный слот →','slot')+'</div>'+eventTile(state.existing)+(state.approved&&state.approved.members.includes('me')?eventTile(state.approved,true):'')+'</section>';
+    return '<div class="fo-heading"><p class="fo-small">Суббота, 10 октября</p><h2>Моё</h2></div>'+(options.homeOrder==='schedule'?upcoming+todo:todo+upcoming)+'<section class="fo-section"><h3>Доступность</h3><div class="fo-panel"><div class="fo-row"><span>Ваши ответы общие для всех спектаклей</span>'+icon('users')+'</div><div class="fo-actions">'+button('Мои ответы','availability')+button('Кто свободен','slot')+'</div></div></section>';
+  }
+  function availability() {
+    let html='<div class="fo-heading"><p class="fo-overline">Опрос · свободные слоты</p><h2>Когда вы можете?</h2><p class="fo-small">14–18 октября · ответить до 12 октября</p></div><div class="fo-note">Ответ учитывается во всех спектаклях. Это сбор доступности; репетиции назначим отдельно.</div>';
+    dates.forEach((d,i)=>{
+      html+='<section class="fo-panel"><div class="fo-row"><div class="fo-stack"><h3>'+d.day+'</h3><span class="fo-small">'+d.time+' · Основной зал</span></div>'+badge(state.answers[i]?'Сохранено':'Нет ответа',state.answers[i]?'fo-good':'')+'</div><div class="fo-segment" aria-label="Ответ на '+d.short+'">'+Object.entries(labels).map(([key,text])=>'<button type="button" class="cursor-interaction" data-answer="'+key+'" data-date="'+i+'" aria-pressed="'+(state.draft[i]===key)+'">'+text+'</button>').join('')+'</div></section>';
+    });
+    html+='<div class="fo-section">'+button(dirty()?'Сохранить ответы':'Ответы сохранены','save-answers',true,dirty()?'':'disabled')+'<p class="fo-saving">'+(dirty()?'Есть несохранённые изменения':filled()+' из 3 слотов заполнено')+'</p></div>';
+    html+='<div class="fo-note">Актуальные ответы и итоги хранятся здесь, даже если галочки опроса Telegram выглядят иначе.</div>';
+    if(admin()) {
+      html+='<section class="fo-panel"><div class="fo-section-head"><h3>Публикации опроса</h3>'+badge(state.sent.length+' чат'+(state.sent.length===1?'':'а'))+'</div>'+state.sent.map(id=>'<div class="fo-row"><span>'+chats[id]+'</span>'+badge('Отправлено','fo-good')+'</div>').join('');
+      const remaining=Object.keys(chats).filter(id=>!state.sent.includes(id));
+      if(remaining.length) html+=button('Дослать в другой чат','add-chats');
+      if(addChats && remaining.length) html+='<hr class="fo-divider"><div class="fo-stack">'+remaining.map(id=>'<label class="fo-person"><input type="checkbox" data-chat="'+id+'" '+(chosenChats.includes(id)?'checked':'')+'><span>'+chats[id]+'</span></label>').join('')+'</div><p class="fo-small">Та же кампания. Уже собранные ответы сохранятся.</p>'+button('Отправить в выбранные чаты','send-chats',true,chosenChats.length?'':'disabled');
+      html+='</section>';
+    }
+    return html;
+  }
+  function roster(show,editable=false) {
+    return '<div>'+shows[show].members.map(id=>{
+      const p=people[id],a=answer(show,id);
+      return '<'+(editable?'label':'div')+' class="fo-person">'+(editable?'<input type="checkbox" data-person="'+id+'" '+(state.selected.includes(id)?'checked':'')+' '+(a==='no'?'disabled':'')+'>':'<span class="fo-avatar">'+p.initials+'</span>')+'<span class="fo-stack"><span>'+p.name+'</span><span class="fo-small">'+p.role+'</span></span>'+badge(label(a),answerClass(a))+'</'+(editable?'label':'div')+'>';
+    }).join('')+'</div>';
+  }
+  function candidate(id) {
+    const show=shows[id],yes=show.members.filter(p=>answer(id,p)==='yes').length,no=show.members.filter(p=>answer(id,p)==='no').length;
+    const full=fullCast(id);
+    return '<section class="fo-panel"><div class="fo-row"><h3>'+show.title+'</h3>'+badge(full?'Полный состав':yes+' из 4 могут',full?'fo-good':'fo-wait')+'</div><p class="fo-small">'+(state.kind==='performance'?(full?'Все роли закрыты доступными исполнителями.':'Для показа нужен полный состав.'):full?'Можно выбрать всех или часть исполнителей.':'Репетицию можно провести с частью состава.')+'</p><div class="fo-counts">'+badge(yes+' могут','fo-good')+(no?badge(no+' не может','fo-bad'):'')+(4-yes-no?badge((4-yes-no)+' без уверенного ответа','fo-wait'):'')+'</div>'+button(admin()?'Выбрать состав':'Посмотреть состав','choose-'+id,full,admin()&&state.kind==='performance'&&!full?'disabled':'')+'</section>';
+  }
+  function slot() {
+    let html='<div class="fo-heading"><p class="fo-overline">Планирование · '+(state.approved?'занятое время':'свободный слот')+'</p><h2>17 октября, суббота</h2><p>12:00–15:00 <span class="fo-small">· Основной зал</span></p></div>';
+    if(state.approved) return html+'<div class="fo-panel">'+badge('Утверждено','fo-good')+'<h3>'+esc(shows[state.approved.show].title)+'</h3><p>'+esc(state.approved.task)+'</p><p class="fo-small">'+state.approved.members.length+' участника · '+(state.approved.kind==='performance'?'Показ':'Репетиция')+'</p>'+button('Открыть событие','open-created',true)+'</div><div class="fo-note">Слот в календаре обновлён. Назначение и доступность показаны отдельно.</div>';
+    html+='<div class="fo-note">'+icon('calendar-days')+' В календаре: «Слот». Спектакль ещё не назначен.</div>';
+    if(!detail) {
+      html+='<div class="fo-section"><h3>Что планируем?</h3><div class="fo-segment fo-two"><button type="button" class="cursor-interaction" data-kind="performance" aria-pressed="'+(state.kind==='performance')+'">Показ</button><button type="button" class="cursor-interaction" data-kind="rehearsal" aria-pressed="'+(state.kind==='rehearsal')+'">Репетиция</button></div></div>'+candidate('kalium')+candidate('urod');
+      html+=admin()?button('Уточнить доступность','availability'):'<div class="fo-note">Вы видите общую доступность. Назначить репетицию или показ может суперадмин.</div>';
+    } else {
+      const show=shows[state.show];
+      const canApprove=state.selected.length>0 && (state.kind==='rehearsal'||fullCast(state.show));
+      html+=link('← Другие спектакли','back-candidates')+'<section class="fo-panel"><div class="fo-row"><h3>'+show.title+'</h3>'+badge(state.kind==='performance'?'Показ':'Репетиция','fo-neutral')+'</div>'+roster(state.show,admin()&&state.kind==='rehearsal');
+      if(admin()) {
+        html+='<label class="fo-field">Задача '+(state.kind==='rehearsal'?'репетиции':'показа')+'<textarea rows="2" id="fo-task">'+esc(state.task)+'</textarea></label>';
+        if(state.kind==='rehearsal') html+='<p class="fo-small">Достаточность состава оцениваете вы. Выбрано: '+state.selected.length+' из 4.</p>';
+        html+=button('Проверить и утвердить','preview-approval',true,canApprove?'':'disabled');
+      }
+      html+='</section>';
+      if(preview && admin()) {
+        const pending=state.selected.filter(id=>answer(state.show,id)!=='yes').length;
+        html+='<section class="fo-panel fo-emphasis" id="fo-approval-preview"><h3>Всё верно?</h3><div class="fo-summary"><strong>'+show.title+' · '+(state.kind==='performance'?'Показ':'Репетиция')+'</strong><span>17 октября, 12:00–15:00</span><span>'+state.selected.map(id=>people[id].name).join(', ')+'</span><span class="fo-small">Объявление: '+show.chat+'</span></div>'+(pending?'<div class="fo-alert">У '+pending+' участника нет уверенного ответа. Он останется назначенным с ожиданием подтверждения.</div>':'')+'<p class="fo-small">Существующий слот в календаре станет '+(state.kind==='performance'?'показом':'репетицией')+'.</p>'+button('Утвердить '+(state.kind==='performance'?'показ':'репетицию'),'approve',true)+'</section>';
+      }
+    }
+    return html;
+  }
+  function eventView() {
+    const e=state.event,show=shows[e.show],mine=e.members.includes('me'),fresh=e.members.filter(id=>e.fresh[id]).length;
+    const refused=e.members.filter(id=>e.answers[id]==='no').length;
+    let html='<div class="fo-heading"><p class="fo-overline">'+(e.kind==='performance'?'Показ':'Репетиция')+'</p><h2>'+show.title+'</h2><p>'+esc(e.day)+'</p><p class="fo-small">'+e.time+' · Основной зал</p><div class="fo-counts">'+badge('Утверждено','fo-good')+(refused?badge('Изменение состава','fo-wait'):'')+'</div></div><div class="fo-panel"><p class="fo-overline">Задача</p><h3>'+esc(e.task||'Задача пока не описана')+'</h3></div>';
+    if(mine) {
+      html+='<section class="fo-panel"><div class="fo-row"><h3>Моё участие</h3>'+badge(people.me.role,'fo-neutral')+'</div><div class="fo-row"><span>Доступность</span>'+badge(label(e.answers.me),answerClass(e.answers.me))+'</div>';
+      if(e.request) html+='<p class="fo-small">'+(e.fresh.me?'Вы дали свежий ответ на этот запрос.':'Подтвердите планы, даже если уже отвечали раньше.')+'</p>';
+      html+='<div class="fo-actions">'+(e.request&&!e.fresh.me?button('Всё в силе','confirm-self',true):'')+button('Изменить ответ','edit-event')+'</div>';
+      if(editAnswer) html+='<hr class="fo-divider"><div class="fo-segment">'+Object.entries(labels).map(([key,text])=>'<button type="button" class="cursor-interaction" data-event-answer="'+key+'" aria-pressed="'+(eventDraft===key)+'">'+text+'</button>').join('')+'</div>'+button('Сообщить об изменении','save-event',true);
+      html+='</section>';
+    }
+    html+='<section class="fo-panel"><div class="fo-section-head"><h3>Участники</h3>'+badge(e.members.length+' в составе')+'</div>'+(e.request?'<p class="fo-small">Свежие ответы: '+fresh+' из '+e.members.length+'</p>':'<p class="fo-small">Назначение сохранено; свежий запрос ещё не отправлен.</p>')+'<div>'+e.members.map(id=>'<div class="fo-person"><span class="fo-avatar">'+people[id].initials+'</span><span class="fo-stack"><span>'+people[id].name+' · '+people[id].role+'</span><span class="fo-small">'+(e.request?(e.fresh[id]?'Свежий ответ':'Ждём подтверждения'):'Ответ о доступности')+'</span></span>'+badge(label(e.answers[id]),answerClass(e.answers[id]))+'</div>').join('')+'</div></section>';
+    if(refused) html+='<div class="fo-alert">'+refused+' участник не сможет. Событие остаётся в расписании, пока суперадмин не изменит решение.</div>';
+    if(admin()) html+='<section class="fo-panel"><h3>Для суперадмина</h3><p class="fo-small">Запрос получат все '+e.members.length+' назначенных. Место публикации: '+show.chat+'.</p>'+button(e.request?'Запросить подтверждение заново':'Запросить подтверждение у всех','request-fresh',true)+'</section>';
+    html+='<div class="fo-note"><div class="fo-stack"><span>Календарь обновлён</span><span>Объявление отправлено · '+show.chat+'</span></div></div>';
+    return html;
+  }
+  function render() {
+    root.dataset.density=options.density;
+    picker.value=state.role;
+    root.querySelector('#fo-role-label').textContent=admin()?'Суперадмин':'Участник';
+    root.querySelectorAll('[data-screen]').forEach(b=>{if(b.classList.contains('fo-jump')) b.setAttribute('aria-pressed',String(b.dataset.screen===state.screen));});
+    root.querySelectorAll('[data-mainnav]').forEach(b=>{if(b.dataset.mainnav===(state.screen==='home'?'home':'slot'))b.setAttribute('aria-current','page');else b.removeAttribute('aria-current');});
+    view.innerHTML=({home,availability,slot,event:eventView}[state.screen])();
+    notice.textContent=message;
+    if(globalThis.lucide) lucide.createIcons({attrs:{width:16,height:16}});
+  }
+  function commitSelf(value) {
+    state.event.answers.me=value;
+    state.event.fresh.me=true;
+    if(state.event.day===dates[1].day) {
+      state.answers[1]=value;state.draft[1]=value;
+      if(state.approved){state.approved.answers.me=value;state.approved.fresh.me=true;}
+    }
+    if(state.event.day===state.existing.day)state.existing=structuredClone(state.event);
+    editAnswer=false;
+    message='Ответ сохранён. Назначение остаётся в расписании.';
+  }
+  root.addEventListener('click',event=>{
+    const target=event.target.closest('button');
+    if(!target || !root.contains(target) || target.disabled)return;
+    if(target.dataset.screen){navigate(target.dataset.screen);return;}
+    message='';
+    if(target.dataset.answer){state.draft[Number(target.dataset.date)]=target.dataset.answer;}
+    else if(target.dataset.eventAnswer){eventDraft=target.dataset.eventAnswer;}
+    else if(target.dataset.kind){state.kind=target.dataset.kind;detail=false;preview=false;}
+    else {
+      const action=target.dataset.action;
+      if(screens.includes(action)){navigate(action);return;}
+      if(action?.startsWith('choose-')) {state.show=action.slice(7);state.selected=shows[state.show].members.filter(id=>answer(state.show,id)!=='no');detail=true;preview=false;}
+      else if(action==='back-candidates'){detail=false;preview=false;}
+      else if(action==='save-answers'){
+        const changed=state.answers[1]!==state.draft[1];
+        state.answers=state.draft.slice();
+        if(changed&&state.approved&&state.approved.members.includes('me')){state.approved.answers.me=state.answers[1];state.approved.fresh.me=false;if(state.event.day===dates[1].day){state.event.answers.me=state.answers[1];state.event.fresh.me=false;}}
+        message='Ответы сохранены и учтены во всех спектаклях.';
+      }
+      else if(action==='add-chats' && admin()){addChats=!addChats;chosenChats=[];}
+      else if(action==='send-chats' && admin()&&chosenChats.length){state.sent=[...new Set([...state.sent,...chosenChats])];chosenChats=[];addChats=false;message='Опрос дослан. Все прежние ответы сохранены.';}
+      else if(action==='preview-approval' && admin()){preview=true;}
+      else if(action==='approve' && admin()){
+        if(!state.selected.length || (state.kind==='performance'&&!fullCast(state.show))){message='Для утверждения не хватает состава.';render();return;}
+        const event={show:state.show,day:dates[1].day,time:dates[1].time,task:state.task,kind:state.kind,members:state.selected.slice(),answers:{},fresh:{},request:false};
+        event.members.forEach(id=>{event.answers[id]=answer(state.show,id);event.fresh[id]=false;});
+        state.approved=structuredClone(event);state.event=event;state.screen='event';detail=false;preview=false;message='Утверждено. Слот обновлён, объявление отправлено в '+shows[state.show].chat+'.';
+      }
+      else if(action==='open-created' && state.approved){state.event=structuredClone(state.approved);state.screen='event';}
+      else if(action==='open-existing'){state.event=structuredClone(state.existing);state.screen='event';}
+      else if(action?.startsWith('home-confirm-') || action?.startsWith('home-change-')){state.event=structuredClone(action.endsWith('existing')?state.existing:state.approved);if(action.startsWith('home-confirm-'))commitSelf(state.event.answers.me||'maybe');else{state.screen='event';editAnswer=true;eventDraft=state.event.answers.me||'maybe';}}
+      else if(action==='confirm-self' && state.event.members.includes('me')){commitSelf(state.event.answers.me || 'maybe');}
+      else if(action==='change-event' || action==='edit-event'){state.screen='event';editAnswer=true;eventDraft=state.event.answers.me||'maybe';}
+      else if(action==='save-event'){commitSelf(eventDraft);}
+      else if(action==='request-fresh' && admin()) {state.event.request=true;state.event.members.forEach(id=>state.event.fresh[id]=false);if(state.approved && state.event.day===state.approved.day)state.approved=structuredClone(state.event);else state.existing=structuredClone(state.event);message='Свежий ответ запрошен у всех назначенных. Прежняя доступность сохранена.';}
+    }
+    render();persist();
+  });
+  root.addEventListener('change',event=>{
+    const el=event.target;
+    if(el===picker){state.role=el.value;detail=false;preview=false;addChats=false;message='';}
+    else if(el.dataset.person && admin()){const id=el.dataset.person;state.selected=el.checked?[...new Set([...state.selected,id])]:state.selected.filter(p=>p!==id);preview=false;}
+    else if(el.dataset.chat && admin()){const id=el.dataset.chat;chosenChats=el.checked?[...new Set([...chosenChats,id])]:chosenChats.filter(p=>p!==id);}
+    else return;
+    render();persist();
+  });
+  root.addEventListener('input',event=>{if(event.target.id==='fo-task'){state.task=event.target.value;preview=false;root.querySelector('#fo-approval-preview')?.remove();persist();}});
+  restore(window.openai?.widgetState);
+  render();
+  window.addEventListener('openai:set_globals',event=>{if(event.detail?.globals?.widgetState){restore(event.detail.globals.widgetState);render();}});
+  if(globalThis.Tweak){const tweak=new Tweak({container:root,onChange:()=>{render();persist();}});tweak.addSelect(options,'homeOrder',{label:'Первый блок на «Моё»',options:[{label:'Неотвеченные запросы',value:'answers'},{label:'Ближайшее участие',value:'schedule'}]});tweak.addSelect(options,'density',{label:'Плотность карточек',options:[{label:'Свободнее',value:'comfortable'},{label:'Компактнее',value:'compact'}]});}
+})();
+</script>
