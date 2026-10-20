@@ -13,6 +13,8 @@ router = APIRouter(prefix="/api/finance", tags=["finance"])
 logger = logging.getLogger(__name__)
 
 EXPENSE_TYPES = ["Личные траты", "Трата со счета ФоШу", "Пожертвование", "Возврат"]
+BANK_EXPENSE = "Трата со счета ФоШу"
+BANK_NAME = "Копилка"
 from modules.finance.catalog import PROJECTS
 
 
@@ -155,7 +157,12 @@ def add_expense(req: ExpenseRequest, db: Session = Depends(get_db)):
     if req.expense_type not in EXPENSE_TYPES:
         raise HTTPException(status_code=400, detail="Неверный тип траты")
 
-    who = req.who.strip() if req.who.strip() else (_resolve_name(req.username) if req.username else "—")
+    who = (BANK_NAME if req.expense_type == BANK_EXPENSE else
+           req.who.strip() or (_resolve_name(req.username) if req.username else ""))
+    if req.expense_type in ("Личные траты", "Возврат") and (
+        not who or who.casefold() in ("—", "-", BANK_NAME.casefold())
+    ):
+        raise HTTPException(400, "Укажите человека для личной траты или возврата")
     today_dmy = req.date.strip() if req.date.strip() else local_now().date().strftime("%d.%m.%Y")
     try:
         today_iso = _dmy_to_iso(today_dmy)
@@ -342,7 +349,8 @@ def get_transactions(limit: int = 10, db: Session = Depends(get_db)):
             "date": _iso_to_dmy(e.date) if e.date else "",
             "_iso": e.date or "",
             "amount": str(e.amount) if e.amount is not None else "0",
-            "what": e.what, "project": e.project, "who": e.who,
+            "what": e.what, "project": e.project,
+            "who": BANK_NAME if e.expense_type == BANK_EXPENSE else e.who,
             "expense_type": e.expense_type, "comment": e.comment or "",
             "created_at": e.created_at.isoformat() if e.created_at else "",
         })
@@ -361,6 +369,40 @@ def get_transactions(limit: int = 10, db: Session = Depends(get_db)):
     for item in items:
         del item["_iso"]
     return {"transactions": items[:limit]}
+
+
+@router.get("/reimbursements")
+def get_reimbursements(db: Session = Depends(get_db)):
+    """Outstanding personal spending across all projects and dates.
+
+    Paid refunds are expense rows of type «Возврат», just as in the balance
+    history. Do not also count the unused legacy ReturnsLog table.
+    """
+    people = {}
+    unassigned = {"personal": 0, "returned": 0}
+    for row in db.query(ExpenseLog).filter(
+        ExpenseLog.expense_type.in_(["Личные траты", "Возврат"])
+    ).order_by(ExpenseLog.id).all():
+        name = " ".join((row.who or "").split())
+        field = "personal" if row.expense_type == "Личные траты" else "returned"
+        amount = _amt(row.amount)
+        if not name or name.casefold() in ("—", "-", BANK_NAME.casefold()):
+            # Unknown refunds cannot safely be assigned to an unknown spender.
+            unassigned[field] += amount
+            continue
+        person = people.setdefault(name.casefold(), {"who": name, "personal": 0, "returned": 0})
+        person[field] += amount
+
+    outstanding = [
+        {**person, "amount": person["personal"] - person["returned"]}
+        for person in people.values() if person["personal"] > person["returned"]
+    ]
+    outstanding.sort(key=lambda person: (-person["amount"], person["who"].casefold()))
+    return {
+        "total": sum(person["amount"] for person in outstanding) + max(0, unassigned["personal"]),
+        "people": outstanding,
+        "unassigned": unassigned,
+    }
 
 
 @router.delete("/transactions/{tx_type}/{tx_id}")

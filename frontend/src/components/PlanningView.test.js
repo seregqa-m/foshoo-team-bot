@@ -69,3 +69,16 @@ test('failed source read is an error rather than an empty available cast', async
   expect(container.querySelector('[role="alert"]')).not.toBeNull();
   expect(container.querySelector('.planning-cell')).toBeNull();
 });
+
+test('attendance is visible without roles but cannot bypass cast assignment requirements', async () => {
+  Object.assign(plan.slots[0].shows[0], {
+    roles: [], total: 0, covered: 0, incomplete: true, status: 'blocked', suggested_cast: {},
+    attendance: { total: 12, yes: 8, no: 2, unknown: 1, unanswered: 1 },
+  });
+  await open();
+  expect(container.textContent).toContain('Участников: 12');
+  expect(container.textContent).toContain('смогут: 8');
+  expect(container.textContent).toContain('не ответили: 1');
+  expect(button('Назначить спектакль')).toBeUndefined();
+  expect(client.post).not.toHaveBeenCalled();
+});

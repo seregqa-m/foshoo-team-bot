@@ -11,8 +11,8 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from core.database import get_db
 from config import GOOGLE_CALENDAR_JSON, GOOGLE_SHEETS_ID, ADMIN_ID
-from modules.theater.routing import campaign_destinations, cast_usernames, poll_link
-from modules.attendance.services import answered_usernames, option_day
+from modules.theater.routing import campaign_destinations, poll_link
+from modules.attendance.services import option_day
 from .models import AvailabilityCampaign, AvailabilityPoll, AvailabilityPollOption, AvailabilityVote
 from modules.calendar.models import CalendarEvent
 from modules.calendar.classification import is_troupe_event
@@ -115,7 +115,7 @@ def get_current(db: Session = Depends(get_db), campaign_id: int | None = None):
 
     polls_data = []
     for poll in campaign.polls:
-        voters = {v.username for v in poll.votes if v.username}
+        voters = {v.user_id for v in poll.votes}
         polls_data.append({
             "id": poll.id,
             "telegram_poll_id": poll.telegram_poll_id,
@@ -154,28 +154,19 @@ def _find_campaign(db, campaign_id=None):
 
 
 def _campaign_non_voters(db, campaign):
-    if not GOOGLE_SHEETS_ID or not os.path.exists(GOOGLE_CALENDAR_JSON):
-        raise HTTPException(503, 'Google Sheets не настроен')
-    from sheets_client import SheetsClient
-    client = SheetsClient(GOOGLE_CALENDAR_JSON, GOOGLE_SHEETS_ID)
+    from modules.attendance.roster import missing_members
     destinations = campaign_destinations(db, json.loads(campaign.show_names))
-    dates = {option_day(o, db) for p in campaign.polls for o in p.options} - {None}
-    answered = {day: answered_usernames(db, day) for day in dates}
-    try:
-        return {chat: sorted(username for username in cast_usernames(db, names, client)
-                             if any(username not in answered[day] for day in dates))
-                for chat, names in destinations.items()}
-    except HTTPException:
-        raise
-    except Exception as exc:
-        raise HTTPException(502, 'Не удалось прочитать состав') from exc
+    return {chat: missing_members(db, chat, {option_day(o, db) for p in campaign.polls
+              if p.telegram_chat_id == chat for o in p.options} - {None}) for chat in destinations}
 
 
 @router.get('/non-voters')
 def get_non_voters(db: Session = Depends(get_db), campaign_id: int | None = None):
     campaign = _find_campaign(db, campaign_id)
     groups = _campaign_non_voters(db, campaign) if campaign and campaign.polls else {}
-    return {'non_voters': sorted({u for users in groups.values() for u in users}),
+    participants = {p['user_id']: p for people in groups.values() for p in people}
+    return {'non_voters': [p['username'] or p['name'] for p in participants.values()],
+            'participants': list(participants.values()),
             'chats': [{'chat_id': chat, 'non_voters': users} for chat, users in groups.items()]}
 
 
@@ -185,6 +176,11 @@ async def ping_non_voters(db: Session = Depends(get_db), campaign_id: int | None
     campaign = _find_campaign(db, campaign_id)
     if not campaign:
         raise HTTPException(404, 'Нет активного опроса')
+    from modules.attendance.registration import sync_voter_registrations
+    from modules.attendance.roster import mention_messages
+    chats = list(campaign_destinations(db, json.loads(campaign.show_names)))
+    await sync_voter_registrations(bot, chat_ids=chats, force=True, strict=True)
+    db.expire_all()
     groups = await asyncio.to_thread(_campaign_non_voters, db, campaign)
     sent, errors = set(), []
     for chat, users in groups.items():
@@ -195,12 +191,10 @@ async def ping_non_voters(db: Session = Depends(get_db), campaign_id: int | None
             errors.append({'chat_id': chat, 'error': 'В этом чате ещё нет опроса. Запустите его для выбранных дат.'})
             continue
         links = [link for p in publications if (link := poll_link(chat, p.telegram_message_id))]
-        message = f'Отметьте занятость на {campaign.month}!\n' + ' '.join('@' + u for u in users)
-        if links:
-            message += '\n\n' + '\n'.join(links)
         try:
-            await bot.send_message(chat_id=chat, text=message)
-            sent.update(users)
+            for message in mention_messages(f'Отметьте занятость на {campaign.month}!', users, links):
+                await bot.send_message(chat_id=chat, text=message, parse_mode='HTML')
+            sent.update(person['user_id'] for person in users)
         except Exception:
             logger.exception('Availability reminder failed for chat %s', chat)
             errors.append({'chat_id': chat, 'error': 'Не удалось отправить напоминание'})

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import client from '../api/client';
 import './TheaterPanel.css';
+import ChatMembers from './ChatMembers';
 
 const endpoint = '/api/admin/theater';
 const errorText = error => typeof error.response?.data?.detail === 'string'
@@ -61,6 +62,7 @@ export default function TheaterPanel() {
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
   const [reload, setReload] = useState(0);
+  const [membersChat, setMembersChat] = useState('');
 
   useEffect(() => {
     let active = true;
@@ -116,6 +118,16 @@ export default function TheaterPanel() {
           {!data.shows.length && <tr><td colSpan={2}>Импортируйте спектакли из таблицы или добавьте название ниже.</td></tr>}
         </tbody>
       </table>
+      <details>
+        <summary>Участники подключённых групп</summary>
+        <select className="select-input" aria-label="Группа для списка участников" value={membersChat}
+          onChange={event => setMembersChat(event.target.value)}>
+          <option value="">Выберите группу</option>
+          {[...new Set(data.shows.map(show => show.telegram_chat_id).filter(Boolean))].map(id =>
+            <option key={id} value={id}>{data.chats?.find(chat => chat.telegram_chat_id === id)?.title || id}</option>)}
+        </select>
+        {membersChat && <ChatMembers key={membersChat} chatId={membersChat} />}
+      </details>
       <details className="theater-panel__add">
         <summary>Добавить спектакль</summary>
         <form aria-label="Добавить спектакль" onSubmit={event => {

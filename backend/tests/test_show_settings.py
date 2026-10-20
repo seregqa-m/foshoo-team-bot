@@ -65,6 +65,11 @@ class ShowSettingsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(error.exception.status_code, 400)
 
     async def test_reminders_use_each_events_cast_and_ignore_the_legacy_choice(self):
+        from modules.attendance.models import VoterRegistration, ChatParticipant
+        for uid, name, chats in [(81, 'Аня', [-1001]), (82, 'Борис', [-1002]),
+                                 (83, 'Вера', [-1001, -1002]), (84, 'Глеб', [-1001])]:
+            self.db.add(VoterRegistration(user_id=uid, display_name=name, telegram_chat_id=chats[0]))
+            self.db.add_all([ChatParticipant(user_id=uid, chat_id=chat, status='member') for chat in chats])
         for index, title in enumerate(['ЛГ[Реп]', 'Урод[Реп]', 'Труппа 1']):
             event = CalendarEvent(title=title, start_time=datetime(2026, 10, 5, 18 + index))
             self.db.add(event)
@@ -79,6 +84,7 @@ class ShowSettingsTests(unittest.IsolatedAsyncioTestCase):
              patch('main.local_now', return_value=as_local(datetime(2026, 10, 4, 19))), \
              patch('main.GOOGLE_CALENDAR_JSON', __file__), patch('config.GOOGLE_SHEETS_ID', 'test'), \
              patch('sheets_client.SheetsClient') as sheets, \
+             patch('modules.attendance.registration.sync_voter_registrations', AsyncMock()), \
              patch.object(main.bot, 'send_message', AsyncMock()) as send, \
              patch.object(main.bot, 'pin_chat_message', AsyncMock()):
             sheets.return_value.get_show_names.return_value = ['Любовь Громова', 'Урод']
@@ -89,11 +95,11 @@ class ShowSettingsTests(unittest.IsolatedAsyncioTestCase):
             await main._send_poll_reminders()
         self.assertEqual(send.await_count, 2)
         texts = {call.kwargs['text'].rsplit('/', 1)[-1]: call.kwargs['text'] for call in send.await_args_list}
-        self.assertIn('@gromova', texts['100'])
-        self.assertNotIn('@urod', texts['100'])
-        self.assertNotIn('@voted', texts['100'])
-        self.assertIn('@urod', texts['101'])
-        self.assertNotIn('@gromova', texts['101'])
+        self.assertIn('tg://user?id=81', texts['100'])
+        self.assertNotIn('tg://user?id=82', texts['100'])
+        self.assertNotIn('tg://user?id=84', texts['100'])
+        self.assertIn('tg://user?id=82', texts['101'])
+        self.assertNotIn('tg://user?id=81', texts['101'])
         self.assertEqual([call.kwargs['chat_id'] for call in send.await_args_list], [-1001, -1002])
 
     def test_monthly_campaign_is_not_limited_by_the_legacy_choice(self):

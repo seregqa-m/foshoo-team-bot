@@ -90,3 +90,11 @@ async def update_show(show_id: int, req: UpdateShowRequest, request: Request,
     show = set_show(db, request.state.telegram_user.id, show_id, req.name,
                     req.telegram_chat_id, req.expected_revision, verified_chat_title=title)
     return show_data(show)
+
+
+@router.get('/chats/{chat_id}/members')
+def chat_members(chat_id: int, db: Session = Depends(get_db)):
+    from modules.attendance.roster import members
+    if not db.query(TheaterShow).filter_by(telegram_chat_id=chat_id).first():
+        raise HTTPException(404, 'Группа не подключена к спектаклю')
+    return {'members': members(db, chat_id, active_only=False)}

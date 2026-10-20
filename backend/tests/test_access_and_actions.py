@@ -34,6 +34,9 @@ def signed_data(token="test-token", user_id=42, auth_date=None):
 
 class AccessTests(unittest.TestCase):
     def setUp(self):
+        groups = patch('core.access._group_member_access', AsyncMock(return_value=False))
+        groups.start()
+        self.addCleanup(groups.stop)
         role = patch('core.access.is_super_admin', AsyncMock(return_value=False))
         role.start()
         self.addCleanup(role.stop)
@@ -167,6 +170,9 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
 
 class AccessLatencyTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
+        groups = patch('core.access._group_member_access', AsyncMock(return_value=False))
+        groups.start()
+        self.addCleanup(groups.stop)
         from core import access
         self.access = access
         access._access_cache.clear()
@@ -212,7 +218,7 @@ class AccessLatencyTests(unittest.IsolatedAsyncioTestCase):
     async def test_sheets_timeout_does_not_reuse_expired_access(self):
         import threading
         release = threading.Event()
-        def stalled(username):
+        def stalled(username, user_id=None):
             release.wait(1)
             return True
         self.access._access_cache[(1, "actor")] = (time.monotonic() - 1, True, True)

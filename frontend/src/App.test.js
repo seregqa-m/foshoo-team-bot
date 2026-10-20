@@ -28,7 +28,11 @@ beforeEach(() => {
 afterEach(() => { act(() => root.unmount()); container.remove(); delete window.Telegram; jest.clearAllMocks(); });
 
 test('switching tabs preserves the assistant draft', async () => {
+  const regular = client.get.getMockImplementation();
+  client.get.mockImplementation(url => url.endsWith('app-config')
+    ? Promise.resolve({ data: { troupe_filter: 'труппа 1', assistant_enabled: true } }) : regular(url));
   await act(async () => root.render(<App />));
+  act(() => Array.from(container.querySelectorAll('nav button')).find(b => b.textContent.includes('Ассистент')).click());
   const draft = container.querySelector('input');
   act(() => Simulate.change(draft, { target: { value: 'Клининг 5000' } }));
   const buttons = container.querySelectorAll('nav button');
@@ -58,11 +62,47 @@ test('self-revocation removes global controls while retaining group-admin settin
   client.get.mockImplementation(url => url.endsWith('/check')
     ? Promise.resolve({ data: { allowed: true, is_admin: true, is_superadmin: true, user_id: 42 } }) : regular(url));
   await act(async () => root.render(<App />));
+  act(() => Array.from(container.querySelectorAll('nav button')).find(b => b.textContent.includes('Настройки')).click());
   expect(container.textContent).toContain('global settings');
   client.get.mockImplementation(regular);
   await act(async () => window.dispatchEvent(new Event(DATA_CHANGED_EVENT)));
   expect(container.textContent).not.toContain('global settings');
   expect(container.textContent).toContain('group settings');
+});
+
+test('without LLM the calendar opens and admins can reach settings', async () => {
+  await act(async () => root.render(<App />));
+  expect(container.textContent).not.toContain('Ассистент');
+  expect(container.querySelector('input')).toBeNull();
+  expect(container.querySelector('nav button.active').textContent).toContain('Расписание');
+  act(() => Array.from(container.querySelectorAll('nav button')).find(b => b.textContent.includes('Настройки')).click());
+  expect(container.textContent).toContain('group settings');
+});
+
+test('ordinary members do not see administration settings', async () => {
+  const regular = client.get.getMockImplementation();
+  client.get.mockImplementation(url => url.endsWith('/check')
+    ? Promise.resolve({ data: { allowed: true, is_admin: false, user_id: 42 } }) : regular(url));
+  await act(async () => root.render(<App />));
+  expect(container.textContent).not.toContain('Настройки');
+  expect(container.textContent).not.toContain('group settings');
+});
+
+test('group-only access hides finance and assistant even when assistant is enabled', async () => {
+  client.get.mockImplementation(url => Promise.resolve({ data: url.endsWith('/check')
+    ? { allowed: true, is_admin: false, can_finance: false, user_id: 42 }
+    : { assistant_enabled: true } }));
+  await act(async () => root.render(<App />));
+  expect(container.textContent).not.toContain('Финансы');
+  expect(container.textContent).not.toContain('Ассистент');
+  expect(container.textContent).toContain('Расписание');
+});
+
+test('existing member financial access does not require administration', async () => {
+  client.get.mockResolvedValue({ data: { allowed: true, is_admin: false, can_finance: true, user_id: 42 } });
+  await act(async () => root.render(<App />));
+  expect(container.textContent).toContain('Финансы');
+  expect(container.textContent).not.toContain('Настройки');
 });
 
 

@@ -7,11 +7,12 @@ import logging
 import sys
 import os
 from fastapi import FastAPI, Depends
+from fastapi.responses import JSONResponse
 from core.access import authorize_api
 from core.time import local_now
 from fastapi.middleware.cors import CORSMiddleware
 from core.database import init_db, SessionLocal, engine
-from config import LOG_LEVEL, API_HOST, API_PORT, GOOGLE_CALENDAR_JSON, GOOGLE_CALENDAR_ID, SYNC_INTERVAL_MINUTES
+from config import LOG_LEVEL, API_HOST, API_PORT, GOOGLE_CALENDAR_JSON, GOOGLE_CALENDAR_ID, SYNC_INTERVAL_MINUTES, RECOVERY_MODE, POLL_AUTOMATION_ENABLED
 from modules.calendar.router import router as calendar_router
 from modules.calendar.services import CalendarService
 from modules.calendar.google_client import GoogleCalendarClient
@@ -56,6 +57,12 @@ app.add_middleware(
 )
 
 
+@app.middleware("http")
+async def recovery_gate(request, call_next):
+    if RECOVERY_MODE and request.url.path not in ("/", "/health"):
+        return JSONResponse(status_code=503, content={"detail": "Приложение восстанавливается. Попробуйте позже."})
+    return await call_next(request)
+
 
 def run_migrations():
     """Добавить новые колонки если их нет (идемпотентно)"""
@@ -82,6 +89,7 @@ def run_migrations():
             "ALTER TABLE availability_votes ADD COLUMN option_ids TEXT",
             "ALTER TABLE calendar_events ADD COLUMN poll_show_id INTEGER",
             "ALTER TABLE calendar_events ADD COLUMN poll_show_title TEXT",
+            "ALTER TABLE attendance_voters ADD COLUMN legacy_access BOOLEAN",
         ]:
             table, column = stmt.split()[2], stmt.split()[5]
             if column not in {c["name"] for c in inspect(conn).get_columns(table)}:
@@ -103,7 +111,8 @@ async def _run_bot():
         try:
             await bot.delete_webhook(drop_pending_updates=False)
             logger.info("⏱ Bot: starting polling...")
-            await dp.start_polling(bot, handle_signals=False, close_bot_session=False)
+            await dp.start_polling(bot, handle_signals=False, close_bot_session=False,
+                                   allowed_updates=dp.resolve_used_update_types())
         except Exception as e:
             logger.error(f"❌ Bot polling stopped: {e}")
         if asyncio.get_running_loop().time() - started >= 60:
@@ -220,19 +229,23 @@ def _show_names():
     return SheetsClient(GOOGLE_CALENDAR_JSON, GOOGLE_SHEETS_ID).get_show_names()
 
 
-def _reminder_usernames(db, show_name):
-    from config import GOOGLE_SHEETS_ID
-    from sheets_client import SheetsClient
-    from modules.theater.routing import cast_usernames
-    if not (GOOGLE_SHEETS_ID and os.path.exists(GOOGLE_CALENDAR_JSON)):
-        raise RuntimeError('Google Sheets is not configured')
-    return cast_usernames(db, [show_name], SheetsClient(GOOGLE_CALENDAR_JSON, GOOGLE_SHEETS_ID))
-
-
 def _export_attendance():
     from modules.attendance.services import export_pending
     with SessionLocal() as db:
         export_pending(db)
+
+
+async def attendance_sync_background():
+    """Retry committed votes even when automatic poll publication is paused."""
+    from modules.attendance.registration import sync_voter_registrations
+    await asyncio.sleep(15)
+    while True:
+        try:
+            await sync_voter_registrations(bot)
+            await asyncio.to_thread(_export_attendance)
+        except Exception:
+            logger.exception('Attendance sync failed; will retry')
+        await asyncio.sleep(60)
 
 
 async def poll_reminder_background():
@@ -252,10 +265,6 @@ async def poll_reminder_background():
             await _send_poll_reminders()
         except Exception as e:
             logger.error(f"❌ Reminder check failed: {e}")
-        try:
-            await asyncio.to_thread(_export_attendance)
-        except Exception:
-            logger.exception('Attendance export failed; will retry')
         await asyncio.sleep(60)
 
 
@@ -325,7 +334,8 @@ async def _send_poll_reminders():
     from modules.polling.models import Poll
     from modules.polling.delivery import publish_event
     from modules.theater.routing import event_destination, poll_link, show_aliases, saved_event_show
-    from modules.attendance.services import answered_usernames
+    from modules.attendance.roster import missing_members, mention_messages
+    from modules.attendance.registration import sync_voter_registrations
     with SessionLocal() as db:
         settings = _poll_settings(db)
         if not settings:
@@ -345,18 +355,19 @@ async def _send_poll_reminders():
                 poll = db.get(Poll, result['poll_id'])
                 if not poll.is_active or poll.reminder_sent_at:
                     continue
-                if show.id not in recipients:
-                    recipients[show.id] = await asyncio.to_thread(_reminder_usernames, db, show.name)
-                missing = recipients[show.id] - answered_usernames(db, target)
+                if show.telegram_chat_id not in recipients:
+                    await sync_voter_registrations(bot, chat_ids=[show.telegram_chat_id], force=True, strict=True)
+                    recipients[show.telegram_chat_id] = True
+                db.expire_all()
+                missing = missing_members(db, show.telegram_chat_id, [target])
                 db.refresh(show)
                 if show.telegram_chat_id != poll.telegram_chat_id:
                     continue
                 if missing:
                     link = poll_link(poll.telegram_chat_id, poll.telegram_message_id)
-                    text = f'{show.name}: отметьте присутствие {event.start_time:%d.%m в %H:%M}!\n' + ' '.join('@' + u for u in sorted(missing))
-                    if link:
-                        text += '\n\n' + link
-                    await bot.send_message(chat_id=poll.telegram_chat_id, text=text)
+                    heading = f'{show.name}: отметьте присутствие {event.start_time:%d.%m в %H:%M}!'
+                    for text in mention_messages(heading, missing, [link] if link else []):
+                        await bot.send_message(chat_id=poll.telegram_chat_id, text=text, parse_mode='HTML')
                 poll.reminder_sent_at = datetime.utcnow()
                 db.commit()
                 try:
@@ -383,9 +394,14 @@ async def startup():
     from config import ADMIN_ID
     with SessionLocal() as db:
         bootstrap_superadmin(db, ADMIN_ID)
+        from modules.attendance.registration import backfill_participants
+        backfill_participants(db)
     logger.info("✅ Database initialized")
 
     app.state.tasks = []
+    if RECOVERY_MODE:
+        logger.info("Recovery mode: API actions and all background tasks disabled")
+        return
     # Запустить Telegram бота
     app.state.tasks.append(asyncio.create_task(_run_bot()))
     logger.info("⏱ Bot task scheduled")
@@ -398,8 +414,13 @@ async def startup():
     app.state.tasks.append(asyncio.create_task(sync_finance_background()))
     logger.info("⏱ Finance sync task scheduled")
 
+    app.state.tasks.append(asyncio.create_task(attendance_sync_background()))
+
     # Запустить фоновую проверку напоминаний
-    app.state.tasks.append(asyncio.create_task(poll_reminder_background()))
+    if POLL_AUTOMATION_ENABLED:
+        app.state.tasks.append(asyncio.create_task(poll_reminder_background()))
+    else:
+        logger.info("Automatic polls and reminders disabled; attendance sync remains enabled")
     logger.info("🚀 All tasks scheduled, startup complete")
 
 
@@ -442,7 +463,8 @@ async def root():
 @app.get("/health")
 async def health():
     """Health check для мониторинга"""
-    return {"status": "healthy"}
+    return {"status": "recovery" if RECOVERY_MODE else "healthy",
+            "poll_automation_enabled": POLL_AUTOMATION_ENABLED and not RECOVERY_MODE}
 
 
 if __name__ == "__main__":

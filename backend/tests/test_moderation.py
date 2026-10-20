@@ -1,6 +1,5 @@
 import asyncio
 from datetime import datetime, timedelta, timezone
-import json
 import os
 from types import SimpleNamespace as NS
 import unittest
@@ -156,7 +155,7 @@ class ModerationTests(unittest.IsolatedAsyncioTestCase):
         self.classifier.assert_not_awaited()
         self.bot.send_message.assert_not_awaited()
 
-    async def test_failed_llm_or_notification_never_deletes(self):
+    async def test_failed_classifier_or_notification_never_deletes(self):
         self.classifier.side_effect = TimeoutError()
         await self.service.inspect(message(), self.bot, 1)
         self.assertEqual(self.state(), 'check_failed')
@@ -170,6 +169,16 @@ class ModerationTests(unittest.IsolatedAsyncioTestCase):
         await self.service.inspect(message(text='Другой спам'), self.bot, 2)
         self.assertEqual(self.state(), 'notification_failed')
         self.bot.delete_message.assert_not_awaited()
+
+    async def test_real_regex_moderation_works_without_llm(self):
+        self.classifier.side_effect = classify
+        self.service.auto_delete = True
+        with patch('modules.assistant.llm_client.get_llm_client', side_effect=AssertionError('LLM forbidden')):
+            await self.service.inspect(message(), self.bot, 1)
+            self.assertEqual(self.state(), 'deleted')
+            self.bot.delete_message.assert_awaited_once()
+            await self.service.inspect(message(message_id=21, text='Очень плохой спектакль'), self.bot, 2)
+            self.assertEqual(self.bot.delete_message.await_count, 1)
 
     async def test_uncertain_delete_does_not_repeat_or_claim_success(self):
         await self.service.inspect(message(), self.bot, 1)
@@ -354,23 +363,43 @@ class ModerationTests(unittest.IsolatedAsyncioTestCase):
 
 
 class ClassifierTests(unittest.IsolatedAsyncioTestCase):
-    async def test_structured_output_and_no_tool_access(self):
-        client = NS(chat=AsyncMock(return_value=NS(text='{"spam":true,"reason":"Реклама в имени"}', finish_reason='stop')))
-        payload = {'text': 'Привет', 'sender': {'name': 'Заработок', 'username': 'advert'}}
-        with patch('modules.moderation.services.get_llm_client', return_value=client):
-            self.assertEqual(await classify(payload), (True, 'Реклама в имени'))
-            sent = client.chat.call_args
-            self.assertEqual(json.loads(sent.args[0][1].text), payload)
-            self.assertNotIn('tools', sent.kwargs)
-            self.assertEqual(sent.kwargs['max_tokens'], 4096)
-            for raw in ('not JSON', '{"spam":"false","reason":"x"}', '[]', '{"spam":true}'):
-                client.chat.return_value.text = raw
-                with self.assertRaises(ValueError):
-                    await classify(payload)
+    async def test_obvious_spam_in_comment_and_author_name(self):
+        cases = [
+            {'text': 'Заработок 10000 в день, пишите мне'},
+            {'text': 'Привет', 'sender': {'name': 'Пассивный доход без вложений, пиши в личку'}},
+            {'text': 'Казино: бонус 5000, регистрируйся https://spam.example'},
+            {'text': 'Казино, фриспины, переходите по ссылке', 'links': ['https://spam.example']},
+            {'text': 'Крипта, гарантированный доход, напишите мне'},
+            {'text': 'Заработок １００００ в день, пишите мне'},
+        ]
+        with patch('modules.assistant.llm_client.get_llm_client', side_effect=AssertionError('Network forbidden')):
+            for payload in cases:
+                with self.subTest(payload=payload):
+                    spam, reason = await classify(payload)
+                    self.assertTrue(spam)
+                    self.assertIn('Правило:', reason)
 
-    async def test_truncated_response_is_never_a_verdict_even_with_valid_json(self):
-        client = NS(chat=AsyncMock(return_value=NS(
-            text='{"spam":true,"reason":"Спам"}', finish_reason='length')))
-        with patch('modules.moderation.services.get_llm_client', return_value=client):
-            with self.assertRaisesRegex(ValueError, 'truncated'):
-                await classify({'text': 'Тест'})
+    async def test_reviews_links_profanity_and_theater_jobs_are_not_spam(self):
+        comments = [
+            'Ужасный спектакль, мне вообще не понравилось',
+            'Блять, почему отменили?',
+            'Билеты https://foshoo-theatre.ru/',
+            'Нужен актер без опыта, пишите мне. Репетиция в субботу.',
+            'Ищем осветителя, 5000 рублей за смену, пишите мне',
+            'В пьесе герой проиграл в казино',
+            'Казино — мошенники, не регистрируйтесь! https://example.org',
+            'Поговорим про инвестиции в декорации?',
+            'Расскажу про заработок актера',
+            'Отлично!',
+        ]
+        for text in comments:
+            with self.subTest(text=text):
+                self.assertFalse((await classify({'text': text, 'sender': {'name': 'Крипто'},
+                                                  'links': ['https://example.org']}))[0])
+        self.assertFalse((await classify({}))[0])
+
+    async def test_group_messages_do_not_invoke_llm_or_offer_polls_when_disabled(self):
+        with patch('bot.LLM_ENABLED', False), patch('bot._llm_confirm_intent') as confirm, patch('bot._chat_shows') as shows:
+            await handle_group_message(message(text='Запустим опрос на октябрь'))
+            confirm.assert_not_called()
+            shows.assert_not_called()

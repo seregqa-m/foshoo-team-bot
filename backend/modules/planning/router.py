@@ -52,7 +52,14 @@ def read_plan(client, month, db):
         answers = planning_answers(db, month, client)
         if answers:
             source['availability'] = answers
-        return source, build_plan(source, month)
+        plan = build_plan(source, month)
+        from modules.attendance.roster import attendance_totals
+        chats = {show.name: show.telegram_chat_id for show in aliases.values()}
+        for slot in plan['slots']:
+            for cell in slot['shows']:
+                cell['attendance'] = attendance_totals(
+                    db, chats.get(cell['show']), date.fromisoformat(slot['date']))
+        return source, plan
     except Exception as exc:
         logger.exception('Cannot read cast planning')
         raise HTTPException(502, 'Не удалось прочитать график и составы. Попробуйте обновить.') from exc

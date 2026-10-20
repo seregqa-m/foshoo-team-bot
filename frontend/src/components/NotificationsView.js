@@ -135,7 +135,7 @@ export function AvailabilitySection({ showNames }) {
   const loadNonVoters = async () => {
     try {
       const r = await client.get('/api/availability/non-voters', { params: { campaign_id: campaign.id } });
-      setNonVoters(r.data.non_voters || []);
+      setNonVoters(r.data.participants || (r.data.non_voters || []).map(username => ({ user_id: username, username })));
     } catch (e) { setFormError(e.response?.data?.detail || 'Не удалось загрузить неответивших'); }
   };
 
@@ -186,10 +186,10 @@ export function AvailabilitySection({ showNames }) {
           {nonVoters !== null && (
             <div style={{ marginTop: 10 }}>
               {nonVoters.length === 0
-                ? <span style={{ fontSize: 13, color: '#22c55e' }}>Все ответили</span>
+                ? <span style={{ fontSize: 13, color: '#22c55e' }}>Среди зарегистрированных участников нет ожидающих ответа</span>
                 : <>
                     <div style={{ fontSize: 13, marginBottom: 8 }}>
-                      {nonVoters.map(u => <span key={u} style={{ marginRight: 6 }}>@{u}</span>)}
+                      {nonVoters.map(u => <span key={u.user_id} style={{ marginRight: 6 }}>{u.username ? `@${u.username}` : u.name}</span>)}
                     </div>
                     <button className="btn btn-primary" style={{ fontSize: 13 }} onClick={handlePing} disabled={pinging}>
                       {pinging ? 'Отправка...' : 'Пингануть'}

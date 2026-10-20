@@ -106,7 +106,7 @@ class SyncTests(unittest.TestCase):
         for amount, date in [('nan', '14.09.2026'), ('-1', '14.09.2026'), ('500', '31.02.2026')]:
             with patch('finance_router._get_client') as client:
                 with self.assertRaises(HTTPException):
-                    add_expense(ExpenseRequest(project='Театр', amount=amount, what='x', expense_type='Личные траты', date=date), self.db)
+                    add_expense(ExpenseRequest(project='Театр', amount=amount, what='x', who='Актёр', expense_type='Личные траты', date=date), self.db)
                 client.assert_not_called()
 
     def test_sheet_delete_matches_all_fields_and_rejects_identical_rows(self):

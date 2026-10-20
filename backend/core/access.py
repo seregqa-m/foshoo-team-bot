@@ -100,9 +100,17 @@ async def _is_group_admin(user_id: int) -> bool:
         raise HTTPException(503, "Проверка доступа временно недоступна") from None
 
 
-def _known_actor(username: str) -> bool:
+def _known_actor(username: str, user_id: int | None = None) -> bool:
     if not username:
         return False
+    from core.database import SessionLocal
+    from modules.attendance.models import VoterRegistration
+    with SessionLocal() as db:
+        registered = db.query(VoterRegistration).filter_by(username=username.lower().lstrip('@')).all()
+        if registered and any(v.legacy_access is not True
+                              or v.exported_revision != v.revision
+                              or (user_id is not None and v.user_id != user_id) for v in registered):
+            return False  # Automatically added Sheets rows are not permanent access grants.
     if not GOOGLE_SHEETS_ID or not os.path.exists(GOOGLE_CALENDAR_JSON):
         raise HTTPException(503, "Проверка доступа временно недоступна")
     from sheets_client import SheetsClient
@@ -116,6 +124,38 @@ def _known_actor(username: str) -> bool:
 _access_cache = OrderedDict()
 
 
+def invalidate_member_access(user_id):
+    for key in list(_access_cache):
+        if key[0] == user_id:
+            _access_cache.pop(key, None)
+
+
+def _connected_chats():
+    from core.database import SessionLocal
+    from modules.theater.models import TheaterShow
+    with SessionLocal() as db:
+        return [chat for chat, in db.query(TheaterShow.telegram_chat_id).distinct() if chat]
+
+
+async def _group_member_access(user):
+    from bot import bot
+    from modules.attendance.registration import is_present
+    chats = await _access_step('connected_chats', asyncio.to_thread(_connected_chats), DATABASE_ACCESS_TIMEOUT)
+    if not chats:
+        return False
+    semaphore = asyncio.Semaphore(4)
+    async def check(chat):
+        async with semaphore:
+            member = await asyncio.wait_for(bot.get_chat_member(chat, user.id), TELEGRAM_ACCESS_TIMEOUT)
+        return is_present(member)
+    results = await asyncio.gather(*(check(chat) for chat in chats), return_exceptions=True)
+    if any(result is True for result in results):
+        return True
+    if any(isinstance(result, Exception) for result in results):
+        raise HTTPException(503, 'Не удалось проверить членство в группах. Попробуйте ещё раз.')
+    return False
+
+
 async def _permissions(user):
     # Never cache global privileges: revocation must affect the next request.
     if await is_super_admin(user.id):
@@ -125,10 +165,21 @@ async def _permissions(user):
     cached = _access_cache.get(key)
     if cached and cached[0] > time.monotonic():
         return (*cached[1:], False)
-    admin = await _is_group_admin(user.id)
-    allowed = admin or await _access_step(
-        "sheets", asyncio.to_thread(_known_actor, user.username), SHEETS_ACCESS_TIMEOUT,
-    )
+    results = await asyncio.gather(
+        _is_group_admin(user.id),
+        _access_step("sheets", asyncio.to_thread(_known_actor, user.username, user.id), SHEETS_ACCESS_TIMEOUT),
+        _group_member_access(user), return_exceptions=True)
+    admin, legacy, group = (result is True for result in results)
+    errors = [result for result in results if isinstance(result, Exception)]
+    allowed = admin or legacy
+    if not allowed:
+        # Group-based access is checked on every request, including after departure
+        # or disconnecting the last mapped chat. Sheets cannot keep this access alive.
+        if group:
+            return True, False, False
+        if errors:
+            raise HTTPException(503, 'Проверка доступа временно недоступна') from None
+        return False, False, False
     # Failed/timed-out checks never reach the cache.
     _access_cache[key] = (time.monotonic() + 60, allowed, admin)
     _access_cache.move_to_end(key)
@@ -161,6 +212,14 @@ async def _authorize_api(request: Request):
         if "username" in supplied and str(supplied["username"]).lower().lstrip("@") != user.username.lower():
             raise HTTPException(403, "Пользователь не совпадает с данными Telegram")
     path = request.url.path.rstrip("/")
+    financial = path.startswith('/api/finance')
+    legacy_cache = _access_cache.get((user.id, user.username))
+    can_finance = admin or bool(legacy_cache and legacy_cache[0] > time.monotonic() and legacy_cache[1])
+    if financial and not can_finance:
+        raise HTTPException(403, 'Финансовый раздел доступен участникам с отдельным доступом')
+    # The assistant can expose financial context and execute financial tools.
+    if path.startswith('/api/assistant') and not can_finance:
+        raise HTTPException(403, 'Ассистент недоступен с групповым доступом')
     member_writes = {
         "/api/finance/expense", "/api/finance/income",
         "/api/assistant/chat", "/api/assistant/execute",
@@ -171,6 +230,7 @@ async def _authorize_api(request: Request):
     request.state.telegram_user = user
     request.state.is_admin = admin
     request.state.is_superadmin = superadmin
+    request.state.can_finance = bool(can_finance)
     return user
 
 

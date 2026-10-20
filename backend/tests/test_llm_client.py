@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 with patch.dict(os.environ, {"BOT_TOKEN": "offline-test-token"}, clear=True):
     with patch("dotenv.load_dotenv"):
         from modules.assistant.llm_client import (
-            ChatMessage, LLMProviderError, YandexGPTClient,
+            ChatMessage, LLMProviderError, LLMConfigurationError, YandexGPTClient, get_llm_client,
         )
 
 
@@ -24,10 +24,19 @@ class LLMResponseTests(unittest.IsolatedAsyncioTestCase):
         })
         session = MagicMock()
         session.post.return_value.__aenter__ = AsyncMock(return_value=response)
-        with patch("modules.assistant.llm_client.aiohttp.ClientSession") as factory:
+        with patch("modules.assistant.llm_client.LLM_ENABLED", True), patch("modules.assistant.llm_client.aiohttp.ClientSession") as factory:
             factory.return_value.__aenter__ = AsyncMock(return_value=session)
             client = YandexGPTClient(api_key="test-key", folder_id="test-folder")
             return await client.chat([ChatMessage(role="user", text="Тест")])
+
+    async def test_disabled_llm_never_constructs_a_session_even_with_valid_keys(self):
+        with patch('modules.assistant.llm_client.LLM_ENABLED', False), patch('modules.assistant.llm_client.aiohttp.ClientSession') as factory:
+            with self.assertRaises(LLMConfigurationError):
+                get_llm_client()
+            client = YandexGPTClient(api_key='test', folder_id='test')
+            with self.assertRaises(LLMConfigurationError):
+                await client.chat([ChatMessage(role='user', text='Тест')])
+            factory.assert_not_called()
 
     async def test_final_answer_excludes_reasoning(self):
         result = await self.chat({

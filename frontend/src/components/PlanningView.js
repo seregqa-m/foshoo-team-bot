@@ -6,6 +6,14 @@ const STATUS = { ready: 'Состав собирается', waiting: 'Ждём 
 const canPlay = actor => ['yes', 'assigned'].includes(actor.status);
 const errorText = error => typeof error.response?.data?.detail === 'string' ? error.response.data.detail : 'Не удалось сохранить. Обновите сводку и проверьте результат.';
 
+function AttendanceSummary({ data }) {
+  if (!data) return null;
+  return <small className="planning-attendance">
+    Участников: {data.total} · смогут: {data.yes} · не смогут: {data.no} ·
+    не определились: {data.unknown} · не ответили: {data.unanswered}
+  </small>;
+}
+
 function CastDialog({ slot, cell, month, fingerprint, timezone, onClose, onSaved }) {
   const pending = slot.operation?.show_name === cell.show && slot.operation.status !== 'complete' ? slot.operation : null;
   const [cast, setCast] = useState(pending?.cast || cell.suggested_cast);
@@ -40,6 +48,7 @@ function CastDialog({ slot, cell, month, fingerprint, timezone, onClose, onSaved
           <button className="btn btn-secondary" onClick={onClose} disabled={saving} aria-label="Закрыть состав">×</button>
         </div>
         <p>{slot.label.replace(/\n/g, ' ')} · {STATUS[cell.status]}</p>
+        <AttendanceSummary data={cell.attendance} />
         {slot.assigned_show && <p>В графике: <strong>{slot.assigned_show}</strong></p>}
         {cell.incomplete && <div className="alert alert-error">В «Составы спектаклей» есть незаполненные роли или исполнители. Дополните список.</div>}
         {pending && <div className="alert alert-error">Предыдущее сохранение не завершено. Продолжите с теми же временем и составом.</div>}
@@ -129,7 +138,7 @@ export default function PlanningView({ onClose, dataVersion = 0 }) {
           </select>
           <label><input type="checkbox" checked={readyOnly} onChange={e => setReadyOnly(e.target.checked)} /> Только даты с полным составом</label>
         </div>
-        <p className="planning-note">Числа — закрытые роли / все роли. «Ждём ответы» не означает, что состав уже собран.</p>
+        <p className="planning-note">Дробь — закрытые роли / все роли. Учитываются все зарегистрированные участники чата спектакля, даже если роли ещё не заполнены. Пока человек не голосовал и бот не получил событие его вступления, его может не быть в списке.</p>
         {data.warnings.map(warning => <div className="planning-warning" key={warning}>{warning}</div>)}
         {!data.shows.length ? <div className="empty-state">Добавьте роли и исполнителей в «Составы спектаклей».</div>
           : !data.slots.length ? <div className="empty-state">В этом месяце нет дат в графике. Запустите опрос занятости на нужный месяц.</div>
@@ -144,6 +153,7 @@ export default function PlanningView({ onClose, dataVersion = 0 }) {
                   return <td key={name}><button className={`planning-cell planning-cell--${cell.status}`} onClick={() => setSelected({ column: slot.column, show: name })}
                     aria-label={`${name}, ${slot.label}: ${STATUS[cell.status]}`}>
                     <strong>{cell.covered}/{cell.total}</strong><span>{pending ? 'Не завершено' : STATUS[cell.status]}</span>
+                    <AttendanceSummary data={cell.attendance} />
                   </button></td>;
                 })}
               </tr>)}</tbody>

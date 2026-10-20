@@ -90,10 +90,11 @@ docker-compose up
 
 ### Process model
 
-`backend/main.py` is the single entry point. On FastAPI startup it launches four asyncio tasks:
+`backend/main.py` is the single entry point. Outside recovery, FastAPI startup launches:
 - `dp.start_polling(bot)` — aiogram Telegram bot
 - `sync_calendar_background()` — periodic Google Calendar sync (every `SYNC_INTERVAL_MINUTES`)
 - `sync_finance_background()` — periodic Google Sheets → DB finance sync (every `SYNC_INTERVAL_MINUTES`)
+- `attendance_sync_background()` — verify pending voter memberships and retry registration/attendance export every minute, even with poll automation disabled
 - `poll_reminder_background()` — checks every minute: auto-create polls N days before events, send reminder + pin poll 1 day before event
 
 ### Module structure
@@ -150,13 +151,17 @@ The existing cast planner merges the common answers into Sheets data and include
 
 Availability campaigns publish one copy per distinct mapped chat, with up to 9 dates plus «Ни одна из дат». Selecting that option alone means no on every date; when combined with dates, explicit selected dates win. Unselected dates become no only after that part is answered. Campaign history is retained. Same dates/destinations reuse existing publications; confirmed delivery failures can retry without duplicating success. An unconfirmed send requires explicit checking of the chat before retry. A bot-triggered campaign is scoped to shows mapped to that chat and requires its admin or a superadmin.
 
-New sends resolve the show through `modules/theater/routing.py`, using the catalog and saved aliases. For missing or ambiguous show names, the calendar poll endpoint returns `409` with `detail.code=show_required` and catalog choices. The event card lets an admin select a show and retry with `{show_id}`. Selection is stored in `calendar_events.poll_show_id` plus a title snapshot (`poll_show_title`); it survives calendar sync and drives reminders, but is ignored after a title change. Revalidate the current mapping before sending. Missing chat remains an error, with no `GROUP_CHAT_ID` fallback. Calendar rehearsal titles can include the show and `[Реп]`, e.g. `Урод [Реп]`. Pin/stop/link operations always use the publication's stored chat. New reminders use the current mapping and the current Sheets cast, excluding anyone who answered that date in either poll type or another chat.
+New sends resolve the show through `modules/theater/routing.py`, using the catalog and saved aliases. For missing or ambiguous show names, the calendar poll endpoint returns `409` with `detail.code=show_required` and catalog choices. The event card lets an admin select a show and retry with `{show_id}`. Selection is stored in `calendar_events.poll_show_id` plus a title snapshot (`poll_show_title`); it survives calendar sync and drives reminders, but is ignored after a title change. Revalidate the current mapping before sending. Missing chat remains an error, with no `GROUP_CHAT_ID` fallback. Calendar rehearsal titles can include the show and `[Реп]`, e.g. `Урод [Реп]`. Pin/stop/link operations always use the publication's stored chat. New reminders use the current mapping and verified registered chat participants, excluding anyone who answered that date in either poll type or another chat.
 
-`poll_reminder_background()` archives old polls, publishes configured rehearsals within the configured days-before window (retrying missed sends), sends next-day reminders, and retries Sheets exports every minute. It respects `poll_reminders_enabled` and `reminder_time`. An explicitly stopped poll is not reopened by the automatic job. The legacy `current_show` column remains unused.
+`poll_reminder_background()` archives old polls, publishes configured rehearsals within the configured days-before window (retrying missed sends), and sends next-day reminders. It respects `poll_reminders_enabled` and `reminder_time`. An explicitly stopped poll is not reopened by the automatic job. The legacy `current_show` column remains unused.
+
+Identified votes in regular/monthly polls of connected groups enqueue `attendance_voters` registrations. A separate worker verifies Telegram membership before enrolling the person in Sheets. The `Труппа` sheet retains A=name and J=username; a dynamically located/added `Telegram ID` column binds identity across username changes and missing usernames. Only a unique unclaimed legacy username can link a previous row; matching names never imply identity. Ambiguous IDs/usernames are deferred for manual repair. Registration writes and attendance export share `answer_lock`; RAW writes preserve other columns and assigned roles. Re-reading both sheets makes retries after a lost write response idempotent under the single-worker deployment; concurrent human sheet edits are not transactionally locked. Roles/casts are not inferred from chat membership. Failed external operations retain committed votes.
 
 Startup migrations preserve old publications, backfill their chat from `GROUP_CHAT_ID` and snapshot their current event date once. No source rows or existing Sheets answers are deleted. Legacy availability votes lack option choices, so do not invent historical yes/no answers from their mere presence.
 
-Application access is still through existing superadmins, legacy group admins and Sheets actor mapping; adding a destination does not grant global administration or finance access. No new membership/role editor is part of this change.
+Application access also accepts current membership in any mapped chat, checked on every request without a cached group allow. Existing superadmin/legacy group-admin/legacy Sheets access is preserved. `attendance_voters.legacy_access` records the previous Sheets grant before first automatic sheet writes; auto-created rows never grant permanent or financial access. Finance and assistant routes require legacy/admin access, with `can_finance` controlling the frontend. Group administration never implies global administration except the existing `GROUP_CHAT_ID` rule.
+
+`attendance_chat_participants` stores independent `(chat_id, user_id)` memberships, verification timestamps and revision. Votes and `chat_member` updates populate it; known people are rechecked every five minutes. All registered current chat members participate in attendance counts. Reminders recheck the target chat before sending and use escaped ID mentions, excluding common-date respondents. No Sheets cast is required for reminders. Theater settings expose a read-only member list; there is no participation toggle or manual exclusion. Planning adds registered-participant totals (yes/no/unknown/unanswered), while role-based assignment requirements remain intact. Migration backfills known IDs from stored votes without inventing availability answers.
 
 ### Known gaps
 
@@ -167,3 +172,12 @@ Application access is still through existing superadmins, legacy group admins an
 ### Bot + uvicorn coexistence
 
 At startup `main.py` deletes any active Telegram webhook (`bot.delete_webhook`) then starts aiogram polling as a background asyncio task with `handle_signals=False` to avoid conflicting with uvicorn's SIGTERM handler. If polling fails (bad token, conflict), the error is logged and the HTTP API continues running.
+
+### Selectel migration and LLM pause (14 October 2026)
+
+- The redesign remains paused. Deployment instructions: `docs/selectel-quickstart.md`; templates: `deploy/`; local build/archive: `bash scripts/package-selectel.sh <domain>`.
+- LLM is disabled by default (`LLM_ENABLED=false`). The provider factory and request method both reject calls when disabled, even if keys exist. `ASSISTANT_ENABLED` also defaults to false and requires LLM_ENABLED. The app opens the calendar, hides the assistant, and provides a separate admin settings tab. Natural-language poll suggestions are disabled; explicit poll actions remain available.
+- Public-comment moderation uses only `modules/moderation/rules.py`, with no LLM fallback. Existing scope, revision checks, admin exemptions and deletion audit remain. `MODERATION_AUTO_DELETE` retains its existing meaning and true default; false enables manual confirmation. Regex rules cannot interpret quotations and can miss unfamiliar spam.
+- `RECOVERY_MODE=true` permits only root/health HTTP endpoints and local DB initialization/migrations; it starts no bot or background tasks. `POLL_AUTOMATION_ENABLED=false` suppresses automatic polls and reminders; normal polling, calendar/finance sync and voter registration/attendance export retries run outside recovery. Manual API actions are available outside recovery.
+- Production runs one uvicorn worker from the server's own virtualenv, with SQLite outside the release at `/var/lib/foshoo/theater_bot.db`. No Yandex credentials or persistent Node server are needed. These templates do not yet configure automatic external backups.
+- Assistant capability audit for this change: no new assistant tools are needed while disabled; old tools/context remain for a later explicit re-enable and review. Both assistant chat and action confirmation endpoints continue to reject requests when disabled.

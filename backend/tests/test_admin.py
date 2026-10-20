@@ -119,7 +119,8 @@ class AdminTests(unittest.TestCase):
             self.assertIsNone(other.get(SuperAdmin, 99))
 
     def test_signed_denied_entry_registers_identity_but_invalid_signature_does_not(self):
-        self.assertEqual(self.client.get('/api/auth/check', headers=headers(84, 'masha', 'Маша')).status_code, 403)
+        with patch('core.access._group_member_access', AsyncMock(return_value=False)):
+            self.assertEqual(self.client.get('/api/auth/check', headers=headers(84, 'masha', 'Маша')).status_code, 403)
         bad = headers(99)
         bad['X-Telegram-Init-Data'] += '&user_id=42'
         self.assertEqual(self.client.get('/api/auth/check', headers=bad).status_code, 401)

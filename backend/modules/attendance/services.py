@@ -4,7 +4,7 @@ import os
 from datetime import datetime
 from threading import RLock
 
-from .models import AnswerHistory, AnswerSource, DayAnswer, PollUpdate
+from .models import AnswerHistory, AnswerSource, DayAnswer, PollUpdate, VoterRegistration
 
 logger = logging.getLogger(__name__)
 answer_lock = RLock()
@@ -83,19 +83,52 @@ def export_pending(db):
     from sheets_client import SheetsClient
     with answer_lock:
         pending = db.query(DayAnswer).filter(DayAnswer.exported_revision < DayAnswer.revision).all()
-        if not pending:
+        registrations = db.query(VoterRegistration).filter(
+            VoterRegistration.membership_status == 'member',
+            VoterRegistration.exported_revision < VoterRegistration.revision).all()
+        if not pending and not registrations:
             return
         try:
             client = SheetsClient(GOOGLE_CALENDAR_JSON, GOOGLE_SHEETS_ID, timeout=5)
+            from modules.theater.models import TheaterShow
+            for voter in registrations:
+                if not db.query(TheaterShow).filter_by(telegram_chat_id=voter.telegram_chat_id).first():
+                    continue
+                try:
+                    if voter.legacy_access is None:
+                        # Commit before writing Sheets: a lost write response cannot
+                        # turn a newly auto-created row into a legacy access grant.
+                        voter.legacy_access = bool(not voter.exported_revision and voter.username and
+                            voter.username in client.get_actor_mapping())
+                        db.commit()
+                    voter.actor_name = client.ensure_poll_participant(
+                        voter.user_id, voter.username, voter.display_name)
+                    voter.exported_revision = voter.revision
+                    # Refresh names for all dates, including already exported votes.
+                    db.query(DayAnswer).filter_by(user_id=voter.user_id).update(
+                        {'actor_name': voter.actor_name, 'username': voter.username})
+                    db.commit()
+                except Exception:
+                    db.rollback()
+                    logger.exception('Voter registration deferred user_id=%s', voter.user_id)
             mapping = client.get_actor_mapping()
             for row in pending:
-                if not row.username:
+                voter = db.get(VoterRegistration, row.user_id)
+                if voter:
+                    if voter.exported_revision != voter.revision or not voter.actor_name:
+                        continue
+                    row.actor_name = voter.actor_name
+                    row.username = voter.username
+                elif not row.username:
                     continue
-                actor_name = mapping.get(row.username)
-                if isinstance(actor_name, str) and actor_name:
-                    row.actor_name = actor_name
+                else:
+                    actor_name = mapping.get(row.username)
+                    if isinstance(actor_name, str) and actor_name:
+                        row.actor_name = actor_name
                 if client.record_poll_answer(row.username, datetime.combine(row.day, datetime.min.time()), row.answer, actor_name=row.actor_name):
                     row.exported_revision = row.revision
+                    # A later rate limit/outage must not rewind completed exports.
+                    db.commit()
             db.commit()
         except Exception:
             db.rollback()

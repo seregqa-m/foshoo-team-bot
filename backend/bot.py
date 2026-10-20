@@ -13,7 +13,7 @@ from aiogram.types import (
     WebAppInfo, PollAnswer,
 )
 from aiogram.filters import Command
-from config import BOT_TOKEN, MINI_APP_URL, TELEGRAM_PROXY_URL, GROUP_CHAT_ID, MODERATION_CHANNEL, MODERATION_ADMIN_ID, MODERATION_AUTO_DELETE
+from config import BOT_TOKEN, MINI_APP_URL, TELEGRAM_PROXY_URL, GROUP_CHAT_ID, MODERATION_CHANNEL, MODERATION_ADMIN_ID, MODERATION_AUTO_DELETE, LLM_ENABLED
 from modules.moderation.services import ModerationService
 
 logger = logging.getLogger(__name__)
@@ -24,6 +24,12 @@ bot = Bot(
 )
 dp = Dispatcher()
 moderation = ModerationService(MODERATION_CHANNEL, MODERATION_ADMIN_ID, GROUP_CHAT_ID, auto_delete=MODERATION_AUTO_DELETE)
+
+
+@dp.chat_member()
+async def on_chat_member(event):
+    from modules.attendance.registration import membership_event
+    await asyncio.to_thread(membership_event, event.chat.id, event.new_chat_member.user, event.new_chat_member)
 
 
 @dp.message.outer_middleware()
@@ -134,6 +140,12 @@ def _process_poll_answer(poll_answer: PollAnswer, update_id=None):
                     return
                 availability = db.query(AvailabilityPoll).filter_by(telegram_poll_id=poll_answer.poll_id).first()
                 if availability:
+                    if not set(poll_answer.option_ids).issubset(
+                            {o.option_index for o in availability.options} | {len(availability.options)}):
+                        return
+                    if poll_answer.option_ids:
+                        from modules.attendance.registration import remember_voter
+                        remember_voter(db, poll_answer.user, availability.telegram_chat_id)
                     _handle_availability_answer(poll_answer, availability, db, export=False)
                 else:
                     poll = db.query(Poll).filter_by(telegram_poll_id=poll_answer.poll_id).first()
@@ -143,6 +155,9 @@ def _process_poll_answer(poll_answer: PollAnswer, update_id=None):
                         _POLL_ANSWER_MAP.get(poll_answer.option_ids[0]) if len(poll_answer.option_ids) == 1 else None)
                     if answer is None:
                         return
+                    if poll_answer.option_ids:
+                        from modules.attendance.registration import remember_voter
+                        remember_voter(db, poll_answer.user, poll.telegram_chat_id)
                     PollingService(db).vote(poll.id, poll_answer.user.id, answer, poll_answer.user.username)
             export_pending(db)
         except Exception:
@@ -198,6 +213,8 @@ async def _llm_confirm_intent(text: str, month_label: str) -> bool:
 
 @dp.message(F.chat.type.in_({"group", "supergroup"}))
 async def handle_group_message(message: Message):
+    if not LLM_ENABLED:
+        return
     if not await asyncio.to_thread(_chat_shows, message.chat.id):
         return
     if not message.text:

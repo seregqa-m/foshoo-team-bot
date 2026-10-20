@@ -50,6 +50,18 @@ class SharedAttendanceTests(unittest.IsolatedAsyncioTestCase):
         self.send = AsyncMock(side_effect=lambda **kwargs: NS(poll=NS(id=f'tg-{self.send.call_count}'), message_id=self.send.call_count))
     def tearDown(self):
         self.db.close(); self.engine.dispose()
+    def seed_members(self):
+        from modules.attendance.models import VoterRegistration, ChatParticipant
+        for uid, username, name, chats in [(42, 'shared', 'Анна', [-100111, -100222]),
+                                           (43, 'onlya', 'Борис', [-100111]), (44, 'onlyb', 'Вера', [-100222])]:
+            self.db.add(VoterRegistration(user_id=uid, username=username, display_name=name,
+                telegram_chat_id=chats[0], membership_status='member', actor_name=name,
+                revision=1, exported_revision=1, legacy_access=True))
+            self.db.add_all([ChatParticipant(user_id=uid, chat_id=chat, status='member') for chat in chats])
+        self.db.commit()
+        sync = patch('modules.attendance.registration.sync_voter_registrations', AsyncMock())
+        sync.start()
+        self.addCleanup(sync.stop)
     def regular(self, title='Калий [Реп]'):
         event = CalendarEvent(title=title, start_time=datetime.combine(self.day, datetime.min.time()))
         self.db.add(event); self.db.commit()
@@ -177,6 +189,7 @@ class SharedAttendanceTests(unittest.IsolatedAsyncioTestCase):
         self.send.assert_not_awaited()
 
     async def test_selected_show_survives_sync_and_routes_retries_and_reminders(self):
+        self.seed_members()
         event, _ = self.regular('Разбор [Реп]')
         event.google_event_id = 'rehearsal'
         event.end_time = datetime(2026, 10, 7, 20)
@@ -196,14 +209,13 @@ class SharedAttendanceTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(await launch_poll_for_event(event.id, 1, other), result)
             with patch('main.SessionLocal', self.Session), patch('config.ADMIN_ID', 1), \
                  patch('main.local_now', return_value=as_local(datetime(2026, 10, 6, 19))), \
-                 patch('main._reminder_usernames', return_value={'onlyb'}), \
                  patch('bot.bot.send_message', AsyncMock()) as send, \
                  patch('bot.bot.pin_chat_message', AsyncMock()) as pin:
                 await main._auto_create_polls()
                 await main._send_poll_reminders()
             self.send.assert_awaited_once()
             self.assertEqual(send.call_args.kwargs['chat_id'], -100222)
-            self.assertIn('@onlyb', send.call_args.kwargs['text'])
+            self.assertIn('tg://user?id=44', send.call_args.kwargs['text'])
             self.assertEqual(pin.call_args.kwargs['chat_id'], -100222)
         with patch('modules.calendar.services.local_now', return_value=as_local(datetime(2026, 10, 6))):
             data = get_events(db=self.db)['events'][0]
@@ -342,6 +354,7 @@ class SharedAttendanceTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(send.await_count, 2)
 
     async def test_campaign_reminders_tag_own_cast_and_use_regular_answers(self):
+        self.seed_members()
         with patch('bot.bot.send_poll', self.send), patch('modules.availability.router._ensure_campaign_columns'):
             await create_campaign(CreateCampaignRequest(show_names=['Калий', 'Урод'], dates=[self.day]), self.db)
         self.vote(self.regular()[1], 'unknown')
@@ -349,11 +362,12 @@ class SharedAttendanceTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(get_non_voters(self.db)['non_voters'], ['onlya', 'onlyb'])
             await ping_non_voters(self.db)
         messages = {c.kwargs['chat_id']: c.kwargs['text'] for c in send.call_args_list}
-        self.assertIn('@onlya', messages[-100111]); self.assertNotIn('@onlyb', messages[-100111])
-        self.assertIn('@onlyb', messages[-100222]); self.assertNotIn('@shared', messages[-100222])
+        self.assertIn('tg://user?id=43', messages[-100111]); self.assertNotIn('tg://user?id=44', messages[-100111])
+        self.assertIn('tg://user?id=44', messages[-100222]); self.assertNotIn('tg://user?id=42', messages[-100222])
         self.assertIn('t.me/c/111/', messages[-100111]); self.assertIn('t.me/c/222/', messages[-100222])
 
     async def test_auto_polls_and_reminders_respect_shared_answers_and_destination(self):
+        self.seed_members()
         self.regular(); self.db.add(NotificationSetting(user_id=1, poll_reminders_enabled=True, reminder_time='00:00', reminder_days_before=3))
         self.record('another-chat', 'yes')
         with patch('main.SessionLocal', self.Session), patch('config.ADMIN_ID', 1), patch('main.local_now', return_value=as_local(datetime(2026, 10, 6, 19))), patch('main.GOOGLE_CALENDAR_JSON', __file__), patch('config.GOOGLE_SHEETS_ID', 'test'), patch('sheets_client.SheetsClient', return_value=self.sheets), patch('bot.bot.send_poll', self.send), patch('bot.bot.send_message', AsyncMock()) as send, patch('bot.bot.pin_chat_message', AsyncMock()) as pin:
@@ -361,7 +375,7 @@ class SharedAttendanceTests(unittest.IsolatedAsyncioTestCase):
             await main._send_poll_reminders(); await main._send_poll_reminders()
         self.assertEqual(self.send.await_count, 1); self.assertEqual(send.await_count, 1)
         self.assertEqual(send.call_args.kwargs['chat_id'], -100111)
-        self.assertIn('@onlya', send.call_args.kwargs['text']); self.assertNotIn('@shared', send.call_args.kwargs['text'])
+        self.assertIn('tg://user?id=43', send.call_args.kwargs['text']); self.assertNotIn('tg://user?id=42', send.call_args.kwargs['text'])
         self.assertEqual(pin.call_args.kwargs['chat_id'], -100111)
 
     async def test_summary_excludes_old_date_after_move(self):

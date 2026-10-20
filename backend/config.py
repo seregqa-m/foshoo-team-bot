@@ -14,6 +14,9 @@ if not BOT_TOKEN:
 API_HOST = os.getenv("API_HOST", "127.0.0.1")
 API_PORT = int(os.getenv("API_PORT", 8000))
 API_URL = os.getenv("API_URL", f"http://{API_HOST}:{API_PORT}")
+# First deployment: initialize the local DB, but do not poll or expose API actions.
+RECOVERY_MODE = os.getenv("RECOVERY_MODE", "false").lower() == "true"
+POLL_AUTOMATION_ENABLED = os.getenv("POLL_AUTOMATION_ENABLED", "true").lower() == "true"
 
 # Database
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./theater_bot.db")
@@ -40,7 +43,6 @@ ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")
 # Optional moderation of one public channel's linked discussion group.
 # Empty channel disables the feature. Spam removal is automatic by default.
 MODERATION_AUTO_DELETE = os.getenv("MODERATION_AUTO_DELETE", "true").strip().lower() == "true"
-MODERATION_MAX_TOKENS = int(os.getenv("MODERATION_MAX_TOKENS", "4096"))
 MODERATION_CHANNEL = os.getenv("MODERATION_CHANNEL", "").strip()
 MODERATION_ADMIN_ID = int(os.getenv("MODERATION_ADMIN_ID", "").strip() or ADMIN_ID)
 
@@ -57,7 +59,8 @@ LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 YANDEX_API_KEY = os.getenv("YANDEX_API_KEY", "")
 YANDEX_FOLDER_ID = os.getenv("YANDEX_FOLDER_ID", "")
 YANDEX_GPT_MODEL = os.getenv("YANDEX_GPT_MODEL", "yandexgpt/latest")
-ASSISTANT_ENABLED = os.getenv("ASSISTANT_ENABLED", "true").lower() == "true"
+LLM_ENABLED = os.getenv("LLM_ENABLED", "false").lower() == "true"
+ASSISTANT_ENABLED = LLM_ENABLED and os.getenv("ASSISTANT_ENABLED", "false").lower() == "true"
 LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.3"))
 LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "1500"))
 # reasoning_effort: low | medium | high (только для reasoning-моделей типа gpt-oss)

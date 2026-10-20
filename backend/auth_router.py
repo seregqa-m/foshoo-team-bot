@@ -10,13 +10,14 @@ logger = logging.getLogger(__name__)
 async def check_access(request: Request):
     user = request.state.telegram_user
     return {"allowed": True, "is_admin": request.state.is_admin, "is_superadmin": request.state.is_superadmin,
+            "can_finance": getattr(request.state, 'can_finance', False),
             "user_id": user.id, "username": user.username}
 
 
 @router.get("/app-config")
 async def app_config():
     """Вернуть публичные настройки приложения для фронтенда."""
-    from config import ADMIN_ID, TROUPE_FILTER
+    from config import ADMIN_ID, TROUPE_FILTER, ASSISTANT_ENABLED
     from core.database import SessionLocal
     from modules.notifications.models import NotificationSetting
     db = SessionLocal()
@@ -27,4 +28,4 @@ async def app_config():
         troupe_filter = (settings.troupe_filter if settings and settings.troupe_filter else None) or TROUPE_FILTER
     finally:
         db.close()
-    return {"troupe_filter": troupe_filter}
+    return {"troupe_filter": troupe_filter, "assistant_enabled": ASSISTANT_ENABLED}

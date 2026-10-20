@@ -7,9 +7,10 @@ Google Sheets client — запись явок актёров по резуль�
     - Столбец A: имена актёров (со строки 3)
     - Ячейки: "да" / "нет"
 
-  Вкладка "Настройки":
+  Вкладка "Труппа":
     - Столбец A: имя актёра (точно как в "График [составы]")
-    - Столбец B: Telegram username (без @)
+    - Столбец J: Telegram username (без @)
+    - Столбец с заголовком "Telegram ID": стабильная привязка проголосовавших
 """
 import re
 import logging
@@ -80,6 +81,93 @@ class SheetsClient:
             if row and row[0].strip() == actor_name:
                 return i + 1
         return None
+
+    def _ensure_grid(self, sheet_name, rows, columns):
+        """Grow only when necessary, including sheets filled to their last column."""
+        sheets = self.api.get(spreadsheetId=self.spreadsheet_id,
+                              fields='sheets(properties(sheetId,title,gridProperties))').execute()['sheets']
+        properties = next(s['properties'] for s in sheets if s['properties']['title'] == sheet_name)
+        requests = []
+        for dimension, key, needed in [('ROWS', 'rowCount', rows), ('COLUMNS', 'columnCount', columns)]:
+            missing = needed - properties['gridProperties'][key]
+            if missing > 0:
+                requests.append({'appendDimension': {'sheetId': properties['sheetId'],
+                                                       'dimension': dimension, 'length': missing}})
+        if requests:
+            self.api.batchUpdate(spreadsheetId=self.spreadsheet_id, body={'requests': requests}).execute()
+
+    def ensure_poll_participant(self, user_id: int, username: str | None, display_name: str) -> str:
+        """Re-read before every retry: a lost response must not append a duplicate.
+
+        Only ID or an unclaimed, unique legacy username can link an existing row.
+        Never infer actor identity from a Telegram display name.
+        """
+        values = self.api.values()
+        troupe = values.get(spreadsheetId=self.spreadsheet_id, range=f"'{SETTINGS_SHEET}'").execute().get('values', [])
+        schedule = values.get(spreadsheetId=self.spreadsheet_id, range=f"'{SCHEDULE_SHEET}'").execute().get('values', [])
+        if not troupe or len(troupe[0]) < 10 or len(schedule) < 2:
+            raise ValueError('Missing troupe/schedule headers; registration deferred')
+        headers = troupe[0]
+        id_columns = [i for i, h in enumerate(headers) if str(h).strip().casefold() == 'telegram id']
+        if len(id_columns) > 1:
+            raise ValueError('Duplicate Telegram ID columns')
+        id_col = id_columns[0] if id_columns else max(10, max(map(len, troupe)))
+        if id_col in (0, 9):
+            raise ValueError('Telegram ID conflicts with the name/username column')
+        uid = str(user_id)
+        username = (username or '').lower().lstrip('@')
+
+        def cell(row, col):
+            return str(row[col]).strip() if len(row) > col else ''
+
+        by_id = [(i, row) for i, row in enumerate(troupe[1:], 2) if cell(row, id_col) == uid]
+        by_username = [(i, row) for i, row in enumerate(troupe[1:], 2)
+                       if username and cell(row, 9).lower().lstrip('@') == username]
+        if len(by_id) > 1 or len(by_username) > 1:
+            raise ValueError('Ambiguous Telegram identity in troupe')
+        if by_username and cell(by_username[0][1], id_col) not in ('', uid):
+            raise ValueError('Username belongs to another Telegram ID')
+        if by_id and by_username and by_id[0][0] != by_username[0][0]:
+            raise ValueError('Telegram ID and username point to different rows')
+        match = by_id or by_username
+        normalize = lambda name: ' '.join(name.split()).casefold()
+        if match:
+            troupe_row, row = match[0]
+            actor_name = cell(row, 0)
+            if not actor_name:
+                raise ValueError('Existing participant has no actor name')
+            if sum(normalize(cell(r, 0)) == normalize(actor_name) for r in troupe[1:]) != 1:
+                raise ValueError('Duplicate actor names in troupe')
+        else:
+            troupe_row = len(troupe) + 1
+            names = {normalize(cell(r, 0)) for r in troupe[1:] + schedule[2:]}
+            base = ' '.join(display_name.split()) or f'Участник {uid}'
+            actor_name = base
+            suffix = 0
+            while normalize(actor_name) in names:
+                suffix += 1
+                actor_name = f'{base} [TG {uid}{"" if suffix == 1 else f"-{suffix}"}]'
+        schedule_matches = [(i, cell(row, 0)) for i, row in enumerate(schedule[2:], 3)
+                            if normalize(cell(row, 0)) == normalize(actor_name)]
+        if len(schedule_matches) > 1 or (schedule_matches and schedule_matches[0][1] != actor_name):
+            raise ValueError('Ambiguous actor name in schedule')
+        self._ensure_grid(SETTINGS_SHEET, troupe_row, id_col + 1)
+        id_letter = _col_num_to_letter(id_col + 1)
+        changes = [
+            {'range': f"'{SETTINGS_SHEET}'!{id_letter}{troupe_row}", 'values': [[uid]]},
+            {'range': f"'{SETTINGS_SHEET}'!J{troupe_row}", 'values': [[username]]},
+        ]
+        if not id_columns:
+            changes.append({'range': f"'{SETTINGS_SHEET}'!{id_letter}1", 'values': [['Telegram ID']]})
+        if not match:
+            changes.append({'range': f"'{SETTINGS_SHEET}'!A{troupe_row}", 'values': [[actor_name]]})
+        if not schedule_matches:
+            schedule_row = len(schedule) + 1
+            self._ensure_grid(SCHEDULE_SHEET, schedule_row, 1)
+            changes.append({'range': f"'{SCHEDULE_SHEET}'!A{schedule_row}", 'values': [[actor_name]]})
+        values.batchUpdate(spreadsheetId=self.spreadsheet_id,
+                           body={'valueInputOption': 'RAW', 'data': changes}).execute()
+        return actor_name
 
     def find_date_column(self, event_dt: datetime) -> str | None:
         """Найти букву столбца по дате события (сравниваем день+месяц+время)."""
@@ -552,7 +640,7 @@ class SheetsClient:
             sheet_value = ""  # "не знаю" или отзыв голоса → пустая ячейка
 
         mapping = self.get_actor_mapping()
-        actor_name = actor_name or mapping.get(telegram_username.lower())
+        actor_name = actor_name or mapping.get((telegram_username or '').lower())
         if not actor_name:
             logger.warning(f"Sheets: unknown username @{telegram_username}")
             return False

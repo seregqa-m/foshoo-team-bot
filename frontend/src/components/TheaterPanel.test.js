@@ -32,7 +32,7 @@ afterEach(() => { act(() => root.unmount()); container.remove(); jest.resetAllMo
 test('route is changed only on explicit save and includes the revision', async () => {
   await open();
   expect([...container.querySelectorAll('th')].map(cell => cell.textContent)).toEqual(['Спектакль', 'ID чата']);
-  expect(container.querySelector('select')).toBeNull();
+  expect(container.querySelector('.theater-table select')).toBeNull();
   await change('ID чата: Урод', '-1002');
   expect(client.put).not.toHaveBeenCalled();
   await submit('Настройки спектакля Урод');

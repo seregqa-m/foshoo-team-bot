@@ -9,8 +9,9 @@ import FinanceView from './components/FinanceView';
 import LinksView from './components/LinksView';
 
 function App() {
-  const [activeTab, setActiveTab] = useState('assistant');
-  const [visitedTabs, setVisitedTabs] = useState(['assistant']);
+  const [activeTab, setActiveTab] = useState('calendar');
+  const [visitedTabs, setVisitedTabs] = useState(['calendar']);
+  const [assistantEnabled, setAssistantEnabled] = useState(false);
   const [dataVersion, setDataVersion] = useState(0);
   const selectTab = tab => {
     setVisitedTabs(tabs => tabs.includes(tab) ? tabs : [...tabs, tab]);
@@ -26,6 +27,7 @@ function App() {
   const [allowed, setAllowed] = useState(null); // null = проверяем
   const [isAdmin, setIsAdmin] = useState(false);
   const [isSuperAdmin, setIsSuperAdmin] = useState(false);
+  const [canFinance, setCanFinance] = useState(false);
   const [trouFilter, setTrouFilter] = useState('труппа 1');
 
   const [accessError, setAccessError] = useState('');
@@ -54,10 +56,15 @@ function App() {
         setUsername(data.username);
         setIsAdmin(data.is_admin);
         setIsSuperAdmin(!!data.is_superadmin);
+        setCanFinance(data.can_finance === true || data.is_admin === true);
         setAllowed(data.allowed);
         // Optional settings must not turn a successful login into an access error.
         client.get('/api/auth/app-config', { timeout: 15000 })
-          .then(({ data: config }) => { if (active && config.troupe_filter) setTrouFilter(config.troupe_filter); })
+          .then(({ data: config }) => {
+            if (!active) return;
+            if (config.troupe_filter) setTrouFilter(config.troupe_filter);
+            setAssistantEnabled(config.assistant_enabled === true);
+          })
           .catch(() => {});
       })
       .catch(e => {
@@ -77,15 +84,24 @@ function App() {
       .then(([auth, config]) => {
         if (!active) return;
         setIsAdmin(auth.data.is_admin); setIsSuperAdmin(!!auth.data.is_superadmin);
+        setCanFinance(auth.data.can_finance === true || auth.data.is_admin === true);
         setTrouFilter(config.data.troupe_filter);
+        setAssistantEnabled(config.data.assistant_enabled === true);
       })
       .catch(e => {
         if (!active) return;
-        setIsAdmin(false); setIsSuperAdmin(false);
+        setIsAdmin(false); setIsSuperAdmin(false); setCanFinance(false);
         if ([401, 403].includes(e.response?.status)) { setAccessError(e.response.data.detail); setAllowed(false); }
       });
     return () => { active = false; };
   }, [allowed, dataVersion]);
+
+  useEffect(() => {
+    if ((activeTab === 'assistant' && (!assistantEnabled || !canFinance)) || (activeTab === 'settings' && !isAdmin)
+        || (activeTab === 'finance' && !canFinance)) {
+      setActiveTab('calendar');
+    }
+  }, [activeTab, assistantEnabled, isAdmin, canFinance]);
 
   if (allowed === null) {
     return <div role="status" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', fontFamily: 'sans-serif' }}>{loadingStage}</div>;
@@ -111,50 +127,59 @@ function App() {
   return (
     <div className="app">
       <main className={`content ${activeTab === 'assistant' ? 'content--assistant' : ''}`}>
-        <section hidden={activeTab !== 'assistant'}>
+        {assistantEnabled && canFinance && visitedTabs.includes('assistant') && <section hidden={activeTab !== 'assistant'}>
           <AssistantView
             active={activeTab === 'assistant'}
             userId={userId}
             username={username}
             renderSettings={() => isAdmin ? <NotificationsView userId={userId} isSuperAdmin={isSuperAdmin} /> : <p>Настройки доступны администратору.</p>}
           />
-        </section>
+        </section>}
         {visitedTabs.includes('calendar') && <section hidden={activeTab !== 'calendar'}>
           <CalendarView active={activeTab === 'calendar'} dataVersion={dataVersion} userId={userId} isAdmin={isAdmin} trouFilter={trouFilter} />
         </section>}
-        {visitedTabs.includes('finance') && <section hidden={activeTab !== 'finance'}>
+        {canFinance && visitedTabs.includes('finance') && <section hidden={activeTab !== 'finance'}>
           <FinanceView active={activeTab === 'finance'} dataVersion={dataVersion} username={username} isAdmin={isAdmin} />
         </section>}
         {visitedTabs.includes('links') && <section hidden={activeTab !== 'links'}>
           <LinksView isAdmin={isAdmin} />
         </section>}
+        {isAdmin && visitedTabs.includes('settings') && <section hidden={activeTab !== 'settings'}>
+          <NotificationsView userId={userId} isSuperAdmin={isSuperAdmin} />
+        </section>}
       </main>
 
       <nav className="tab-bar">
-        <button
+        {assistantEnabled && canFinance && <button
           className={activeTab === 'assistant' ? 'active' : ''}
           onClick={() => selectTab('assistant')}
         >
           🤖<span>Ассистент</span>
-        </button>
+        </button>}
         <button
           className={activeTab === 'calendar' ? 'active' : ''}
           onClick={() => selectTab('calendar')}
         >
           📅<span>Расписание</span>
         </button>
-        <button
+        {canFinance && <button
           className={activeTab === 'finance' ? 'active' : ''}
           onClick={() => selectTab('finance')}
         >
           💰<span>Финансы</span>
-        </button>
+        </button>}
         <button
           className={activeTab === 'links' ? 'active' : ''}
           onClick={() => selectTab('links')}
         >
           🗂️<span>Ресурсы</span>
         </button>
+        {isAdmin && <button
+          className={activeTab === 'settings' ? 'active' : ''}
+          onClick={() => selectTab('settings')}
+        >
+          ⚙️<span>Настройки</span>
+        </button>}
       </nav>
     </div>
   );

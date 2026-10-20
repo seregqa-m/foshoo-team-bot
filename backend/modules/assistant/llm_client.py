@@ -18,7 +18,7 @@ import aiohttp
 
 from config import (
     YANDEX_API_KEY, YANDEX_FOLDER_ID, YANDEX_GPT_MODEL,
-    LLM_TEMPERATURE, LLM_MAX_TOKENS, LLM_REASONING_EFFORT,
+    LLM_TEMPERATURE, LLM_MAX_TOKENS, LLM_REASONING_EFFORT, LLM_ENABLED,
 )
 
 logger = logging.getLogger(__name__)
@@ -117,6 +117,8 @@ class YandexGPTClient(LLMClient):
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
     ) -> LLMResponse:
+        if not LLM_ENABLED:
+            raise LLMConfigurationError("LLM отключена")
         payload: dict[str, Any] = {
             "model": self.model_uri,
             "messages": [_message_to_openai(m) for m in messages],
@@ -186,6 +188,8 @@ class YandexGPTClient(LLMClient):
 
 def get_llm_client() -> LLMClient:
     """Фабрика провайдера. Пока — только YandexGPT через OpenAI-compat endpoint."""
+    if not LLM_ENABLED:
+        raise LLMConfigurationError("LLM отключена")
     return YandexGPTClient(
         api_key=YANDEX_API_KEY,
         folder_id=YANDEX_FOLDER_ID,
