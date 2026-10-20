@@ -20,6 +20,10 @@ export const updateEvent = (eventId, data) => {
   return client.put(`/api/calendar/events/${eventId}`, data);
 };
 
+export const getEventEditor = (eventId, scope = 'single') => {
+  return client.get(`/api/calendar/events/${eventId}/edit`, { params: { scope } });
+};
+
 export const deleteEvent = (eventId) => {
   return client.delete(`/api/calendar/events/${eventId}`);
 };

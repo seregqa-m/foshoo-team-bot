@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import * as calendarApi from '../api/calendar';
 import client from '../api/client';
 import PlanningView from './PlanningView';
@@ -363,42 +363,95 @@ function EventCard({ event, userId, onEdit, isAdmin, isPollable, isPast, poll, o
 
 function EventModal({ event, onClose, onSaved, onDeleted }) {
   const isEdit = !!event?.id;
+  const eventId = event?.id;
   const [form, setForm] = useState(
     isEdit
-      ? { ...event, start_time: toLocalInput(event.start_time), end_time: toLocalInput(event.end_time) }
+      ? { ...EMPTY_FORM, ...event, location: event.location || '', description: event.description || '',
+          start_time: toLocalInput(event.start_time), end_time: toLocalInput(event.end_time) }
       : { ...EMPTY_FORM, ...(event?.start_time ? { start_time: event.start_time, end_time: event.end_time } : {}) }
   );
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState(null);
+  const [scope, setScope] = useState('single');
+  const [editor, setEditor] = useState(null);
+  const [reading, setReading] = useState(isEdit);
+  const [readVersion, setReadVersion] = useState(0);
+  const drafts = useRef({});
+  const savingRef = useRef(false);
+
+  useEffect(() => {
+    if (!isEdit) return;
+    let cancelled = false;
+    setReading(true);
+    setError(null);
+    setEditor(null);
+    const apply = data => {
+      setEditor(data);
+      setForm({
+        title: data.title, location: data.location || '', description: data.description || '',
+        start_time: data.all_day ? data.start_time : toLocalInput(data.start_time),
+        end_time: data.all_day ? data.end_time : toLocalInput(data.end_time),
+      });
+    };
+    if (drafts.current[scope]) {
+      setEditor(drafts.current[scope].editor);
+      setForm(drafts.current[scope].form);
+      setReading(false);
+    } else {
+      calendarApi.getEventEditor(eventId, scope).then(({ data }) => {
+        if (!cancelled) apply(data);
+      }).catch(e => {
+        if (!cancelled) setError(e.response?.data?.detail || 'Не удалось прочитать событие из Google Calendar');
+      }).finally(() => { if (!cancelled) setReading(false); });
+    }
+    return () => { cancelled = true; };
+  }, [eventId, isEdit, scope, readVersion]);
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+  const changeScope = value => {
+    drafts.current[scope] = { form, editor };
+    setScope(value);
+  };
+  const reload = () => {
+    delete drafts.current[scope];
+    setReadVersion(value => value + 1);
+  };
 
   const handleSave = async (e) => {
     e.preventDefault();
+    if (savingRef.current || reading || (isEdit && !editor)) return;
     if (!form.title || !form.start_time || !form.end_time) {
       setError('Заполните обязательные поля');
       return;
     }
     try {
+      savingRef.current = true;
       setSaving(true);
       setError(null);
-      const data = { ...form, start_time: form.start_time + ':00', end_time: form.end_time + ':00' };
+      const data = {
+        title: form.title, location: form.location, description: form.description,
+        start_time: editor?.all_day ? form.start_time : new Date(form.start_time).toISOString(),
+        end_time: editor?.all_day ? form.end_time : new Date(form.end_time).toISOString(),
+      };
+      let result;
       if (isEdit) {
-        await calendarApi.updateEvent(event.id, data);
+        result = await calendarApi.updateEvent(event.id, { ...data, scope, expected_etag: editor.etag });
       } else {
-        await calendarApi.createEvent(data);
+        result = await calendarApi.createEvent(data);
       }
-      onSaved();
+      onSaved(result?.data);
     } catch (e) {
       setError(e.response?.data?.detail || 'Ошибка при сохранении');
     } finally {
+      savingRef.current = false;
       setSaving(false);
     }
   };
 
   const handleDelete = async () => {
-    if (!window.confirm('Удалить событие?')) return;
+    if (scope !== 'single' || savingRef.current) return;
+    if (!window.confirm('Удалить только это событие?')) return;
     try {
       setDeleting(true);
       await calendarApi.deleteEvent(event.id);
@@ -416,20 +469,40 @@ function EventModal({ event, onClose, onSaved, onDeleted }) {
         <div className="modal-handle" />
         <div className="modal-title">{isEdit ? 'Редактировать' : 'Новое событие'}</div>
 
-        {error && <div className="alert alert-error">{error}</div>}
+        {error && <div role="alert" className="alert alert-error">{error}
+          {isEdit && <button type="button" onClick={reload} disabled={reading || saving}>Перечитать из Google</button>}
+        </div>}
+        {reading && <div role="status">Читаем событие из Google Calendar…</div>}
+        {editor?.is_recurring && (
+          <div className="form-group">
+            <label className="form-label" htmlFor="event-edit-scope">Что изменить</label>
+            <select id="event-edit-scope" className="form-input" value={scope}
+              disabled={reading || saving || deleting} onChange={e => changeScope(e.target.value)}>
+              <option value="single">Только это событие</option>
+              <option value="series">Вся серия</option>
+            </select>
+          </div>
+        )}
+        {scope === 'series' && (
+          <div className="alert" role="status">
+            Изменится вся серия, включая прошедшие события. Ниже указаны даты первого события серии.
+            Правило повторения сохранится.
+          </div>
+        )}
 
         <form onSubmit={handleSave}>
+          <fieldset disabled={reading || saving || deleting || (isEdit && !editor)} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
           <div className="form-group">
             <label className="form-label">Название *</label>
             <input className="form-input" value={form.title} onChange={e => set('title', e.target.value)} placeholder="Репетиция «Гамлет»" required />
           </div>
           <div className="form-group">
             <label className="form-label">Начало *</label>
-            <input className="form-input" type="datetime-local" value={form.start_time} onChange={e => set('start_time', e.target.value)} required />
+            <input className="form-input" type={editor?.all_day ? 'date' : 'datetime-local'} value={form.start_time} onChange={e => set('start_time', e.target.value)} required />
           </div>
           <div className="form-group">
-            <label className="form-label">Конец *</label>
-            <input className="form-input" type="datetime-local" value={form.end_time} onChange={e => set('end_time', e.target.value)} required />
+            <label className="form-label">{editor?.all_day ? 'Конец (не включая этот день) *' : 'Конец *'}</label>
+            <input className="form-input" type={editor?.all_day ? 'date' : 'datetime-local'} value={form.end_time} onChange={e => set('end_time', e.target.value)} required />
           </div>
           <div className="form-group">
             <label className="form-label">Место</label>
@@ -441,13 +514,13 @@ function EventModal({ event, onClose, onSaved, onDeleted }) {
           </div>
 
           <div className="modal-actions">
-            <button type="submit" className="btn btn-primary" disabled={saving}>
+            <button type="submit" className="btn btn-primary" disabled={saving || reading || (isEdit && !editor)}>
               {saving ? 'Сохранение...' : isEdit ? 'Сохранить' : 'Создать'}
             </button>
             <button type="button" className="btn btn-secondary" onClick={onClose}>Отмена</button>
           </div>
 
-          {isEdit && (
+          {isEdit && scope === 'single' && (
             <button
               type="button"
               className="btn btn-danger"
@@ -458,6 +531,7 @@ function EventModal({ event, onClose, onSaved, onDeleted }) {
               {deleting ? 'Удаление...' : '🗑 Удалить событие'}
             </button>
           )}
+          </fieldset>
         </form>
       </div>
     </div>
@@ -475,6 +549,7 @@ export default function CalendarView({ userId, isAdmin, trouFilter = 'трупп
   const [calendarUrl, setCalendarUrl] = useState(null);
   const [pollSummary, setPollSummary] = useState({});
   const [now, setNow] = useState(Date.now);
+  const [notice, setNotice] = useState(null);
 
   useEffect(() => {
     if (!active) return;
@@ -515,7 +590,11 @@ export default function CalendarView({ userId, isAdmin, trouFilter = 'трупп
     if (active) { fetchEvents(); fetchPollSummary(); }
   }, [active, dataVersion, fetchEvents, fetchPollSummary]);
 
-  const handleSaved = () => { setModal(null); fetchEvents(); };
+  const handleSaved = result => {
+    setModal(null);
+    setNotice(result?.warning || 'Изменения сохранены в Google Calendar');
+    fetchEvents();
+  };
   const handleDeleted = () => { setModal(null); fetchEvents(); };
 
   const handleSlotClick = (dt) => {
@@ -529,14 +608,10 @@ export default function CalendarView({ userId, isAdmin, trouFilter = 'трупп
   const filteredEvents = filter === 'all'
     ? events
     : events.filter(e => getEventGroup(e, showNames, trouFilter) === filter);
-  // Keep upcoming events handy, then show history from most recent to oldest.
-  const visibleEvents = [...filteredEvents].sort((a, b) => {
-    const aPast = new Date(a.end_time).getTime() <= now;
-    const bPast = new Date(b.end_time).getTime() <= now;
-    if (aPast !== bPast) return aPast ? 1 : -1;
-    const difference = new Date(a.start_time) - new Date(b.start_time);
-    return aPast ? -difference : difference;
-  });
+  // History remains in WeekCalendar; the list shows ongoing/upcoming events.
+  const visibleEvents = filteredEvents
+    .filter(e => new Date(e.end_time).getTime() > now)
+    .sort((a, b) => new Date(a.start_time) - new Date(b.start_time));
 
   if (planning && isAdmin) return <PlanningView onClose={() => setPlanning(false)} dataVersion={dataVersion} />;
 
@@ -591,6 +666,7 @@ export default function CalendarView({ userId, isAdmin, trouFilter = 'трупп
       </div>
 
       {error && <div className="alert alert-error">{error}</div>}
+      {notice && <div role="status" className="alert">{notice}</div>}
 
       {visibleEvents.length === 0 ? (
         <div className="empty-state">Нет событий</div>

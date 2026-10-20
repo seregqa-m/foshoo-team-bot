@@ -133,6 +133,16 @@ class GoogleCalendarClient:
             logger.error(f"Failed to update event in Google Calendar: {e}")
             raise
 
+    def get_event(self, calendar_id: str, event_id: str) -> dict:
+        return self.service.events().get(calendarId=calendar_id, eventId=event_id).execute()
+
+    def patch_event(self, calendar_id: str, event_id: str, event_data: dict, etag: str) -> dict:
+        """Patch only editable fields and reject a concurrent Google edit."""
+        request = self.service.events().patch(
+            calendarId=calendar_id, eventId=event_id, body=event_data, sendUpdates="none")
+        request.headers["If-Match"] = etag
+        return request.execute()
+
     def delete_event(self, calendar_id: str, event_id: str) -> None:
         """
         Удалить событие из Google Calendar

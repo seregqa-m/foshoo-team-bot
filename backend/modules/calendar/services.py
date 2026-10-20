@@ -177,57 +177,18 @@ class CalendarService:
         start_time: datetime = None,
         end_time: datetime = None,
         location: str = None,
-        description: str = None
+        description: str = None,
+        scope: str = "single",
+        expected_etag: str = None,
     ) -> dict:
-        """Обновить событие в Google Calendar и БД"""
+        """Обновить экземпляр или всю серию в Google, затем локальный кэш."""
         if not self.google_client:
             raise ValueError("Google client not available")
-
-        db_event = self.get_event_by_id(event_id)
-        if not db_event:
-            raise ValueError(f"Event {event_id} not found")
-
-        start_time = as_local(start_time or db_event.start_time)
-        end_time = as_local(end_time or db_event.end_time)
-        if end_time <= start_time:
-            raise ValueError("Event end must be after start")
-        # Подготовить данные для Google
-        event_data = {
-            "summary": title or db_event.title,
-            "start": {"dateTime": (start_time or db_event.start_time).isoformat(), "timeZone": TIMEZONE},
-            "end": {"dateTime": (end_time or db_event.end_time).isoformat(), "timeZone": TIMEZONE},
-        }
-        if location is not None:
-            event_data["location"] = location
-        if description is not None:
-            event_data["description"] = description
-
-        self.google_client.update_event(calendar_id, db_event.google_event_id, event_data)
-
-        # Обновить БД
-        if title:
-            db_event.title = title
-        if start_time:
-            db_event.start_time = start_time
-        if end_time:
-            db_event.end_time = end_time
-        if location is not None:
-            db_event.location = location
-        if description is not None:
-            db_event.description = description
-        db_event.last_synced = datetime.utcnow()
-
-        self.db.commit()
-        self.db.refresh(db_event)
-
-        logger.info(f"Updated event: {event_id}")
-        return {
-            "id": db_event.id,
-            "title": db_event.title,
-            "google_event_id": db_event.google_event_id,
-            "start_time": db_event.start_time.isoformat(),
-            "end_time": db_event.end_time.isoformat(),
-        }
+        from .editing import update_google_event
+        return update_google_event(
+            self, calendar_id, event_id, scope=scope, expected_etag=expected_etag,
+            title=title, start_time=start_time, end_time=end_time,
+            location=location, description=description)
 
     def delete_event(self, calendar_id: str, event_id: int) -> None:
         """Удалить событие из Google Calendar и БД"""

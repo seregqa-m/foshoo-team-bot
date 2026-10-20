@@ -5,6 +5,8 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from datetime import datetime
+from typing import Literal
+from googleapiclient.errors import HttpError
 from sqlalchemy.orm import Session
 from core.database import get_db
 from config import GOOGLE_CALENDAR_ID, GOOGLE_CALENDAR_JSON
@@ -34,6 +36,8 @@ class UpdateEventRequest(BaseModel):
     end_time: str = None
     location: str = None
     description: str = None
+    scope: Literal["single", "series"] = "single"
+    expected_etag: str | None = None
 
 
 class LaunchPollRequest(BaseModel):
@@ -160,6 +164,22 @@ def create_event(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/events/{event_id}/edit")
+def get_event_editor(event_id: int, scope: Literal["single", "series"] = "single",
+                     db: Session = Depends(get_db)):
+    """Read the current Google occurrence/series before editing."""
+    from .editing import editor_data
+    google_client = get_google_client()
+    if not google_client:
+        raise HTTPException(503, "Google Calendar не настроен")
+    try:
+        return editor_data(CalendarService(db, google_client), GOOGLE_CALENDAR_ID, event_id, scope)
+    except HttpError as exc:
+        if exc.resp.status in (404, 410):
+            raise HTTPException(404, "Событие удалено из Google Calendar. Обновите расписание.") from None
+        raise HTTPException(502, "Не удалось прочитать событие из Google Calendar") from None
+
+
 @router.put("/events/{event_id}")
 def update_event(
     event_id: int,
@@ -190,9 +210,17 @@ def update_event(
             start_time=start,
             end_time=end,
             location=request.location,
-            description=request.description
+            description=request.description,
+            scope=request.scope,
+            expected_etag=request.expected_etag,
         )
         return event
+    except HTTPException:
+        raise
+    except HttpError as e:
+        if e.resp.status in (404, 410):
+            raise HTTPException(404, "Событие удалено из Google Calendar. Обновите расписание.") from None
+        raise HTTPException(502, "Google Calendar не подтвердил сохранение. Перечитайте событие перед повтором.") from None
     except ValueError as e:
         if "not found" in str(e):
             raise HTTPException(status_code=404, detail=str(e))
