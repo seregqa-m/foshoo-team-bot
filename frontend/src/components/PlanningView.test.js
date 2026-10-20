@@ -23,6 +23,24 @@ const open = async () => {
   await act(async () => container.querySelector('.planning-cell').click());
 };
 
+test('uses the server default month and marks today in the planning timezone at the UTC month boundary', async () => {
+  const clock = jest.spyOn(Date, 'now').mockReturnValue(new Date('2028-09-30T21:05:00Z').getTime());
+  try {
+    await act(async () => root.render(<PlanningView onClose={() => {}} />));
+    expect(client.get).toHaveBeenCalledWith('/api/planning', undefined);
+    expect(container.querySelector('input[type="month"]').value).toBe('2028-10');
+    expect(container.querySelector('[aria-current="date"]').textContent).toContain('Сегодня1 окт 2028');
+    clock.mockReturnValue(new Date('2028-10-01T21:05:00Z').getTime());
+    await act(async () => window.dispatchEvent(new Event('focus')));
+    expect(container.querySelector('[aria-current="date"]')).toBeNull();
+    act(() => Simulate.change(container.querySelector('input[type="month"]'), { target: { value: '2028-11' } }));
+    await act(async () => {});
+    expect(client.get).toHaveBeenLastCalledWith('/api/planning', { params: { month: '2028-11' } });
+  } finally {
+    clock.mockRestore();
+  }
+});
+
 test('shows role coverage and submits the chosen cast, time, location and reviewed snapshot', async () => {
   await open();
   expect(container.textContent).toContain('2/2');

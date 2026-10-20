@@ -68,7 +68,7 @@ def read_plan(client, month, db):
 @router.get('')
 def get_planning(month: str | None = None, db: Session = Depends(get_db)):
     if month is None:
-        month = (local_now().date().replace(day=1) + timedelta(days=32)).strftime('%Y-%m')
+        month = local_now().strftime('%Y-%m')
     try:
         date.fromisoformat(month + '-01')
     except ValueError as exc:

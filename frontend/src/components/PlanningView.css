@@ -11,6 +11,9 @@
 .planning-table th, .planning-table td { padding: 8px; border-bottom: 1px solid #eee; text-align: left; }
 .planning-table th:first-child { position: sticky; left: 0; background: #fff; z-index: 1; min-width: 92px; max-width: 130px; }
 .planning-table thead th { background: #faf7f8; }
+.planning-table .planning-row--today > th { background: #e7f4eb; box-shadow: inset 3px 0 #43865c; }
+.planning-today { display: flex; align-items: center; gap: 5px; margin-bottom: 5px; color: #205939; font-size: 11px; font-weight: 600; }
+.planning-today::before { content: ''; width: 7px; height: 7px; flex-shrink: 0; border-radius: 50%; background: #43865c; }
 .planning-table small { display: block; font-weight: 400; font-size: 10px; margin-top: 5px; color: #651d32; }
 .planning-cell { display: flex; flex-direction: column; gap: 5px; padding: 12px; width: 100%; min-width: 120px; border-radius: 10px; border: 1px solid transparent; text-align: left; cursor: pointer; font: inherit; }
 .planning-cell strong { font-size: 19px; }

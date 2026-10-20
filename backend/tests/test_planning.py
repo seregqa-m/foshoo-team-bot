@@ -9,7 +9,7 @@ with patch.dict(os.environ, {'BOT_TOKEN': '123456:offline-test-token', 'DATABASE
     from core.database import Base
     from sheets_client import SheetsClient, _parse_header_date, _format_schedule_header
     from modules.planning.services import build_plan, assignment_updates, match_roles
-    from modules.planning.router import AssignRequest, assign_show, require_admin
+    from modules.planning.router import AssignRequest, assign_show, require_admin, get_planning
     from modules.planning.models import PlanningAssignment
     from modules.calendar.models import CalendarEvent
     from modules.calendar.google_client import GoogleCalendarClient
@@ -29,6 +29,17 @@ def fixture():
 
 
 class PlanningTests(unittest.TestCase):
+    def test_default_month_is_current_even_at_year_end_and_explicit_month_is_preserved(self):
+        db = MagicMock()
+        db.query.return_value.filter_by.return_value.all.return_value = []
+        with patch('modules.planning.router.get_client'), \
+             patch('modules.planning.router.read_plan', return_value=({}, {'slots': []})) as read, \
+             patch('modules.planning.router.local_now', return_value=datetime(2026, 12, 31, 23, 59)):
+            get_planning(db=db)
+            self.assertEqual(read.call_args.args[1], '2026-12')
+            get_planning(month='2027-02', db=db)
+            self.assertEqual(read.call_args.args[1], '2027-02')
+
     def test_matching_uses_alternates_without_reusing_actor(self):
         plan = build_plan(fixture(), '2028-10')
         ready, blocked, waiting = [s['shows'][0] for s in plan['slots']]

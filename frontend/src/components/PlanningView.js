@@ -95,6 +95,20 @@ export default function PlanningView({ onClose, dataVersion = 0 }) {
   const [readyOnly, setReadyOnly] = useState(false);
   const [selected, setSelected] = useState(null);
   const [success, setSuccess] = useState('');
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    const updateToday = () => setNow(Date.now());
+    const timer = setInterval(updateToday, 60_000);
+    window.addEventListener('focus', updateToday);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener('focus', updateToday);
+    };
+  }, []);
+  const todayParts = new Intl.DateTimeFormat('en', {
+    timeZone: data?.timezone || 'Europe/Moscow', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(now);
+  const today = ['year', 'month', 'day'].map(type => todayParts.find(part => part.type === type).value).join('-');
   useEffect(() => {
     let active = true;
     setLoading(true); setError(''); setData(null); setSelected(null);
@@ -145,8 +159,11 @@ export default function PlanningView({ onClose, dataVersion = 0 }) {
           : !slots.length ? <div className="empty-state">Полный состав пока не собирается. Выключите фильтр, чтобы увидеть, каких ответов или исполнителей не хватает.</div>
           : <div className="planning-table-scroll" tabIndex="0" aria-label="Сводка составов по датам">
             <table className="planning-table"><thead><tr><th scope="col">Дата</th>{visibleShows.map(name => <th scope="col" key={name}>{name}</th>)}</tr></thead>
-              <tbody>{slots.map(slot => <tr key={slot.column}>
-                <th scope="row">{slot.label.replace(/\n/g, ' ')}{slot.assigned_show && <small>{slot.assigned_show}</small>}</th>
+              <tbody>{slots.map(slot => <tr key={slot.column} className={slot.date === today ? 'planning-row--today' : undefined}>
+                <th scope="row" aria-current={slot.date === today ? 'date' : undefined}>
+                  {slot.date === today && <span className="planning-today">Сегодня</span>}
+                  {slot.label.replace(/\n/g, ' ')}{slot.assigned_show && <small>{slot.assigned_show}</small>}
+                </th>
                 {visibleShows.map(name => {
                   const cell = slot.shows.find(item => item.show === name);
                   const pending = slot.operation?.show_name === name && slot.operation.status !== 'complete';
