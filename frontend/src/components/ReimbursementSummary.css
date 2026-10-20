@@ -1,0 +1,21 @@
+.reimbursement-summary { padding: 20px 12px; margin-bottom: 16px; }
+.reimbursement-note { color: #777; font-size: 12px; line-height: 1.5; }
+.reimbursement-center { text-align: center; }
+.reimbursement-totals { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin: 12px 0; text-align: center; }
+.reimbursement-totals span { display: block; font-size: 12px; color: #777; }
+.reimbursement-totals strong { display: block; font-size: clamp(16px, 5vw, 24px); white-space: nowrap; }
+.reimbursement-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.reimbursement-table th { color: #777; font-size: 11px; font-weight: 500; padding: 8px 0 8px 8px; text-align: right; white-space: nowrap; }
+.reimbursement-table td { border-top: 1px solid #eee; padding: 12px 0 12px 8px; text-align: right; white-space: nowrap; font-weight: 600; }
+.reimbursement-table td:first-child { padding-left: 0; text-align: left; width: 100%; max-width: 0; }
+.reimbursement-table td button { display: block; max-width: 100%; padding: 6px 0; border: 0; background: none; color: #111; font: inherit; font-weight: 400; text-align: left; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-decoration: underline; text-underline-offset: 3px; }
+.reimbursement-history { overflow-wrap: anywhere; }
+.reimbursement-history-list { list-style: none; padding: 0; margin: 16px 0; }
+.reimbursement-history-list li { padding: 12px 0; border-top: 1px solid #eee; font-size: 13px; }
+.reimbursement-history-heading { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-bottom: 4px; }
+.reimbursement-history-heading strong { white-space: nowrap; }
+.reimbursement-refund { color: #24774e; }
+.finance-expense-button { background: #f1e4df; color: #754a3d; border: 1px solid #e3ccc2; }
+.finance-income-button { background: #e3ece5; color: #3f624c; border: 1px solid #cbdccf; }
+.finance-expense-button:hover { background: #e9d8d0; }
+.finance-income-button:hover { background: #d7e5da; }

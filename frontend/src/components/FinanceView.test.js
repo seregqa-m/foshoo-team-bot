@@ -20,7 +20,14 @@ beforeEach(() => {
     '/api/finance/chart': { data: [{ period: '09.2026', income: 0, expense_foshu: 5000 }] },
     '/api/finance/reimbursements': { total: 1300, people: [
       { who: 'Анна Иванова', amount: 1000 }, { who: 'Дарья Шарыгина', amount: 300 },
-    ], unassigned: { personal: 0, returned: 0 } },
+    ], unassigned: { personal: 0, returned: 0 }, recent: {
+      total: 200, people: [{ who: 'Анна Иванова', amount: 200 }],
+      unassigned: { personal: 0, returned: 0 }, from_date: '2026-09-21', to_date: '2026-10-20',
+    } },
+    '/api/finance/reimbursements/history': { transactions: [
+      { id: 2, date: '2026-10-20', amount: 300, expense_type: 'Возврат', what: 'Компенсация', project: 'Театр', comment: '' },
+      { id: 1, date: '2026-10-19', amount: 500, expense_type: 'Личные траты', what: 'Реквизит', project: 'Урод', comment: 'Для спектакля' },
+    ] },
   };
   client.get.mockImplementation(url => Promise.resolve({ data: responses[url] }));
   client.delete.mockResolvedValue({ data: {} });
@@ -64,13 +71,49 @@ test('three summaries share one place and chart controls survive switching', asy
   await act(async () => button('История').click());
   await act(async () => button('К возврату').click());
   expect(container.querySelector('svg')).toBeNull();
-  expect(container.textContent).toContain('Личные траты за всё время минус выплаченные возвраты');
+  expect(container.textContent).toContain('Личные траты минус возвраты за тот же период');
   expect(container.textContent).toContain((1300).toLocaleString('ru-RU') + ' ₽');
   expect(container.querySelectorAll('tbody tr')).toHaveLength(2);
   expect(container.querySelector('tbody').textContent).toContain('Анна Иванова');
   await act(async () => button('Статистика').click());
   expect(button('История').style.background).toBe('rgb(17, 17, 17)');
   expect(container.querySelector('input[type="date"]')).toBeNull();
+});
+
+test('reimbursements show two amount columns without a visible person header and open complete history', async () => {
+  await act(async () => root.render(<FinanceView username="actor" />));
+  await act(async () => button('К возврату').click());
+  expect([...container.querySelectorAll('th')].map(th => th.textContent)).toEqual(['', 'Всё время', '30 дней']);
+  const cells = [...container.querySelector('tbody tr').children].map(td => td.textContent);
+  expect(cells).toEqual(['Анна Иванова', (1000).toLocaleString('ru-RU') + ' ₽', '200 ₽']);
+  await act(async () => button('Анна Иванова').click());
+  expect(client.get).toHaveBeenCalledWith('/api/finance/reimbursements/history', expect.objectContaining({
+    params: { who: 'Анна Иванова' },
+  }));
+  const dialog = container.querySelector('[role="dialog"]');
+  expect(dialog.textContent).toContain('Для спектакля');
+  expect([...dialog.querySelectorAll('li')].map(li => li.textContent)).toEqual([
+    expect.stringContaining('Возврат−300 ₽Компенсация20.10.2026'),
+    expect.stringContaining('Личная трата+500 ₽Реквизит19.10.2026'),
+  ]);
+  await act(async () => button('Закрыть').click());
+  expect(container.querySelector('[role="dialog"]')).toBeNull();
+});
+
+test('recent-only debt remains reachable and history failures can be retried', async () => {
+  responses['/api/finance/reimbursements'].people = [];
+  client.get.mockImplementation(url => url.endsWith('/history')
+    ? Promise.reject(new Error('offline')) : Promise.resolve({ data: responses[url] }));
+  await act(async () => root.render(<FinanceView username="actor" />));
+  await act(async () => button('К возврату').click());
+  expect(container.querySelector('tbody tr').textContent).toContain('Анна Иванова0 ₽200 ₽');
+  await act(async () => button('Анна Иванова').click());
+  expect(container.querySelector('[role="dialog"] [role="alert"]')).not.toBeNull();
+  client.get.mockImplementation(url => Promise.resolve({ data: responses[url] }));
+  await act(async () => button('Повторить').click());
+  expect(container.querySelectorAll('[role="dialog"] li')).toHaveLength(2);
+  await act(async () => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })));
+  expect(container.querySelector('[role="dialog"]')).toBeNull();
 });
 
 test('bank expense locks the payer to the bank and preserves personal payer when switching', async () => {

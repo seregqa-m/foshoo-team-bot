@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import client from '../api/client';
 import useContainerWidth from './useContainerWidth';
+import ReimbursementSummary from './ReimbursementSummary';
 
 function smoothPath(points) {
   if (points.length === 0) return '';
@@ -214,7 +215,6 @@ const isoToDMY = iso => { const [y, m, d] = iso.split('-'); return `${d}.${m}.${
 const EMPTY_EXPENSE = { project: '', amount: '', what: '', expense_type: '', comment: '', who: '', date: todayISO() };
 const EMPTY_INCOME  = { project: '', amount: '', what: '', comment: '', date: todayISO() };
 const BANK_EXPENSE = 'Трата со счета ФоШу';
-const money = value => `${value.toLocaleString('ru-RU')} ₽`;
 const SUMMARIES = [['balance', 'Копилка'], ['chart', 'Статистика'], ['reimbursements', 'К возврату']];
 
 export default function FinanceView({ username, isAdmin, active = true, dataVersion = 0 }) {
@@ -360,10 +360,10 @@ export default function FinanceView({ username, isAdmin, active = true, dataVers
 
       {/* Кнопки */}
       <div style={{ display: 'flex', gap: 12, marginBottom: 16 }}>
-        <button className="btn btn-secondary" style={{ flex: 1, padding: 14, fontSize: 15 }} onClick={openExpense}>
+        <button className="btn finance-expense-button" style={{ flex: 1, padding: 14, fontSize: 15 }} onClick={openExpense}>
           − Расход
         </button>
-        <button className="btn btn-primary" style={{ flex: 1, padding: 14, fontSize: 15 }} onClick={openIncome}>
+        <button className="btn finance-income-button" style={{ flex: 1, padding: 14, fontSize: 15 }} onClick={openIncome}>
           + Доход
         </button>
       </div>
@@ -420,50 +420,7 @@ export default function FinanceView({ username, isAdmin, active = true, dataVers
       )}
 
       {summary === 'reimbursements' && (
-        <div className="card-white" style={{ padding: '20px 16px', marginBottom: 16 }}>
-          <div style={{ fontSize: 13, color: '#666', textAlign: 'center', marginBottom: 4 }}>Всего к возврату</div>
-          {!reimbursements ? (
-            <div role="status" style={{ textAlign: 'center', padding: 16 }}>
-              {loading ? 'Загрузка…' : 'Не удалось загрузить суммы к возврату'}
-            </div>
-          ) : (
-            <>
-              <div style={{ fontSize: 28, fontWeight: 700, textAlign: 'center' }}>{money(reimbursements.total)}</div>
-              <div style={{ fontSize: 12, color: '#888', textAlign: 'center', margin: '8px 0 16px' }}>
-                Личные траты за всё время минус выплаченные возвраты
-              </div>
-              {(reimbursements.unassigned.personal !== 0 || reimbursements.unassigned.returned !== 0) && (
-                <div role="status" className="alert alert-error">
-                  Есть операции без имени: личные траты {money(reimbursements.unassigned.personal)},
-                  {' '}возвраты {money(reimbursements.unassigned.returned)}. Итог предварительный:
-                  уточните имена в таблице. Возвраты без получателя не вычтены.
-                </div>
-              )}
-              {reimbursements.people.length > 0 && (
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
-                  <thead><tr>
-                    <th scope="col" style={{ textAlign: 'left', padding: '8px 0', fontWeight: 500 }}>Человек</th>
-                    <th scope="col" style={{ textAlign: 'right', padding: '8px 0', fontWeight: 500 }}>К возврату</th>
-                  </tr></thead>
-                  <tbody>{reimbursements.people.map(person => (
-                    <tr key={person.who}>
-                      <td style={{ padding: '12px 8px 12px 0', borderTop: '1px solid #eee' }}>{person.who}</td>
-                      <td style={{ textAlign: 'right', whiteSpace: 'nowrap', padding: '12px 0', borderTop: '1px solid #eee', fontWeight: 600 }}>
-                        {money(person.amount)}
-                      </td>
-                    </tr>
-                  ))}</tbody>
-                </table>
-              )}
-              {reimbursements.unassigned.personal > 0 && (
-                <div style={{ paddingTop: 12 }}>Без имени: {money(reimbursements.unassigned.personal)}</div>
-              )}
-              {reimbursements.total === 0 && reimbursements.unassigned.returned === 0 && (
-                <div style={{ textAlign: 'center', color: '#888', paddingTop: 12 }}>Все личные траты компенсированы</div>
-              )}
-            </>
-          )}
-        </div>
+        <ReimbursementSummary data={reimbursements} loading={loading} />
       )}
 
       {/* Последние операции */}

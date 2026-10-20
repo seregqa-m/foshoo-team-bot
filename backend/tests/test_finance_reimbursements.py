@@ -1,5 +1,6 @@
 import os
 import unittest
+from datetime import datetime
 from unittest.mock import MagicMock, patch
 
 with patch.dict(os.environ, {"BOT_TOKEN": "123456:offline-test-token", "DATABASE_URL": "sqlite://"},
@@ -21,6 +22,9 @@ class FinanceReimbursementTests(unittest.TestCase):
         self.db = Session(self.engine)
         self.addCleanup(self.engine.dispose)
         self.addCleanup(self.db.close)
+        clock = patch("finance_router.local_now", return_value=datetime(2026, 10, 20, 12))
+        clock.start()
+        self.addCleanup(clock.stop)
 
     def expense(self, who, amount, kind="Личные траты", **kwargs):
         values = dict(who=who, amount=amount, expense_type=kind, project="Театр",
@@ -75,7 +79,54 @@ class FinanceReimbursementTests(unittest.TestCase):
 
     def test_empty_ledger_has_no_debt(self):
         self.assertEqual(finance.get_reimbursements(self.db),
-                         dict(total=0, people=[], unassigned=dict(personal=0, returned=0)))
+                         dict(total=0, people=[], unassigned=dict(personal=0, returned=0),
+                              recent=dict(total=0, people=[], unassigned=dict(personal=0, returned=0),
+                                          from_date="2026-09-21", to_date="2026-10-20")))
+
+    def test_last_30_days_inclusive_excludes_old_future_and_unknown_dates(self):
+        for day, amount in [("2026-09-20", 1000), ("2026-09-21", 200),
+                            ("20.10.2026", 400), ("2026-10-21", 2000),
+                            (None, 3000), ("invalid", 4000), ("2026-99-99", 5000)]:
+            self.expense("Анна", amount, date=day)
+        self.expense("анна", 50, "Возврат", date="2026-10-20")
+        self.expense("Анна", 75, "Возврат", date="2026-09-20")
+        self.expense("Анна", 9000, finance.BANK_EXPENSE)
+        result = finance.get_reimbursements(self.db)
+        self.assertEqual(result["recent"]["total"], 550)
+        self.assertEqual(result["recent"]["people"], [
+            dict(who="Анна", personal=600, returned=50, amount=550)])
+        self.assertEqual(result["total"], 15475)
+
+    def test_recent_refund_of_old_debt_does_not_reduce_other_person_or_become_negative(self):
+        self.expense("Анна", 1000, date="2020-01-01")
+        self.expense("Анна", 300, "Возврат")
+        self.expense("Борис", 200)
+        self.expense(None, 100)
+        self.expense("—", 400, "Возврат")
+        result = finance.get_reimbursements(self.db)
+        self.assertEqual(result["total"], 1000)
+        self.assertEqual(result["recent"]["total"], 300)
+        self.assertEqual([p["who"] for p in result["recent"]["people"]], ["Борис"])
+        self.assertEqual(result["recent"]["unassigned"], dict(personal=100, returned=400))
+
+    def test_history_is_complete_mixed_newest_first_and_uses_normalized_identity(self):
+        self.expense(" Анна  Иванова ", 200, date="2020-01-01")
+        refund = self.expense("анна\u00a0иванова", 50, "Возврат", date="20.10.2026")
+        newest = self.expense("Анна Иванова", 100, date="2026-10-20", comment="Комментарий")
+        self.expense("Анна Иванова", 300, finance.BANK_EXPENSE)
+        self.expense("Анна Иванова", 300, "Пожертвование")
+        self.expense("Аня Иванова", 900)
+        for _ in range(12):
+            self.expense("Анна Иванова", 10, date="2021-01-01")
+        unknown = self.expense("Анна Иванова", 20, date=None)
+        rows = finance.get_reimbursement_history(" анна Иванова ", self.db)["transactions"]
+        self.assertEqual(len(rows), 16)
+        self.assertEqual([r["id"] for r in rows[:2]], [newest.id, refund.id])
+        self.assertEqual(rows[0]["comment"], "Комментарий")
+        self.assertEqual(rows[1]["expense_type"], "Возврат")
+        self.assertEqual(rows[1]["date"], "2026-10-20")
+        self.assertEqual(rows[-1]["id"], unknown.id)
+        self.assertEqual(finance.get_reimbursement_history("Нет такого", self.db), dict(transactions=[]))
 
     def test_historical_bank_label_keeps_original_fingerprint_and_deletion_match(self):
         row = self.expense("Дарья Шарыгина", 500, finance.BANK_EXPENSE)

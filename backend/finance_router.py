@@ -371,19 +371,16 @@ def get_transactions(limit: int = 10, db: Session = Depends(get_db)):
     return {"transactions": items[:limit]}
 
 
-@router.get("/reimbursements")
-def get_reimbursements(db: Session = Depends(get_db)):
-    """Outstanding personal spending across all projects and dates.
+def _person_name(value):
+    return " ".join((value or "").split())
 
-    Paid refunds are expense rows of type «Возврат», just as in the balance
-    history. Do not also count the unused legacy ReturnsLog table.
-    """
+
+def _summarize_reimbursements(rows):
+    """Refunds come from ExpenseLog, never the unused legacy ReturnsLog."""
     people = {}
     unassigned = {"personal": 0, "returned": 0}
-    for row in db.query(ExpenseLog).filter(
-        ExpenseLog.expense_type.in_(["Личные траты", "Возврат"])
-    ).order_by(ExpenseLog.id).all():
-        name = " ".join((row.who or "").split())
+    for row in rows:
+        name = _person_name(row.who)
         field = "personal" if row.expense_type == "Личные траты" else "returned"
         amount = _amt(row.amount)
         if not name or name.casefold() in ("—", "-", BANK_NAME.casefold()):
@@ -403,6 +400,58 @@ def get_reimbursements(db: Session = Depends(get_db)):
         "people": outstanding,
         "unassigned": unassigned,
     }
+
+
+@router.get("/reimbursements")
+def get_reimbursements(db: Session = Depends(get_db)):
+    rows = db.query(ExpenseLog).filter(
+        ExpenseLog.expense_type.in_(["Личные траты", "Возврат"])
+    ).order_by(ExpenseLog.id).all()
+    today = local_now().date()
+    start = today - timedelta(days=29)
+    recent = []
+    for row in rows:
+        try:
+            row_date = date.fromisoformat(_safe_date(row.date) or "")
+        except ValueError:
+            continue
+        if start <= row_date <= today:
+            recent.append(row)
+    return {
+        **_summarize_reimbursements(rows),
+        "recent": {
+            **_summarize_reimbursements(recent),
+            "from_date": start.isoformat(), "to_date": today.isoformat(),
+        },
+    }
+
+
+@router.get("/reimbursements/history")
+def get_reimbursement_history(who: str, db: Session = Depends(get_db)):
+    """Complete personal spending/refund history, newest accounting date first."""
+    key = _person_name(who).casefold()
+    if not key or key in ("—", "-", BANK_NAME.casefold()):
+        raise HTTPException(400, "Укажите человека")
+    rows = [
+        row for row in db.query(ExpenseLog).filter(
+            ExpenseLog.expense_type.in_(["Личные траты", "Возврат"])
+        ).all()
+        if _person_name(row.who).casefold() == key
+    ]
+
+    def accounting_date(row):
+        try:
+            return date.fromisoformat(_safe_date(row.date) or "").isoformat()
+        except ValueError:
+            return ""
+
+    rows.sort(key=lambda row: (accounting_date(row), row.id), reverse=True)
+    return {"transactions": [{
+        "id": row.id, "date": accounting_date(row),
+        "amount": _amt(row.amount), "expense_type": row.expense_type,
+        "what": row.what or "", "project": row.project or "",
+        "comment": row.comment or "",
+    } for row in rows]}
 
 
 @router.delete("/transactions/{tx_type}/{tx_id}")
