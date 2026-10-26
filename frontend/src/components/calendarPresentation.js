@@ -11,10 +11,13 @@ export function getEventGroup(event) {
 export function getEventColor(event) {
   if (event.event_type === 'performance') return PERFORMANCE_COLOR;
   // Stable IDs keep colors through renames, aliases and date changes.
-  const id = event.event_type === 'rehearsal' && event.show_id
-    ? event.show_id : event.color_group_id;
+  const isCatalogRehearsal = event.event_type === 'rehearsal' && !!event.show_id;
+  const id = isCatalogRehearsal ? event.show_id : event.color_group_id;
   if (!id) return OTHER_COLOR;
-  const hue = ((Number(id) * 103.1308) % 270 + 180) % 360;
+  // These IDs come from independent tables. Interleave their namespaces:
+  // show:N -> 2N-1, color:N -> 2N. No titles or visible-event ordering involved.
+  const colorIndex = Number(id) * 2 - (isCatalogRehearsal ? 1 : 0);
+  const hue = ((colorIndex * 103.1308) % 270 + 180) % 360;
   // Recurring groups and catalog shows have equal visual weight.
   return `hsl(${hue.toFixed(2)}, 65%, 70%)`;
 }

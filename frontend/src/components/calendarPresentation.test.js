@@ -1,5 +1,19 @@
 import { calendarFilters, calendarDetails, getEventDetailKey, getEventColor, matchesCalendarFilter, PERFORMANCE_COLOR, OTHER_COLOR } from './calendarPresentation';
 
+test('show IDs and recurring-group IDs occupy separate color identities', () => {
+  const colors = [];
+  for (let id = 1; id <= 32; id += 1) {
+    const show = { event_type: 'rehearsal', show_id: id };
+    const group = { color_group_id: id };
+    colors.push(getEventColor(show), getEventColor(group));
+    expect(getEventColor({ ...show, title: 'Другое название', color_group_id: id + 1 }))
+      .toBe(getEventColor(show));
+    expect(getEventColor({ ...group, title: 'Другое название', show_id: id + 1 }))
+      .toBe(getEventColor(group));
+  }
+  expect(new Set(colors).size).toBe(colors.length);
+});
+
 test('catalog identity keeps rehearsal colors and detail selection stable across renames', () => {
   const a = { show_id: 1, show_name: 'Калий', event_type: 'rehearsal' };
   const renamed = { ...a, show_name: 'Цианистый Калий' };

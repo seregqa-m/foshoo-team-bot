@@ -127,6 +127,9 @@ The authenticated user ID comes from `/api/auth/check` and is passed to views.
 `App.js` fetches `/api/auth/app-config` for assistant availability. Calendar types,
 canonical show names and stable show IDs come from `/api/calendar/events`.
 Rehearsal filters and colors use the show ID; all performances share green.
+The hue sequence uses disjoint identities: show N maps to index 2N-1,
+recurring group N to 2N. Never feed bare IDs from the two tables into the
+same color formula; names and the visible event set do not affect colors.
 Other events use persistent title groups (`calendar_color_groups` and
 `calendar_color_titles`), colored only after three distinct dates within the
 rolling -90/+60-day window. Normalization and conservative Levenshtein matching
