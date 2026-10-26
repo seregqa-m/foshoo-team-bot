@@ -1,5 +1,5 @@
-export const PERFORMANCE_COLOR = '#6EE7B7';
-export const OTHER_COLOR = '#D1D5DB';
+export const PERFORMANCE_COLOR = '#52C99A';
+export const OTHER_COLOR = '#B5BDC9';
 
 export function getEventGroup(event) {
   if (event.event_type === 'performance') return 'shows';
@@ -10,42 +10,52 @@ export function getEventGroup(event) {
 
 export function getEventColor(event) {
   if (event.event_type === 'performance') return PERFORMANCE_COLOR;
-  // Stable catalog IDs keep colors through renames, aliases and date changes.
-  // Space consecutive IDs across the wheel, reserving greens for performances.
-  if (event.event_type === 'rehearsal' && event.show_id) {
-    const hue = ((Number(event.show_id) * 103.1308) % 270 + 180) % 360;
-    return `hsl(${hue.toFixed(2)}, 65%, 78%)`;
-  }
-  // Only server-confirmed recurring groups receive a pale decorative color.
-  // This identity never determines a show's chat or enables a poll.
-  if (!event.color_group_id) return OTHER_COLOR;
-  const hue = ((Number(event.color_group_id) * 103.1308) % 270 + 180) % 360;
-  return `hsl(${hue.toFixed(2)}, 55%, 89%)`;
-}
-
-export function calendarFilters(events) {
-  const shows = new Map();
-  const recurring = new Map();
-  for (const event of events) {
-    if (event.event_type === 'rehearsal' && event.show_id) {
-      shows.set(event.show_id, { key: getEventGroup(event), label: event.show_name,
-        color: getEventColor(event) });
-    } else if (event.event_type !== 'performance' && event.color_group_id) {
-      recurring.set(event.color_group_id, { key: getEventGroup(event), label: event.color_group_name,
-        color: getEventColor(event) });
-    }
-  }
-  return [
-    { key: 'all', label: 'Все', color: '#E5E7EB' },
-    { key: 'rehearsals', label: 'Репетиции', color: '#DDD6FE' },
-    { key: 'shows', label: 'Спектакли', color: PERFORMANCE_COLOR },
-    ...[...shows.values()].sort((a, b) => a.label.localeCompare(b.label, 'ru')),
-    ...[...recurring.values()].sort((a, b) => a.label.localeCompare(b.label, 'ru')),
-    { key: 'other', label: 'Прочее', color: OTHER_COLOR },
-  ];
+  // Stable IDs keep colors through renames, aliases and date changes.
+  const id = event.event_type === 'rehearsal' && event.show_id
+    ? event.show_id : event.color_group_id;
+  if (!id) return OTHER_COLOR;
+  const hue = ((Number(id) * 103.1308) % 270 + 180) % 360;
+  // Recurring groups and catalog shows have equal visual weight.
+  return `hsl(${hue.toFixed(2)}, 65%, 70%)`;
 }
 
 export function matchesCalendarFilter(event, filter) {
-  return filter === 'all' || (filter === 'rehearsals'
-    ? event.event_type === 'rehearsal' : getEventGroup(event) === filter);
+  if (filter === 'all') return true;
+  if (filter === 'rehearsals') return event.event_type === 'rehearsal';
+  if (filter === 'shows') return event.event_type === 'performance';
+  if (filter === 'other') return !['rehearsal', 'performance'].includes(event.event_type);
+  return getEventGroup(event) === filter;
+}
+
+// Call with the same ongoing/upcoming events that can appear in the list.
+export function calendarFilters(events) {
+  return [
+    { key: 'all', label: 'Все' },
+    { key: 'rehearsals', label: 'Репетиции' },
+    { key: 'shows', label: 'Спектакли' },
+    { key: 'other', label: 'Прочее' },
+  ].filter(filter => filter.key === 'all' || events.some(event => matchesCalendarFilter(event, filter.key)));
+}
+
+export function getEventDetailKey(event) {
+  if (event.event_type === 'performance') {
+    return event.show_id ? `performance:${event.show_id}` : `title:${event.show_name || event.title}`;
+  }
+  return getEventGroup(event);
+}
+
+export function calendarDetails(events) {
+  const groups = new Map();
+  for (const event of events) {
+    const key = getEventDetailKey(event);
+    if (!groups.has(key)) groups.set(key, {
+      key,
+      label: event.event_type === 'performance' ? (event.show_name || event.title)
+        : event.event_type === 'rehearsal' && event.show_id ? event.show_name
+          : event.color_group_name || 'Остальные события',
+      count: 0,
+    });
+    groups.get(key).count += 1;
+  }
+  return [...groups.values()].sort((a, b) => a.label.localeCompare(b.label, 'ru'));
 }

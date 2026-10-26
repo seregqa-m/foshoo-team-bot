@@ -90,14 +90,14 @@ test('puts known show titles in a separate group with a matching color', async (
   expect(titles()).toHaveLength(1);
   await act(async () => button('Спектакли').click());
   expect(titles()).toEqual(['ГАМЛЕТ']);
-  expect(container.querySelectorAll('rect[fill-opacity]')[2].getAttribute('fill')).toBe('#6EE7B7');
-  await act(async () => button('Гамлет').click());
+  expect(container.querySelectorAll('rect[fill-opacity]')[2].getAttribute('fill')).toBe('#52C99A');
+  await act(async () => button('Репетиции').click());
   expect(titles()).toEqual(['Гамлет [Реп] — текущая репетиция']);
   await act(async () => button('Прочее').click());
   expect(titles()).toEqual(['Встреча', 'Мастерская']);
   const blocks = container.querySelectorAll('rect[fill-opacity]');
-  expect(blocks[3].getAttribute('fill')).toBe('#D1D5DB');
-  expect(blocks[4].getAttribute('fill')).toBe('#D1D5DB');
+  expect(blocks[3].getAttribute('fill')).toBe('#B5BDC9');
+  expect(blocks[4].getAttribute('fill')).toBe('#B5BDC9');
   expect(button('🗳️ Опрос')).toBeUndefined();
   await act(async () => button('Все').click());
   expect(titles()).toHaveLength(4);
@@ -113,8 +113,8 @@ test('a bracketed rehearsal has its show color and a launch button while perform
   await act(async () => root.render(<CalendarView userId={42} isAdmin />));
   expect(titles()).toEqual(['Репетиция [Цианистый Калий]']);
   const colors = [...container.querySelectorAll('rect[fill-opacity]')].map(el => el.getAttribute('fill'));
-  expect(colors[0]).not.toBe('#6EE7B7');
-  expect(colors.slice(1)).toEqual(['#6EE7B7', '#6EE7B7']);
+  expect(colors[0]).not.toBe('#52C99A');
+  expect(colors.slice(1)).toEqual(['#52C99A', '#52C99A']);
   await act(async () => button('🗳️ Опрос').click());
   expect(calendarApi.launchPoll).toHaveBeenCalledWith(10, 42, null);
   await act(async () => button('Спектакли').click());
@@ -122,7 +122,7 @@ test('a bracketed rehearsal has its show color and a launch button while perform
   expect(button('🗳️ Опрос')).toBeUndefined();
 });
 
-test('recurring groups get a pale filter while gray Other contains only ungrouped events', async () => {
+test('recurring groups are secondary choices inside Other with equal color intensity', async () => {
   calendarApi.getEvents.mockResolvedValue({ data: { events: [
     { ...event(10, 'Лаба Игошиной', '19:00', '21:00'), color_group_id: 3, color_group_name: 'Лаба Игошиной' },
     event(11, 'Уборка', '19:00', '21:00'),
@@ -130,12 +130,15 @@ test('recurring groups get a pale filter while gray Other contains only ungroupe
     event(13, 'Аренда Денис', '19:00', '21:00'),
   ] } });
   await act(async () => root.render(<CalendarView userId={42} isAdmin />));
-  await act(async () => button('Лаба Игошиной').click());
+  expect([...container.querySelectorAll('.calendar-filter')].map(b => b.textContent)).toEqual(['Все', 'Прочее']);
+  await act(async () => button('Прочее').click());
+  expect(titles()).toHaveLength(4);
+  await act(async () => Simulate.change(container.querySelector('[aria-label="Уточнить события"]'), { target: { value: 'color:3' } }));
   expect(titles()).toEqual(['Лаба Игошиной']);
   expect(button('🗳️ Опрос')).toBeUndefined();
-  expect(container.querySelector('rect[fill-opacity]').getAttribute('fill')).toMatch(/55%, 89%/);
+  expect(container.querySelector('rect[fill-opacity]').getAttribute('fill')).toMatch(/65%, 70%/);
   await act(async () => button('Прочее').click());
-  expect(titles()).toEqual(['Уборка', 'мк Розанова', 'Аренда Денис']);
+  expect(titles()).toEqual(['Лаба Игошиной', 'Уборка', 'мк Розанова', 'Аренда Денис']);
   expect(button('🗳️ Опрос')).toBeUndefined();
 });
 
@@ -145,6 +148,29 @@ test('removes an ended event from the list without reloading but keeps it faded 
   const ongoing = [...container.querySelectorAll('.event-card')].find(el => el.textContent.includes('текущая репетиция'));
   expect(ongoing).toBeUndefined();
   expect(container.querySelectorAll('rect[fill-opacity]')[1].getAttribute('fill-opacity')).toBe('0.35');
+  expect(button('Репетиции')).toBeUndefined();
+  expect(button('Все').getAttribute('aria-pressed')).toBe('true');
+  expect(titles()).toHaveLength(3);
+});
+
+test('historical groups do not create empty filters or secondary choices', async () => {
+  calendarApi.getEvents.mockResolvedValue({ data: { events: [
+    { ...event(1, 'Прошлый показ', '10:00', '11:00'), event_type: 'performance' },
+    { ...event(2, 'Старый состав [Реп]', '10:00', '11:00'), event_type: 'rehearsal', show_id: 1, show_name: 'Старый состав' },
+    { ...event(3, 'Гамлет [Реп]', '19:00', '21:00'), event_type: 'rehearsal', show_id: 2, show_name: 'Гамлет' },
+    { ...event(4, 'Урод [Реп]', '19:00', '21:00'), event_type: 'rehearsal', show_id: 3, show_name: 'Урод' },
+  ] } });
+  await act(async () => root.render(<CalendarView />));
+  expect(button('Спектакли')).toBeUndefined();
+  expect(button('Прочее')).toBeUndefined();
+  const select = container.querySelector('[aria-label="Уточнить события"]');
+  expect([...select.options].map(option => option.textContent)).toEqual(['Все названия · 2', 'Гамлет · 1', 'Урод · 1']);
+  expect(container.querySelectorAll('rect[fill-opacity]')).toHaveLength(4);
+  await act(async () => Simulate.change(select, { target: { value: 'show:3' } }));
+  expect(titles()).toEqual(['Урод [Реп]']);
+  await act(async () => button('Все').click());
+  expect(titles()).toHaveLength(2);
+  expect(container.querySelector('[aria-label="Уточнить события"]')).toBeNull();
 });
 
 test('shows the October 11 performance alias in the show filter and calendar', async () => {
@@ -154,13 +180,14 @@ test('shows the October 11 performance alias in the show filter and calendar', a
   }] } });
   client.get.mockResolvedValue({ data: {} }); // Explicit types work without the Sheets catalog.
   await act(async () => root.render(<CalendarView userId={42} isAdmin />));
-  expect(titles()).toEqual([]);
+  expect(button('Репетиции')).toBeUndefined();
+  expect(titles()).toEqual(['ЛГ[Спект]']);
   await act(async () => button('Спектакли').click());
   expect(titles()).toEqual(['ЛГ[Спект]']);
   expect(container.querySelector('.event-card').textContent).toContain('Любовь Громова');
   expect(container.querySelector('.event-card').textContent).not.toContain('🗳️ Опрос');
   await act(async () => button('›').click());
-  expect(container.querySelector('rect[fill-opacity]').getAttribute('fill')).toBe('#6EE7B7');
+  expect(container.querySelector('rect[fill-opacity]').getAttribute('fill')).toBe('#52C99A');
 });
 
 test('different shows have distinct rehearsal filters and colors independent of the title', async () => {
@@ -174,7 +201,7 @@ test('different shows have distinct rehearsal filters and colors independent of 
   expect(container.querySelector('.event-card').textContent).toContain('🗳️ Опрос');
   const blocks = container.querySelectorAll('rect[fill-opacity]');
   expect(blocks[0].getAttribute('fill')).not.toBe(blocks[1].getAttribute('fill'));
-  await act(async () => button('Любовь Громова').click());
+  await act(async () => Simulate.change(container.querySelector('[aria-label="Уточнить события"]'), { target: { value: 'show:11' } }));
   expect(titles()).toEqual(['ЛГ[Реп]']);
   expect(button('🗳️ Опрос')).toBeDefined();
   expect(button('Труппа 1')).toBeUndefined();

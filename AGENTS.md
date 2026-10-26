@@ -132,8 +132,15 @@ Other events use persistent title groups (`calendar_color_groups` and
 rolling -90/+60-day window. Normalization and conservative Levenshtein matching
 (>=90%, <=2 edits, complete-link, ambiguity separated) recognize variants.
 Short titles, numbers and workshop teacher names are protected. These groups
-use pale colors; rare events, rental and cleaning stay gray. Lab events follow
+use the same saturation/lightness as catalog rehearsals; rare events, rental and cleaning stay gray. Lab events follow
 the same recurrence rule. Grouping never changes classification or poll routing.
+Primary calendar filters are only All/Rehearsals/Performances/Other, derived
+from the same ongoing/upcoming events as the list, excluding history. Names
+are secondary dropdown choices with counts within the selected type; Other
+includes recurring groups. Missing selections reset to All/all names. The
+week grid retains full history and past-event opacity. Filter selection is
+explicitly dark; cards show text type labels. External performances can use
+`[Спект]` without a catalog entry or chat; catalog chat IDs are optional.
 
 All API calls go through `frontend/src/api/client.js` (axios instance). API base URL is configured via `REACT_APP_API_URL` env var (defaults to `http://127.0.0.1:8000`).
 

@@ -2,7 +2,8 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import * as calendarApi from '../api/calendar';
 import client from '../api/client';
 import PlanningView from './PlanningView';
-import { calendarFilters, getEventColor, matchesCalendarFilter } from './calendarPresentation';
+import { calendarFilters, calendarDetails, getEventDetailKey, getEventColor, matchesCalendarFilter } from './calendarPresentation';
+import './CalendarView.css';
 
 const MONTHS = ['янв','фев','мар','апр','май','июн','июл','авг','сен','окт','ноя','дек'];
 const DAYS   = ['вс','пн','вт','ср','чт','пт','сб'];
@@ -268,6 +269,8 @@ function EventCard({ event, userId, onEdit, isAdmin, isPollable, isPast, poll, o
       </div>
       <div className="event-body">
         <div className="event-title" style={{ paddingRight: isAdmin ? 24 : 0 }}>{event.title}</div>
+        <span className="event-type-label">{event.event_type === 'performance' ? 'Спектакль'
+          : event.event_type === 'rehearsal' ? 'Репетиция' : 'Прочее'}</span>
         {(event.poll_show_name || event.show_name) && !event.title.toLowerCase().includes((event.poll_show_name || event.show_name).toLowerCase()) && (
           <div className="event-meta">{event.poll_show_name || event.show_name}</div>
         )}
@@ -477,6 +480,7 @@ function EventModal({ event, onClose, onSaved, onDeleted }) {
             <label className="form-label">Название *</label>
             <input className="form-input" value={form.title} onChange={e => set('title', e.target.value)} placeholder="Репетиция «Гамлет»" required />
             <div className="event-meta">Репетиция: Репетиция [Цианистый Калий] или Цианистый Калий [Реп]. Показ: название спектакля без типа или с меткой [Спект].</div>
+            <div className="event-meta">Для внешнего показа укажите, например, «Фрекен Жюли [Спект]». Чат и добавление в каталог для такой метки не нужны.</div>
           </div>
           <div className="form-group">
             <label className="form-label">Начало *</label>
@@ -526,6 +530,7 @@ export default function CalendarView({ userId, isAdmin, active = true, dataVersi
   const [error, setError] = useState(null);
   const [modal, setModal] = useState(null); // null | 'new' | event object
   const [filter, setFilter] = useState('rehearsals');
+  const [detailFilter, setDetailFilter] = useState('');
   const [planning, setPlanning] = useState(!!initialPlanningMonth);
   const [calendarUrl, setCalendarUrl] = useState(null);
   const [pollSummary, setPollSummary] = useState({});
@@ -583,13 +588,22 @@ export default function CalendarView({ userId, isAdmin, active = true, dataVersi
     setModal({ start_time: fmtDt(dt), end_time: fmtDt(end) });
   };
 
-  const filters = calendarFilters(events);
-  const effectiveFilter = filters.some(f => f.key === filter) ? filter : 'rehearsals';
-  const filteredEvents = events.filter(e => matchesCalendarFilter(e, effectiveFilter));
   // History remains in WeekCalendar; the list shows ongoing/upcoming events.
-  const visibleEvents = filteredEvents
+  const upcomingEvents = events
     .filter(e => new Date(e.end_time).getTime() > now)
     .sort((a, b) => new Date(a.start_time) - new Date(b.start_time));
+  const filters = calendarFilters(upcomingEvents);
+  const effectiveFilter = filters.some(f => f.key === filter) ? filter : 'all';
+  const filteredEvents = upcomingEvents.filter(e => matchesCalendarFilter(e, effectiveFilter));
+  const details = effectiveFilter === 'all' ? [] : calendarDetails(filteredEvents);
+  const effectiveDetail = details.length > 1 && details.some(item => item.key === detailFilter) ? detailFilter : '';
+  const visibleEvents = filteredEvents.filter(e => !effectiveDetail || getEventDetailKey(e) === effectiveDetail);
+  // Once a filter disappears, do not silently revive it after a refresh.
+  useEffect(() => {
+    if (loading) return;
+    if (filter !== effectiveFilter) setFilter(effectiveFilter);
+    if (detailFilter !== effectiveDetail) setDetailFilter(effectiveDetail);
+  }, [loading, filter, effectiveFilter, detailFilter, effectiveDetail]);
 
   if (planning) return <PlanningView onClose={() => setPlanning(false)} dataVersion={dataVersion} initialMonth={initialPlanningMonth} isAdmin={isAdmin} />;
 
@@ -624,22 +638,27 @@ export default function CalendarView({ userId, isAdmin, active = true, dataVersi
         onSlotClick={handleSlotClick}
       />
 
-      <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
+      <div className="calendar-filters" role="group" aria-label="Тип событий">
         {filters.map(f => (
           <button
             key={f.key}
-            onClick={() => setFilter(f.key)}
-            style={{
-              padding: '4px 12px', borderRadius: 16, fontSize: 13, cursor: 'pointer',
-              border: effectiveFilter === f.key ? '2px solid #555' : '1.5px solid transparent',
-              background: f.color,
-              color: '#333', fontWeight: effectiveFilter === f.key ? 700 : 400,
-            }}
+            onClick={() => { setFilter(f.key); setDetailFilter(''); }}
+            className="calendar-filter"
+            aria-pressed={effectiveFilter === f.key}
           >
             {f.label}
           </button>
         ))}
       </div>
+      {details.length > 1 && <label className="calendar-detail-filter">
+        {effectiveFilter === 'shows' || effectiveFilter === 'rehearsals' ? 'Спектакль / название' : 'Название'}
+        <select className="select-input" aria-label="Уточнить события" value={effectiveDetail}
+          onChange={e => setDetailFilter(e.target.value)}>
+          <option value="">Все названия · {filteredEvents.length}</option>
+          {details.map(item => <option key={item.key} value={item.key}>{item.label} · {item.count}</option>)}
+        </select>
+      </label>}
+      <p className="calendar-list-caption">Текущие и ближайшие 60 дней · Событий: {visibleEvents.length}</p>
 
       {error && <div className="alert alert-error">{error}</div>}
       {notice && <div role="status" className="alert">{notice}</div>}
