@@ -14,7 +14,8 @@ from .models import CalendarEvent
 from .services import CalendarService
 from .google_client import GoogleCalendarClient
 from .classification import classify_event
-from modules.theater.routing import saved_event_show, ShowSelectionRequired
+from .colors import color_groups, normalize_title, always_gray
+from modules.theater.routing import saved_event_show, show_aliases, match_show, ShowSelectionRequired
 from modules.theater.models import TheaterShow, TheaterChat
 import os
 
@@ -68,14 +69,29 @@ def get_calendar_meta():
 def get_events(days: int = 30, db: Session = Depends(get_db), include_past: bool = False):
     """Получить события; include_past добавляет сохранённую историю."""
     service = CalendarService(db)
+    aliases = show_aliases(db)
+    colors = color_groups(db, aliases)
     events = service.get_upcoming_events(days, include_past=include_past)
+
+    def classification(event):
+        result = classify_event(event.title, aliases)
+        saved = saved_event_show(db, event)
+        show = saved or match_show(event.title, aliases)
+        result["show_id"] = show.id if show else None
+        result["show_name"] = show.name if show else None
+        result["poll_show_name"] = saved.name if saved else None
+        result.update(color_group_id=None, color_group_name=None)
+        title = normalize_title(event.title)
+        if result['event_type'] != 'performance' and not (result['event_type'] == 'rehearsal' and show) and not always_gray(title):
+            result.update(colors.get(title, {}))
+        return result
+
     return {
         "events": [
             {
                 "id": e.id,
                 "title": e.title,
-                **classify_event(e.title),
-                "poll_show_name": show.name if (show := saved_event_show(db, e)) else None,
+                **classification(e),
                 "description": e.description,
                 "start_time": e.start_time.isoformat(),
                 "end_time": e.end_time.isoformat(),

@@ -1,7 +1,7 @@
 """Destinations come only from the superadmin's show–chat table."""
 import re
 from fastapi import HTTPException
-from modules.calendar.classification import SHOW_ALIASES
+from modules.calendar.classification import SHOW_ALIASES, event_name_text
 from .models import TheaterShow, TheaterShowAlias
 from .services import normalize_name
 
@@ -16,17 +16,24 @@ def show_aliases(db):
     return aliases
 
 
-def resolve_show(db, title, *, exact=False):
-    aliases = show_aliases(db)
+def match_show(title, aliases, *, exact=False):
+    """Resolve a unique catalog show using an already loaded alias map."""
     key = normalize_name(title)
     if key in aliases:
         return aliases[key]
     if not exact:
-        key = re.sub(r'\[[^\[\]]*\]', ' ', key)
+        key = event_name_text(title)
         matches = {s.id: s for alias, s in aliases.items()
                    if re.search(r'(?<!\w)' + re.escape(alias) + r'(?!\w)', key)}
         if len(matches) == 1:
             return next(iter(matches.values()))
+    return None
+
+
+def resolve_show(db, title, *, exact=False):
+    show = match_show(title, show_aliases(db), exact=exact)
+    if show:
+        return show
     raise HTTPException(409, f'Укажите спектакль из «Спектакли и чаты» в названии события: {title}')
 
 

@@ -498,6 +498,15 @@ class SheetsClient:
                           "date": date, "comment": comment})
         return items
 
+    def get_attendance_roster(self) -> dict:
+        result = self.api.values().batchGet(
+            spreadsheetId=self.spreadsheet_id,
+            ranges=[f"'{SETTINGS_SHEET}'", "'Составы спектаклей'!A:C"],
+        ).execute().get('valueRanges', [])
+        if len(result) != 2 or not result[0].get('values') or not result[1].get('values'):
+            raise ValueError('Не удалось прочитать труппу и составы')
+        return {'troupe': result[0]['values'], 'casts': result[1]['values']}
+
     def get_planning_data(self) -> dict:
         result = self.api.values().batchGet(
             spreadsheetId=self.spreadsheet_id,

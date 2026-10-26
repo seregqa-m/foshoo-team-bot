@@ -17,7 +17,7 @@ with patch.dict(os.environ, {'BOT_TOKEN': '123456:offline-test-token', 'DATABASE
     from modules.assistant.tools import _update_settings_handler
 
 from fastapi import HTTPException
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
 
@@ -27,11 +27,14 @@ class ShowSettingsTests(unittest.IsolatedAsyncioTestCase):
         Base.metadata.create_all(self.engine)
         self.Session = sessionmaker(bind=self.engine)
         self.db = self.Session()
-        self.db.add(NotificationSetting(user_id=42, current_show='Старый спектакль', troupe_filter='труппа 1',
+        self.db.add(NotificationSetting(user_id=42, current_show='Старый спектакль',
                                         poll_reminders_enabled=True, reminder_time='00:00'))
         from modules.theater.models import TheaterShow
         self.db.add_all([TheaterShow(name=name, normalized_name=name.lower(), telegram_chat_id=chat)
                          for name, chat in [('Любовь Громова', -1001), ('Урод', -1002)]])
+        self.db.commit()
+        # Existing databases may retain this column, but no running code reads it.
+        self.db.execute(text("ALTER TABLE notification_settings ADD COLUMN troupe_filter TEXT DEFAULT 'труппа 1'"))
         self.db.commit()
         for target, value in [('config.ADMIN_ID', 42), ('config.GROUP_CHAT_ID', -1001),
                               ('modules.notifications.router.ADMIN_ID', 42),
@@ -54,9 +57,11 @@ class ShowSettingsTests(unittest.IsolatedAsyncioTestCase):
         settings = self.db.query(NotificationSetting).one()
         self.assertEqual(settings.reminder_time, '17:30')
         self.assertEqual(settings.current_show, 'Старый спектакль')
-        self.assertEqual(settings.troupe_filter, 'труппа 1')
-        # Existing calendar matching continues to use the original value.
-        self.assertEqual(_collect_settings(self.db)['troupe_filter'], 'труппа 1')
+        self.assertFalse(hasattr(settings, 'troupe_filter'))
+        self.assertEqual(self.db.execute(text('SELECT troupe_filter FROM notification_settings')).scalar(), 'труппа 1')
+        self.assertNotIn('troupe_filter', _collect_settings(self.db))
+        from auth_router import app_config
+        self.assertNotIn('troupe_filter', await app_config())
         with self.assertRaises(HTTPException) as error:
             await _update_settings_handler(self.db, {'current_show': 'Новый спектакль'}, {})
         self.assertEqual(error.exception.status_code, 400)

@@ -35,6 +35,9 @@ from aiogram.methods import SendPoll
 
 class SharedAttendanceTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
+        bot_identity = patch('bot.bot.me', AsyncMock(return_value=NS(username='test_theater_bot')))
+        bot_identity.start()
+        self.addCleanup(bot_identity.stop)
         self.engine = create_engine('sqlite://', connect_args={'check_same_thread': False}, poolclass=StaticPool)
         Base.metadata.create_all(self.engine)
         self.Session = sessionmaker(bind=self.engine); self.db = self.Session()
@@ -163,7 +166,8 @@ class SharedAttendanceTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(pin.call_args.kwargs['chat_id'], -100111); self.assertEqual(stop.call_args.kwargs['chat_id'], -100111)
 
     async def test_unknown_ambiguous_or_unmapped_show_never_falls_back(self):
-        for title in ['Труппа 1', 'Калий и Урод [Реп]', 'Неизвестный [Реп]']:
+        for title in ['Разбор [Реп]', 'Калий и Урод [Реп]', 'Неизвестный [Реп]',
+                      'Репетиция [Калий и Урод]', 'Репетиция [Неизвестный]']:
             event, _ = self.regular(title)
             with self.assertRaises(HTTPException), patch('bot.bot.send_poll', self.send):
                 await publish_event(self.db, main.bot, event, 1)
@@ -171,10 +175,70 @@ class SharedAttendanceTests(unittest.IsolatedAsyncioTestCase):
         self.a.telegram_chat_id = None; self.db.commit()
         with self.assertRaises(HTTPException): event_destination(self.db, self.regular()[0])
 
+    async def test_bracketed_show_routes_manual_poll_through_catalog_alias(self):
+        self.db.add(TheaterShowAlias(normalized_name='цианистый калий', show_id=self.a.id))
+        event, _ = self.regular('Репетиция [Цианистый Калий]')
+        event.end_time = datetime(2026, 10, 7, 20)
+        self.db.commit()
+        with patch('modules.calendar.services.local_now', return_value=as_local(datetime(2026, 10, 6))):
+            data = get_events(db=self.db)['events'][0]
+        self.assertEqual((data['event_type'], data['show_name']), ('rehearsal', 'Калий'))
+        with patch('bot.bot.send_poll', self.send):
+            result = await launch_poll_for_event(event.id, 1, self.db)
+        self.assertEqual(result['telegram_chat_id'], -100111)
+        self.send.assert_awaited_once()
+        self.assertIn('Калий:', self.send.call_args.kwargs['question'])
+
+    async def test_bracketed_rehearsal_auto_polls_and_reminds_but_performances_do_not(self):
+        self.seed_members()
+        rehearsal, _ = self.regular('Репетиция [Калий]')
+        self.regular('Урод')
+        self.regular('Спектакль [Калий]')
+        self.db.add(NotificationSetting(user_id=1, poll_reminders_enabled=True,
+                                        reminder_time='00:00', reminder_days_before=3))
+        self.db.commit()
+        with patch('main.SessionLocal', self.Session), patch('config.ADMIN_ID', 1), \
+             patch('main.local_now', return_value=as_local(datetime(2026, 10, 6, 19))), \
+             patch('bot.bot.send_poll', self.send), \
+             patch('bot.bot.send_message', AsyncMock()) as send, \
+             patch('bot.bot.pin_chat_message', AsyncMock()):
+            await main._auto_create_polls()
+            await main._send_poll_reminders()
+        self.send.assert_awaited_once()
+        self.assertEqual(self.send.call_args.kwargs['chat_id'], -100111)
+        send.assert_awaited_once()
+        self.assertEqual(send.call_args.kwargs['chat_id'], -100111)
+        self.assertEqual(self.db.query(Poll).filter_by(delivery_state='sent').one().calendar_event_id,
+                         rehearsal.id)
+
+    async def test_group_words_never_grant_or_block_poll_eligibility(self):
+        self.db.add(NotificationSetting(user_id=1, poll_reminders_enabled=True,
+                                        reminder_time='00:00', reminder_days_before=3))
+        accepted, _ = self.regular('Труппа 2 — Репетиция [Калий]')
+        rejected = []
+        for title in ['Труппа 1', 'Труппа 2', 'Калий', 'Калий [Спект]']:
+            event, _ = self.regular(title)
+            event.poll_show_id = self.a.id
+            event.poll_show_title = title
+            rejected.append(event)
+        self.db.commit()
+        with patch('bot.bot.send_poll', self.send):
+            for event in rejected:
+                with self.assertRaises(HTTPException) as error:
+                    await launch_poll_for_event(event.id, 1, self.db)
+                self.assertEqual(error.exception.status_code, 409)
+            self.send.assert_not_awaited()
+            with patch('main.SessionLocal', self.Session), patch('config.ADMIN_ID', 1), \
+                 patch('main.local_now', return_value=as_local(datetime(2026, 10, 6, 19))):
+                await main._auto_create_polls()
+            self.send.assert_awaited_once()
+            sent = self.db.query(Poll).filter_by(delivery_state='sent').one()
+            self.assertEqual(sent.calendar_event_id, accepted.id)
+
     async def test_unknown_event_offers_catalog_without_publishing(self):
         self.db.add(TheaterShow(name='Без чата', normalized_name='без чата'))
         self.db.commit()
-        for title in ['Труппа 1', 'Калий и Урод [Реп]']:
+        for title in ['Разбор [Реп]', 'Калий и Урод [Реп]']:
             event, _ = self.regular(title)
             count = self.db.query(Poll).count()
             with patch('bot.bot.send_poll', self.send), self.assertRaises(HTTPException) as error:
@@ -222,7 +286,7 @@ class SharedAttendanceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(data['poll_show_name'], 'Урод')
 
     async def test_selection_rechecks_chat_and_cannot_override_known_or_cancelled_event(self):
-        event, _ = self.regular('Труппа 1')
+        event, _ = self.regular('Разбор [Реп]')
         self.b.telegram_chat_id = None
         self.db.commit()
         with patch('bot.bot.send_poll', self.send):
@@ -243,7 +307,7 @@ class SharedAttendanceTests(unittest.IsolatedAsyncioTestCase):
         self.send.assert_not_awaited()
 
     async def test_renamed_event_requires_resolution_again_and_old_poll_keeps_destination(self):
-        event, _ = self.regular('Труппа 1')
+        event, _ = self.regular('Разбор [Реп]')
         with patch('bot.bot.send_poll', self.send):
             result = await launch_poll_for_event(event.id, 1, self.db, LaunchPollRequest(show_id=self.a.id))
         old_poll = self.db.get(Poll, result['poll_id'])
@@ -258,7 +322,7 @@ class SharedAttendanceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(old_poll.telegram_chat_id, -100111)
 
     async def test_selection_is_kept_on_rejected_send_and_retry_does_not_duplicate(self):
-        event, _ = self.regular('Труппа 1')
+        event, _ = self.regular('Разбор [Реп]')
         denied = TelegramForbiddenError(method=SendPoll(chat_id=-100111, question='?', options=['a', 'b']), message='forbidden')
         with patch('bot.bot.send_poll', AsyncMock(side_effect=denied)):
             with self.assertRaises(HTTPException):
@@ -276,7 +340,7 @@ class SharedAttendanceTests(unittest.IsolatedAsyncioTestCase):
         from core.access import authorize_api, TelegramUser
         from core.database import get_db
         from modules.calendar.router import router
-        event, _ = self.regular('Труппа 1')
+        event, _ = self.regular('Разбор [Реп]')
         app = FastAPI(dependencies=[Depends(authorize_api)])
         app.include_router(router)
         def database():
@@ -303,7 +367,7 @@ class SharedAttendanceTests(unittest.IsolatedAsyncioTestCase):
 
     def test_calendar_selection_migration_preserves_events_and_saved_choice(self):
         from sqlalchemy import text
-        event, _ = self.regular('Труппа 1')
+        event, _ = self.regular('Разбор [Реп]')
         event_id, show_id = event.id, self.a.id
         self.db.close()
         with self.engine.begin() as conn:
@@ -312,7 +376,7 @@ class SharedAttendanceTests(unittest.IsolatedAsyncioTestCase):
         with patch('main.engine', self.engine):
             main.run_migrations()
             restored = self.db.get(CalendarEvent, event_id)
-            self.assertEqual(restored.title, 'Труппа 1')
+            self.assertEqual(restored.title, 'Разбор [Реп]')
             self.assertIsNone(restored.poll_show_id)
             restored.poll_show_id = show_id
             restored.poll_show_title = restored.title

@@ -10,7 +10,7 @@ jest.mock('../api/calendar', () => ({
   getEvents: jest.fn(), launchPoll: jest.fn(), getEventEditor: jest.fn(),
   updateEvent: jest.fn(), createEvent: jest.fn(), deleteEvent: jest.fn(),
 }));
-jest.mock('./PlanningView', () => () => null);
+jest.mock('./PlanningView', () => ({ initialMonth, onClose, isAdmin }) => <div data-planning-month={initialMonth} data-can-assign={!!isAdmin}><button onClick={onClose}>К расписанию</button></div>);
 
 let root, container;
 const event = (id, title, start, end) => ({
@@ -18,6 +18,27 @@ const event = (id, title, start, end) => ({
 });
 const button = text => [...container.querySelectorAll('button')].find(b => b.textContent === text);
 const titles = () => [...container.querySelectorAll('.event-title')].map(el => el.textContent);
+
+test('a planning launch opens the chosen month and allows returning to the calendar', async () => {
+  await act(async () => root.render(<CalendarView userId={42} isAdmin initialPlanningMonth="2026-12" />));
+  expect(container.querySelector('[data-planning-month]').dataset.planningMonth).toBe('2026-12');
+  expect(container.querySelector('[data-can-assign]').dataset.canAssign).toBe('true');
+  await act(async () => button('К расписанию').click());
+  expect(container.querySelector('[data-planning-month]')).toBeNull();
+  expect(container.querySelector('.page-title').textContent).toBe('Расписание');
+});
+
+test('a planning launch opens read-only planning for an ordinary member', async () => {
+  await act(async () => root.render(<CalendarView userId={42} isAdmin={false} initialPlanningMonth="2026-12" />));
+  expect(container.querySelector('[data-planning-month]').dataset.planningMonth).toBe('2026-12');
+  expect(container.querySelector('[data-can-assign]').dataset.canAssign).toBe('false');
+});
+
+test('an ordinary member can also open planning from the calendar', async () => {
+  await act(async () => root.render(<CalendarView userId={42} isAdmin={false} />));
+  await act(async () => button('Планирование составов →').click());
+  expect(container.querySelector('[data-can-assign]').dataset.canAssign).toBe('false');
+});
 
 beforeEach(() => {
   global.IS_REACT_ACT_ENVIRONMENT = true;
@@ -36,11 +57,11 @@ beforeEach(() => {
   calendarApi.updateEvent.mockResolvedValue({ data: { synced: true } });
   client.get.mockImplementation(url => Promise.resolve({ data: url.endsWith('/shows') ? { shows: ['Гамлет', ''] } : {} }));
   calendarApi.getEvents.mockResolvedValue({ data: { events: [
-    event(1, 'Труппа 1 — вчерашний разбор', '10:00', '11:00'),
-    event(2, 'Труппа 1 — текущая репетиция', '14:00', '16:00'),
-    event(3, 'Труппа 1 — ГАМЛЕТ', '19:00', '21:00'),
-    event(4, 'Труппа 2', '17:00', '18:00'),
-    event(5, 'Лаба', '18:00', '19:00'),
+    { ...event(1, 'Гамлет [Реп] — вчерашний разбор', '10:00', '11:00'), event_type: 'rehearsal', show_id: 10, show_name: 'Гамлет' },
+    { ...event(2, 'Гамлет [Реп] — текущая репетиция', '14:00', '16:00'), event_type: 'rehearsal', show_id: 10, show_name: 'Гамлет' },
+    { ...event(3, 'ГАМЛЕТ', '19:00', '21:00'), event_type: 'performance', show_id: 10, show_name: 'Гамлет' },
+    event(4, 'Встреча', '17:00', '18:00'),
+    event(5, 'Мастерская', '18:00', '19:00'),
   ] } });
 });
 afterEach(() => {
@@ -53,7 +74,7 @@ afterEach(() => {
 test('hides ended events only from the list, keeping ongoing events and editable history in the calendar', async () => {
   await act(async () => root.render(<CalendarView userId={42} isAdmin />));
   expect(calendarApi.getEvents).toHaveBeenCalledWith(60, true);
-  expect(titles()).toEqual(['Труппа 1 — текущая репетиция']);
+  expect(titles()).toEqual(['Гамлет [Реп] — текущая репетиция']);
   const cards = container.querySelectorAll('.event-card');
   expect(cards[0].style.opacity).toBe('1');
   expect(cards).toHaveLength(1);
@@ -65,17 +86,57 @@ test('hides ended events only from the list, keeping ongoing events and editable
 });
 
 test('puts known show titles in a separate group with a matching color', async () => {
-  await act(async () => root.render(<CalendarView trouFilter="ТРУППА 1" />));
+  await act(async () => root.render(<CalendarView />));
   expect(titles()).toHaveLength(1);
   await act(async () => button('Спектакли').click());
-  expect(titles()).toEqual(['Труппа 1 — ГАМЛЕТ']);
+  expect(titles()).toEqual(['ГАМЛЕТ']);
   expect(container.querySelectorAll('rect[fill-opacity]')[2].getAttribute('fill')).toBe('#6EE7B7');
-  await act(async () => button('Труппа 2').click());
-  expect(titles()).toEqual(['Труппа 2']);
-  await act(async () => button('Лаба').click());
-  expect(titles()).toEqual(['Лаба']);
+  await act(async () => button('Гамлет').click());
+  expect(titles()).toEqual(['Гамлет [Реп] — текущая репетиция']);
+  await act(async () => button('Прочее').click());
+  expect(titles()).toEqual(['Встреча', 'Мастерская']);
+  const blocks = container.querySelectorAll('rect[fill-opacity]');
+  expect(blocks[3].getAttribute('fill')).toBe('#D1D5DB');
+  expect(blocks[4].getAttribute('fill')).toBe('#D1D5DB');
+  expect(button('🗳️ Опрос')).toBeUndefined();
   await act(async () => button('Все').click());
   expect(titles()).toHaveLength(4);
+});
+
+test('a bracketed rehearsal has its show color and a launch button while performances stay green', async () => {
+  calendarApi.getEvents.mockResolvedValue({ data: { events: [
+    { ...event(10, 'Репетиция [Цианистый Калий]', '19:00', '21:00'), event_type: 'rehearsal', show_id: 10, show_name: 'Цианистый Калий' },
+    { ...event(11, 'МИКРОПОЛЬ', '19:00', '21:00'), event_type: 'performance', show_name: 'МИКРОПОЛЬ' },
+    { ...event(12, 'Спектакль [Цианистый Калий]', '19:00', '21:00'), event_type: 'performance', show_name: 'Цианистый Калий' },
+  ] } });
+  calendarApi.launchPoll.mockResolvedValue({ data: { status: 'sent' } });
+  await act(async () => root.render(<CalendarView userId={42} isAdmin />));
+  expect(titles()).toEqual(['Репетиция [Цианистый Калий]']);
+  const colors = [...container.querySelectorAll('rect[fill-opacity]')].map(el => el.getAttribute('fill'));
+  expect(colors[0]).not.toBe('#6EE7B7');
+  expect(colors.slice(1)).toEqual(['#6EE7B7', '#6EE7B7']);
+  await act(async () => button('🗳️ Опрос').click());
+  expect(calendarApi.launchPoll).toHaveBeenCalledWith(10, 42, null);
+  await act(async () => button('Спектакли').click());
+  expect(titles()).toEqual(['МИКРОПОЛЬ', 'Спектакль [Цианистый Калий]']);
+  expect(button('🗳️ Опрос')).toBeUndefined();
+});
+
+test('recurring groups get a pale filter while gray Other contains only ungrouped events', async () => {
+  calendarApi.getEvents.mockResolvedValue({ data: { events: [
+    { ...event(10, 'Лаба Игошиной', '19:00', '21:00'), color_group_id: 3, color_group_name: 'Лаба Игошиной' },
+    event(11, 'Уборка', '19:00', '21:00'),
+    event(12, 'мк Розанова', '19:00', '21:00'),
+    event(13, 'Аренда Денис', '19:00', '21:00'),
+  ] } });
+  await act(async () => root.render(<CalendarView userId={42} isAdmin />));
+  await act(async () => button('Лаба Игошиной').click());
+  expect(titles()).toEqual(['Лаба Игошиной']);
+  expect(button('🗳️ Опрос')).toBeUndefined();
+  expect(container.querySelector('rect[fill-opacity]').getAttribute('fill')).toMatch(/55%, 89%/);
+  await act(async () => button('Прочее').click());
+  expect(titles()).toEqual(['Уборка', 'мк Розанова', 'Аренда Денис']);
+  expect(button('🗳️ Опрос')).toBeUndefined();
 });
 
 test('removes an ended event from the list without reloading but keeps it faded in the calendar', async () => {
@@ -102,16 +163,23 @@ test('shows the October 11 performance alias in the show filter and calendar', a
   expect(container.querySelector('rect[fill-opacity]').getAttribute('fill')).toBe('#6EE7B7');
 });
 
-test('explicit rehearsal type overrides a known show name and keeps troupe color', async () => {
+test('different shows have distinct rehearsal filters and colors independent of the title', async () => {
   calendarApi.getEvents.mockResolvedValue({ data: { events: [
-    { ...event(1, 'Труппа 1 — Гамлет[Реп]', '19:00', '21:00'), event_type: 'rehearsal' },
-    { ...event(2, 'ЛГ[Реп]', '19:00', '21:00'), event_type: 'rehearsal', show_name: 'Любовь Громова' },
+    { ...event(1, 'Гамлет[Реп]', '19:00', '21:00'), event_type: 'rehearsal', show_id: 10, show_name: 'Гамлет' },
+    { ...event(2, 'ЛГ[Реп]', '19:00', '21:00'), event_type: 'rehearsal', show_id: 11, show_name: 'Любовь Громова' },
     { ...event(3, 'Неизвестная премьера[Спект]', '19:00', '21:00'), event_type: 'performance' },
   ] } });
   await act(async () => root.render(<CalendarView userId={42} isAdmin />));
-  expect(titles()).toEqual(['Труппа 1 — Гамлет[Реп]', 'ЛГ[Реп]']);
+  expect(titles()).toEqual(['Гамлет[Реп]', 'ЛГ[Реп]']);
   expect(container.querySelector('.event-card').textContent).toContain('🗳️ Опрос');
-  expect(container.querySelector('rect[fill-opacity]').getAttribute('fill')).toBe('#C4B5FD');
+  const blocks = container.querySelectorAll('rect[fill-opacity]');
+  expect(blocks[0].getAttribute('fill')).not.toBe(blocks[1].getAttribute('fill'));
+  await act(async () => button('Любовь Громова').click());
+  expect(titles()).toEqual(['ЛГ[Реп]']);
+  expect(button('🗳️ Опрос')).toBeDefined();
+  expect(button('Труппа 1')).toBeUndefined();
+  expect(button('Труппа 2')).toBeUndefined();
+  expect(client.get).not.toHaveBeenCalledWith('/api/sheets/shows');
   await act(async () => button('Спектакли').click());
   expect(titles()).toEqual(['Неизвестная премьера[Спект]']);
 });

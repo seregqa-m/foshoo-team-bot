@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# On the existing Selectel server, as root:
+# On the existing Selectel or Cloud.ru server, as root:
 # bash update-selectel.sh /tmp/foshoo-selectel.tar.gz
 set -Eeuo pipefail
 umask 077
@@ -11,6 +11,9 @@ test -f /etc/foshoo.env
 test -f /var/lib/foshoo/theater_bot.db
 test -d /opt/foshoo/backend
 command -v rsync >/dev/null
+service_user=$(systemctl show foshoo --property=User --value)
+[[ -n "$service_user" && "$service_user" != root ]] || { echo 'Expected a dedicated service user.' >&2; exit 1; }
+service_group=$(id -gn "$service_user")
 /opt/foshoo/.venv/bin/python -c 'import sys, pyexpat; assert sys.prefix != sys.base_prefix and sys.version_info >= (3, 10)'
 
 stage=$(mktemp -d /opt/foshoo-update.XXXXXX)
@@ -72,7 +75,7 @@ rsync -a --delete --exclude='.env*' --exclude='credentials*.json' \
     "$stage/backend/" /opt/foshoo/backend/
 rsync -a --delete "$stage/frontend/build/" /opt/foshoo/frontend/build/
 rsync -a "$stage/deploy/" /opt/foshoo/deploy/
-chown -R foshoo:foshoo /opt/foshoo/backend /opt/foshoo/frontend/build /opt/foshoo/deploy
+chown -R "$service_user:$service_group" /opt/foshoo/backend /opt/foshoo/frontend/build /opt/foshoo/deploy
 
 # Keep previous hashed assets for tabs still running the previous bundle.
 # Publish index.html only once all new assets are in place.

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import './index.css';
 import client, { DATA_CHANGED_EVENT } from './api/client';
 import { loadTelegram } from './telegram';
+import { getInitialPlanningMonth } from './navigation';
 import AssistantView from './components/AssistantView';
 import CalendarView from './components/CalendarView';
 import NotificationsView from './components/NotificationsView';
@@ -10,6 +11,7 @@ import LinksView from './components/LinksView';
 
 function App() {
   const [activeTab, setActiveTab] = useState('calendar');
+  const [initialPlanningMonth, setInitialPlanningMonth] = useState('');
   const [visitedTabs, setVisitedTabs] = useState(['calendar']);
   const [assistantEnabled, setAssistantEnabled] = useState(false);
   const [dataVersion, setDataVersion] = useState(0);
@@ -28,7 +30,6 @@ function App() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [isSuperAdmin, setIsSuperAdmin] = useState(false);
   const [canFinance, setCanFinance] = useState(false);
-  const [trouFilter, setTrouFilter] = useState('труппа 1');
 
   const [accessError, setAccessError] = useState('');
   const [accessAttempt, setAccessAttempt] = useState(0);
@@ -45,6 +46,7 @@ function App() {
         if (!active) return;
         tg.ready();
         tg.expand();
+        setInitialPlanningMonth(getInitialPlanningMonth(tg));
         checkingAccess = true;
         setLoadingStage('Проверка доступа…');
         return client.get('/api/auth/check', { timeout: 15000 });
@@ -62,7 +64,6 @@ function App() {
         client.get('/api/auth/app-config', { timeout: 15000 })
           .then(({ data: config }) => {
             if (!active) return;
-            if (config.troupe_filter) setTrouFilter(config.troupe_filter);
             setAssistantEnabled(config.assistant_enabled === true);
           })
           .catch(() => {});
@@ -85,7 +86,6 @@ function App() {
         if (!active) return;
         setIsAdmin(auth.data.is_admin); setIsSuperAdmin(!!auth.data.is_superadmin);
         setCanFinance(auth.data.can_finance === true || auth.data.is_admin === true);
-        setTrouFilter(config.data.troupe_filter);
         setAssistantEnabled(config.data.assistant_enabled === true);
       })
       .catch(e => {
@@ -136,7 +136,7 @@ function App() {
           />
         </section>}
         {visitedTabs.includes('calendar') && <section hidden={activeTab !== 'calendar'}>
-          <CalendarView active={activeTab === 'calendar'} dataVersion={dataVersion} userId={userId} isAdmin={isAdmin} trouFilter={trouFilter} />
+          <CalendarView active={activeTab === 'calendar'} dataVersion={dataVersion} userId={userId} isAdmin={isAdmin} initialPlanningMonth={initialPlanningMonth} />
         </section>}
         {canFinance && visitedTabs.includes('finance') && <section hidden={activeTab !== 'finance'}>
           <FinanceView active={activeTab === 'finance'} dataVersion={dataVersion} username={username} isAdmin={isAdmin} />

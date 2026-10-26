@@ -30,7 +30,6 @@ from config import (
     ADMIN_ID,
     GOOGLE_CALENDAR_JSON,
     GOOGLE_SHEETS_ID,
-    TROUPE_FILTER,
 )
 from modules.calendar.models import CalendarEvent
 from modules.notifications.models import NotificationSetting
@@ -192,13 +191,11 @@ def _collect_settings(db: Session) -> dict[str, Any]:
     )
     if not s:
         return {
-            "troupe_filter": TROUPE_FILTER,
             "poll_reminders_enabled": False,
             "reminder_days_before": None,
             "reminder_time": None,
         }
     return {
-        "troupe_filter": s.troupe_filter or TROUPE_FILTER,
         "poll_reminders_enabled": bool(s.poll_reminders_enabled),
         "reminder_days_before": s.reminder_days_before,
         "reminder_time": s.reminder_time,

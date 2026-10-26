@@ -15,7 +15,7 @@ function AttendanceSummary({ data }) {
   </small>;
 }
 
-function CastDialog({ slot, cell, month, fingerprint, timezone, onClose, onSaved }) {
+function CastDialog({ slot, cell, month, fingerprint, timezone, onClose, onSaved, isAdmin }) {
   const pending = slot.operation?.show_name === cell.show && slot.operation.status !== 'complete' ? slot.operation : null;
   const [cast, setCast] = useState(pending?.cast || cell.suggested_cast);
   const [start, setStart] = useState(pending?.start_time.slice(0, 16) || `${slot.date}T19:00`);
@@ -29,7 +29,7 @@ function CastDialog({ slot, cell, month, fingerprint, timezone, onClose, onSaved
   const assignable = !slot.operation && !cell.incomplete && !slot.assigned_show && cell.status === 'ready';
   const save = async event => {
     event.preventDefault();
-    if (saving || mustRefresh || (!pending && (!complete || duplicate || !assignable))) return;
+    if (!isAdmin || saving || mustRefresh || (!pending && (!complete || duplicate || !assignable))) return;
     setSaving(true); setError('');
     try {
       await client.post('/api/planning/assign', {
@@ -51,9 +51,16 @@ function CastDialog({ slot, cell, month, fingerprint, timezone, onClose, onSaved
         <p>{slot.label.replace(/\n/g, ' ')} · {STATUS[cell.status]}</p>
         <AttendanceSummary data={cell.attendance} />
         {slot.assigned_show && <p>В графике: <strong>{slot.assigned_show}</strong></p>}
-        {cell.incomplete && <div className="alert alert-error">В «Составы спектаклей» есть незаполненные роли или исполнители. Дополните список.</div>}
-        {pending && <div className="alert alert-error">Предыдущее сохранение не завершено. Продолжите с теми же временем и составом.</div>}
-        <form onSubmit={save}>
+        {cell.incomplete && <div className="alert alert-error">В «Составы спектаклей» есть незаполненные роли или исполнители.{isAdmin && ' Дополните список.'}</div>}
+        {pending && <div className="alert alert-error">Предыдущее сохранение не завершено.{isAdmin ? ' Продолжите с теми же временем и составом.' : ' Администратор завершит назначение состава.'}</div>}
+        {!isAdmin && <>
+          <p className="planning-note">Здесь можно посмотреть ответы и доступность исполнителей. Состав назначает администратор.</p>
+          {cell.roles.map(role => <div className="planning-role" key={role.name}>
+            <strong>{role.name}</strong>
+            <ul>{role.actors.map(actor => <li key={actor.name} className={`planning-actor--${actor.status}`}>{actor.name}: {actor.reason}</li>)}</ul>
+          </div>)}
+        </>}
+        {isAdmin && <form onSubmit={save}>
           <p className="planning-note">Каждая роль — отдельный исполнитель. Можно заменить предложенного актёра на другого свободного.</p>
           {cell.roles.map(role => (
             <div className="planning-role" key={role.name}>
@@ -80,13 +87,13 @@ function CastDialog({ slot, cell, month, fingerprint, timezone, onClose, onSaved
             {saving ? 'Сохраняем...' : pending ? 'Продолжить сохранение' : 'Назначить спектакль'}
           </button>}
           {mustRefresh && <button className="btn btn-secondary planning-save" type="button" onClick={() => onSaved(false)}>Обновить сводку</button>}
-        </form>
+        </form>}
       </div>
     </div>
   );
 }
 
-export default function PlanningView({ onClose, dataVersion = 0, isAdmin = false }) {
+export default function PlanningView({ onClose, dataVersion = 0, initialMonth = '', isAdmin = false }) {
   const [showNames, setShowNames] = useState([]);
   useEffect(() => {
     if (!isAdmin) return;
@@ -96,7 +103,7 @@ export default function PlanningView({ onClose, dataVersion = 0, isAdmin = false
       .catch(() => {});
     return () => { active = false; };
   }, [isAdmin]);
-  const [month, setMonth] = useState('');
+  const [month, setMonth] = useState(initialMonth);
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -145,7 +152,7 @@ export default function PlanningView({ onClose, dataVersion = 0, isAdmin = false
     <div className="planning-view">
       <button className="btn btn-secondary" onClick={onClose}>← К расписанию</button>
       <h1>Планирование составов</h1>
-      <p className="planning-note">Сравните даты и спектакли. Нажмите на ячейку, чтобы посмотреть роли и выбрать исполнителей.</p>
+      <p className="planning-note">Сравните даты и спектакли. Нажмите на ячейку, чтобы посмотреть роли и доступность исполнителей.{isAdmin && ' Администратор может выбрать состав и назначить спектакль.'}</p>
       <div className="planning-toolbar">
         <button className="btn btn-secondary" aria-label="Предыдущий месяц планирования" disabled={!(month || data?.month)} onClick={() => move(-1)}>‹</button>
         <input aria-label="Месяц планирования" className="form-input" type="month" value={month || data?.month || ''} onChange={e => changeMonth(e.target.value)} />
@@ -164,8 +171,8 @@ export default function PlanningView({ onClose, dataVersion = 0, isAdmin = false
         </div>
         <p className="planning-note">Дробь — закрытые роли / все роли. Учитываются все зарегистрированные участники чата спектакля, даже если роли ещё не заполнены. Пока человек не голосовал и бот не получил событие его вступления, его может не быть в списке.</p>
         {data.warnings.map(warning => <div className="planning-warning" key={warning}>{warning}</div>)}
-        {!data.shows.length ? <div className="empty-state">Добавьте роли и исполнителей в «Составы спектаклей».</div>
-          : !data.slots.length ? <div className="empty-state">В этом месяце нет дат в графике. Запустите опрос занятости на нужный месяц.</div>
+        {!data.shows.length ? <div className="empty-state">{isAdmin ? 'Добавьте роли и исполнителей в «Составы спектаклей».' : 'Роли и исполнители пока не заполнены.'}</div>
+          : !data.slots.length ? <div className="empty-state">В этом месяце нет дат в графике.{isAdmin && ' Запустите опрос занятости на нужный месяц.'}</div>
           : !slots.length ? <div className="empty-state">Полный состав пока не собирается. Выключите фильтр, чтобы увидеть, каких ответов или исполнителей не хватает.</div>
           : <div className="planning-table-scroll" tabIndex="0" aria-label="Сводка составов по датам">
             <table className="planning-table"><thead><tr><th scope="col">Дата</th>{visibleShows.map(name => <th scope="col" key={name}>{name}</th>)}</tr></thead>
@@ -190,7 +197,7 @@ export default function PlanningView({ onClose, dataVersion = 0, isAdmin = false
       </>}
       {isAdmin && <AvailabilitySection showNames={showNames} />}
       {selectedSlot && selectedCell && <CastDialog key={`${selectedSlot.column}:${selectedCell.show}`} slot={selectedSlot} cell={selectedCell}
-        month={data.month} fingerprint={data.fingerprint} timezone={data.timezone} onClose={() => setSelected(null)} onSaved={saved} />}
+        month={data.month} fingerprint={data.fingerprint} timezone={data.timezone} onClose={() => setSelected(null)} onSaved={saved} isAdmin={isAdmin} />}
     </div>
   );
 }

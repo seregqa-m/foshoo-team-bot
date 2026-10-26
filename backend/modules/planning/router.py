@@ -27,10 +27,10 @@ _write_lock = Lock()
 
 def require_admin(request: Request):
     if not getattr(request.state, 'is_admin', False):
-        raise HTTPException(403, 'Планирование составов доступно администратору')
+        raise HTTPException(403, 'Назначение составов доступно только администратору')
 
 
-router = APIRouter(prefix='/api/planning', tags=['planning'], dependencies=[Depends(require_admin)])
+router = APIRouter(prefix='/api/planning', tags=['planning'])
 
 
 def get_client():
@@ -105,7 +105,7 @@ def _sheet_writes_applied(source, updates):
     return True
 
 
-@router.post('/assign')
+@router.post('/assign', dependencies=[Depends(require_admin)])
 def assign_show(req: AssignRequest, db: Session = Depends(get_db)):
     try:
         date.fromisoformat(req.month + '-01')

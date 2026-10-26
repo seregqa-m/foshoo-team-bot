@@ -1,11 +1,8 @@
 """
 Провайдер-агностичная обёртка для LLM с поддержкой function calling.
 
-MVP-реализация — YandexGPT через OpenAI-совместимый endpoint Yandex AI Studio
-(`https://ai.api.cloud.yandex.net/v1/chat/completions`). Формат сообщений и
-tool_calls — стандартный OpenAI, поэтому позже подменить провайдера (Claude
-через посредника, OpenAI напрямую, OSS-модели) можно без переписывания
-вызывающего кода.
+Cloud.ru и Yandex AI Studio используют OpenAI-совместимые сообщения и tool_calls.
+Выбор провайдера не меняет подтверждения действий и права пользователя.
 """
 from __future__ import annotations
 
@@ -19,11 +16,13 @@ import aiohttp
 from config import (
     YANDEX_API_KEY, YANDEX_FOLDER_ID, YANDEX_GPT_MODEL,
     LLM_TEMPERATURE, LLM_MAX_TOKENS, LLM_REASONING_EFFORT, LLM_ENABLED,
+    LLM_PROVIDER, CLOUDRU_API_KEY, CLOUDRU_MODEL,
 )
 
 logger = logging.getLogger(__name__)
 
 YANDEX_OPENAI_URL = "https://ai.api.cloud.yandex.net/v1/chat/completions"
+CLOUDRU_OPENAI_URL = "https://foundation-models.api.cloud.ru/v1/chat/completions"
 
 
 class LLMConfigurationError(RuntimeError):
@@ -75,7 +74,7 @@ def _message_to_openai(m: ChatMessage) -> dict:
 
 
 class LLMClient:
-    """Абстрактный интерфейс LLM. Реализации: YandexGPTClient и (позже) другие."""
+    """Абстрактный интерфейс LLM."""
 
     async def chat(
         self,
@@ -89,21 +88,26 @@ class LLMClient:
         raise NotImplementedError
 
 
-class YandexGPTClient(LLMClient):
+class OpenAICompatibleClient(LLMClient):
     def __init__(
         self,
-        api_key: str,
-        folder_id: str,
-        model: str = "yandexgpt/latest",
+        *,
+        url: str,
+        headers: dict[str, str],
+        model: str,
+        provider_name: str,
+        token_parameter: str = "max_tokens",
+        single_tool_call: bool = False,
         temperature: float = 0.3,
         max_tokens: int = 1500,
         reasoning_effort: str = "",
     ):
-        if not api_key or not folder_id:
-            raise LLMConfigurationError("YANDEX_API_KEY и YANDEX_FOLDER_ID должны быть заполнены в .env")
-        self.api_key = api_key
-        self.folder_id = folder_id
-        self.model_uri = f"gpt://{folder_id}/{model}"
+        self.url = url
+        self.headers = headers
+        self.model_uri = model
+        self.provider_name = provider_name
+        self.token_parameter = token_parameter
+        self.single_tool_call = single_tool_call
         self.default_temperature = temperature
         self.default_max_tokens = max_tokens
         self.reasoning_effort = reasoning_effort  # "" = не передаём
@@ -123,27 +127,27 @@ class YandexGPTClient(LLMClient):
             "model": self.model_uri,
             "messages": [_message_to_openai(m) for m in messages],
             "temperature": temperature if temperature is not None else self.default_temperature,
-            "max_tokens": max_tokens if max_tokens is not None else self.default_max_tokens,
+            self.token_parameter: max_tokens if max_tokens is not None else self.default_max_tokens,
         }
         if self.reasoning_effort:
             payload["reasoning_effort"] = self.reasoning_effort
         if tools:
             payload["tools"] = tools
             payload["tool_choice"] = tool_choice
-
-        headers = {
-            "Authorization": f"Api-Key {self.api_key}",
-            "OpenAI-Project": self.folder_id,
-            "Content-Type": "application/json",
-        }
+            if self.single_tool_call:
+                payload["parallel_tool_calls"] = False
 
         timeout = aiohttp.ClientTimeout(total=45)
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.post(YANDEX_OPENAI_URL, json=payload, headers=headers) as resp:
-                body = await resp.json()
-                if resp.status >= 400:
-                    logger.error(f"YandexGPT (OpenAI) error {resp.status}: {body}")
-                    raise LLMProviderError(f"YandexGPT {resp.status}: {body}")
+        try:
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.post(self.url, json=payload, headers=self.headers) as resp:
+                    if resp.status >= 400:
+                        # Provider error bodies can echo prompts or credentials.
+                        logger.error("%s HTTP error %s", self.provider_name, resp.status)
+                        raise LLMProviderError(f"{self.provider_name}: HTTP {resp.status}")
+                    body = await resp.json()
+        except (aiohttp.ClientError, TimeoutError, ValueError) as exc:
+            raise LLMProviderError(f"{self.provider_name}: ошибка соединения или ответа API") from exc
 
         try:
             choice = body["choices"][0]
@@ -157,7 +161,7 @@ class YandexGPTClient(LLMClient):
                     "LLM returned no public answer or tool calls. finish_reason=%s",
                     finish_reason,
                 )
-                raise LLMProviderError("YandexGPT не вернул готовый ответ или вызов инструмента")
+                raise LLMProviderError(f"{self.provider_name} не вернул готовый ответ или вызов инструмента")
             raw_tool_calls = msg.get("tool_calls") or []
             parsed_tools: list[ToolCall] = []
             for tc in raw_tool_calls:
@@ -166,8 +170,9 @@ class YandexGPTClient(LLMClient):
                 try:
                     args = json.loads(args_str) if isinstance(args_str, str) else args_str
                 except json.JSONDecodeError:
-                    logger.warning(f"tool_call arguments not valid JSON: {args_str}")
-                    args = {}
+                    raise LLMProviderError("Некорректные аргументы инструмента") from None
+                if not isinstance(args, dict) or not tc.get("id") or not fn.get("name"):
+                    raise LLMProviderError("Некорректный вызов инструмента")
                 parsed_tools.append(ToolCall(
                     id=tc.get("id", ""),
                     name=fn.get("name", ""),
@@ -182,14 +187,50 @@ class YandexGPTClient(LLMClient):
                 finish_reason=choice.get("finish_reason"),
                 raw=body,
             )
-        except (KeyError, IndexError) as e:
-            raise LLMProviderError("Неожиданный формат ответа YandexGPT") from e
+        except (KeyError, IndexError, TypeError, AttributeError) as e:
+            raise LLMProviderError(f"Неожиданный формат ответа {self.provider_name}") from e
+
+
+class YandexGPTClient(OpenAICompatibleClient):
+    def __init__(self, api_key: str, folder_id: str, model: str = "yandexgpt/latest",
+                 temperature: float = 0.3, max_tokens: int = 1500, reasoning_effort: str = ""):
+        if not api_key or not folder_id:
+            raise LLMConfigurationError("YANDEX_API_KEY и YANDEX_FOLDER_ID должны быть заполнены в .env")
+        super().__init__(
+            url=YANDEX_OPENAI_URL, provider_name="YandexGPT",
+            headers={"Authorization": f"Api-Key {api_key}", "OpenAI-Project": folder_id,
+                     "Content-Type": "application/json"},
+            model=f"gpt://{folder_id}/{model}", temperature=temperature,
+            max_tokens=max_tokens, reasoning_effort=reasoning_effort,
+        )
+
+
+class CloudRuClient(OpenAICompatibleClient):
+    def __init__(self, api_key: str, model: str = "openai/gpt-oss-120b",
+                 temperature: float = 0.3, max_tokens: int = 4096, reasoning_effort: str = ""):
+        if not api_key.strip() or not model.strip():
+            raise LLMConfigurationError("CLOUDRU_API_KEY и CLOUDRU_MODEL должны быть заполнены в .env")
+        super().__init__(
+            url=CLOUDRU_OPENAI_URL, provider_name="Cloud.ru",
+            headers={"Authorization": f"Bearer {api_key.strip()}", "Content-Type": "application/json"},
+            model=model.strip(), temperature=temperature, max_tokens=max_tokens,
+            reasoning_effort=reasoning_effort, token_parameter="max_completion_tokens",
+            single_tool_call=True,
+        )
 
 
 def get_llm_client() -> LLMClient:
-    """Фабрика провайдера. Пока — только YandexGPT через OpenAI-compat endpoint."""
+    """Фабрика провайдера; никогда не переключается на другой сервис неявно."""
     if not LLM_ENABLED:
         raise LLMConfigurationError("LLM отключена")
+    if LLM_PROVIDER == "cloudru":
+        return CloudRuClient(
+            api_key=CLOUDRU_API_KEY, model=CLOUDRU_MODEL,
+            temperature=LLM_TEMPERATURE, max_tokens=LLM_MAX_TOKENS,
+            reasoning_effort=LLM_REASONING_EFFORT,
+        )
+    if LLM_PROVIDER != "yandex":
+        raise LLMConfigurationError("Неизвестный LLM_PROVIDER: ожидается cloudru или yandex")
     return YandexGPTClient(
         api_key=YANDEX_API_KEY,
         folder_id=YANDEX_FOLDER_ID,

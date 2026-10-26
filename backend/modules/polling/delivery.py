@@ -8,11 +8,12 @@ from fastapi import HTTPException
 from .models import Poll
 from .services import PollingService
 from modules.theater.routing import event_destination, select_event_show
+from modules.calendar.classification import is_rehearsal
 
 delivery_lock = asyncio.Lock()
 
 
-async def send_publication(db, bot, poll, *, question, options, multiple=False):
+async def send_publication(db, bot, poll, *, question, options, multiple=False, reply_markup=None):
     if poll.telegram_message_id:
         return
     if poll.delivery_state in ('sending', 'uncertain'):
@@ -20,8 +21,9 @@ async def send_publication(db, bot, poll, *, question, options, multiple=False):
     poll.delivery_state = 'sending'
     db.commit()
     try:
+        extra = {'reply_markup': reply_markup} if reply_markup is not None else {}
         message = await bot.send_poll(chat_id=poll.telegram_chat_id, question=question[:300],
-                                      options=options, is_anonymous=False, allows_multiple_answers=multiple)
+                                      options=options, is_anonymous=False, allows_multiple_answers=multiple, **extra)
     except Exception as exc:
         poll.delivery_state = 'failed' if isinstance(exc, (TelegramBadRequest, TelegramForbiddenError, TelegramRetryAfter)) else 'uncertain'
         db.commit()
@@ -40,6 +42,8 @@ async def publish_event(db, bot, event, user_id, *, automatic=False, show_id=Non
         db.expire_all()
         if event.is_cancelled:
             raise HTTPException(404, 'Событие не найдено или отменено')
+        if not is_rehearsal(event.title):
+            raise HTTPException(409, 'Опрос доступен для репетиции. Укажите в названии Репетиция или [Реп].')
         if show_id is not None:
             select_event_show(db, event, show_id)
         show = event_destination(db, event)

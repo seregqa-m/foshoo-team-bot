@@ -170,6 +170,18 @@ class ModerationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.state(), 'notification_failed')
         self.bot.delete_message.assert_not_awaited()
 
+    async def test_job_ad_is_deleted_but_admin_announcement_is_exempt(self):
+        self.classifier.side_effect = classify
+        self.service.auto_delete = True
+        text = 'Ищем осветителя, 5000 рублей за смену, пишите мне'
+        await self.service.inspect(message(text=text), self.bot, 1)
+        self.assertEqual(self.state(), 'deleted')
+        self.bot.delete_message.assert_awaited_once_with(DISCUSSION, 20)
+        self.bot.get_chat_member.side_effect = None
+        self.bot.get_chat_member.return_value = NS(status='administrator', can_delete_messages=True)
+        await self.service.inspect(message(message_id=21, text=text), self.bot, 2)
+        self.assertEqual(self.bot.delete_message.await_count, 1)
+
     async def test_real_regex_moderation_works_without_llm(self):
         self.classifier.side_effect = classify
         self.service.auto_delete = True
@@ -363,6 +375,47 @@ class ModerationTests(unittest.IsolatedAsyncioTestCase):
 
 
 class ClassifierTests(unittest.IsolatedAsyncioTestCase):
+    async def test_job_spam_without_link_or_contact_request(self):
+        comments = [
+            'Вакансию водителя - перевозчика, наличие прав категории B!\n'
+            'Рассмотрим без личного тс! Оклад в неделю от 100 000р',
+            'Требуется водитель без своего автомобиля. Зарплата от 100000 рублей в неделю',
+            'Ищем водителя без личного авто. Оплата: 100 тыс. руб. за неделю',
+            'Вакансия водителя без личного тс. Оклад в неделю от １００\u00a0０００₽',
+        ]
+        for text in comments:
+            with self.subTest(text=text):
+                self.assertTrue((await classify({'text': text}))[0])
+
+    async def test_job_spam_is_independent_of_profession(self):
+        for profession in ('водителя', 'курьера', 'упаковщика', 'оператора', 'менеджера', 'актера', 'новой профессии'):
+            for conditions in ('без личного тс', 'без опыта', 'опыт не требуется', 'без вложений'):
+                text = f'Вакансия {profession}, {conditions}. Оклад в неделю от 100 000р'
+                with self.subTest(profession=profession, conditions=conditions):
+                    self.assertTrue((await classify({'text': text}))[0])
+        self.assertTrue((await classify({'text': 'Набираем сотрудников без опыта. Доход 120 тыс. руб. за неделю'}))[0])
+        self.assertTrue((await classify({'text': 'Подработка без вложений. Заработок 150000₽ в неделю'}))[0])
+
+    async def test_job_ads_are_removed_regardless_of_pay_or_conditions(self):
+        comments = [
+            'Вакансия водителя без личного тс. Оклад в месяц от 100 000р',
+            'Вакансия водителя без личного тс. Оклад в неделю от 10 000р',
+            'Вакансия водителя без личного тс. Оклад в неделю от 99 тыс. руб.',
+            'Вакансия водителя без личного тс. Оклад 100 000р. Репетиции раз в неделю',
+            'Вакансия водителя со своим авто. Оклад в неделю от 100 000р',
+            'Нужен водитель без личного тс для перевозки декораций',
+            'Ищем курьера без опыта. Оплата 5000 рублей за смену, пишите мне',
+            'Вакансия новой профессии',
+            'Предлагаем работу, подробности в личку',
+            'Открыт набор сотрудников',
+            'Ищем осветителя, 5000 рублей за смену, пишите мне',
+            'Нужен актер без опыта, пишите мне. Репетиция в субботу.',
+            'Нужен актер без опыта. Оплата 5000 рублей за спектакль, пишите мне',
+        ]
+        for text in comments:
+            with self.subTest(text=text):
+                self.assertTrue((await classify({'text': text}))[0])
+
     async def test_obvious_spam_in_comment_and_author_name(self):
         cases = [
             {'text': 'Заработок 10000 в день, пишите мне'},
@@ -379,17 +432,22 @@ class ClassifierTests(unittest.IsolatedAsyncioTestCase):
                     self.assertTrue(spam)
                     self.assertIn('Правило:', reason)
 
-    async def test_reviews_links_profanity_and_theater_jobs_are_not_spam(self):
+    async def test_reviews_links_profanity_and_job_discussions_are_not_spam(self):
         comments = [
             'Ужасный спектакль, мне вообще не понравилось',
             'Блять, почему отменили?',
             'Билеты https://foshoo-theatre.ru/',
-            'Нужен актер без опыта, пишите мне. Репетиция в субботу.',
-            'Ищем осветителя, 5000 рублей за смену, пишите мне',
             'В пьесе герой проиграл в казино',
             'Казино — мошенники, не регистрируйтесь! https://example.org',
             'Поговорим про инвестиции в декорации?',
             'Расскажу про заработок актера',
+            'Обсудим условия работы курьера без опыта на занятии',
+            'Почему здесь публикуют вакансии?',
+            'Есть ли у вас вакансии?',
+            'Ищем два билета на спектакль',
+            'Нужен адрес театра',
+            'Требуется помощь с покупкой билета',
+            'Работа актера мне понравилась',
             'Отлично!',
         ]
         for text in comments:

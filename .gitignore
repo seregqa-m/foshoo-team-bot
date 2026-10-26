@@ -87,3 +87,8 @@ CLAUDE.md
 
 # Plan (local only)
 PLAN.md
+
+# Local reports, temporary tool files and legacy personal notes; not release inputs.
+/output/
+/tmp/
+/knowledge-base/

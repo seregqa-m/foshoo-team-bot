@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, Boolean, Text
+from sqlalchemy import Column, Integer, String, DateTime, Boolean, Text, ForeignKey
 from core.database import Base
 from core.time import CalendarDateTime
 from datetime import datetime
@@ -22,3 +22,16 @@ class CalendarEvent(Base):
     last_synced = Column(DateTime, default=datetime.utcnow)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class CalendarColorGroup(Base):
+    """Persistent visual identity; never a show, attendance source or destination."""
+    __tablename__ = "calendar_color_groups"
+    id = Column(Integer, primary_key=True)
+    name = Column(String, nullable=False)
+
+
+class CalendarColorTitle(Base):
+    __tablename__ = "calendar_color_titles"
+    normalized_title = Column(String, primary_key=True)
+    group_id = Column(Integer, ForeignKey('calendar_color_groups.id'), nullable=False, index=True)

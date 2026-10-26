@@ -26,6 +26,25 @@ CASINO = pattern(r'\b(?:казино|casino|слоты)\b')
 BONUS = pattern(r'\b(?:бонус\w*|фриспин\w*|промокод\w*)\b')
 INVESTMENT = pattern(r'\b(?:инвестиц\w*|крипт\w*|трейдинг\w*)\b')
 GUARANTEE = pattern(r'\bгарантирован\w*\s+(?:доход\w*|прибыл\w*)\b|\bбез\s+риска\b')
+# Recruitment is off-topic in the public discussion regardless of pay or profession.
+# Explicit vacancy ads need no occupation dictionary. Context below also catches
+# ads phrased as "ищем осветителя" without the word "вакансия".
+VACANCY_AD = pattern(
+    r'(?:^|[.!?\n])\s*[^\w\s]*\s*(?:у\s+нас\s+)?'
+    r'(?:(?:открыт\w*|актуальн\w*|свободн\w*|нов\w*|есть)\s+)?'
+    r'(?:ваканси\w*|подработк\w*)\b|'
+    r'\b(?:предлагаем|предлагаю|приглашаем|приглашаю)\s+(?:на\s+)?работу\b|'
+    r'\b(?:открыт|ведется|объявляем)\s+набор\s+(?:сотрудник\w*|персонал\w*)\b'
+)
+HIRING = r'\b(?:ищем|требуется|требуются|набираем|набор|нужен|нужна|нужны)\b'
+JOB_CONTEXT = (
+    r'\b(?:сотрудник\w*|персонал\w*|работник\w*|специалист\w*|ваканси\w*|'
+    r'водител\w*|курьер\w*|упаковщик\w*|оператор\w*|менеджер\w*|'
+    r'осветител\w*|актер\w*|актрис\w*|декоратор\w*|звукорежиссер\w*|'
+    r'дизайнер\w*|разработчик\w*|продав\w*|уборщи\w*|повар\w*|'
+    r'оклад\w*|зарплат\w*)\b|\b(?:на\s+работу|в\s+команду|в\s+штат)\b'
+)
+RECRUITMENT_AD = pattern(HIRING + r'[^.!?\n]{0,160}?(?:' + JOB_CONTEXT + r')')
 
 
 def normalize(value):
@@ -42,6 +61,8 @@ async def classify(payload):
     )
     hidden_link = any(LINK.search(normalize(link)) for link in (payload.get('links') or [])[:100])
     for location, value in fields:
+        if VACANCY_AD.search(value) or RECRUITMENT_AD.search(value):
+            return True, f'Правило: стороннее объявление о вакансии или наборе сотрудников в {location}.'
         contact = CONTACT.search(value)
         if EARNINGS.search(value) and EASY_MONEY.search(value) and contact:
             return True, f'Правило: предложение лёгкого заработка с призывом связаться в {location}.'

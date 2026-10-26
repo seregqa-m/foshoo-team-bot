@@ -297,7 +297,7 @@ CREATE_EVENT = Tool(
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "title": {"type": "string", "description": "Название события (например «труппа 1 репетиция»)"},
+                    "title": {"type": "string", "description": "Название события (например «Репетиция [Цианистый Калий]»)"},
                     "start_time": {"type": "string", "description": "ISO 8601 (например 2026-07-20T19:00:00)"},
                     "end_time": {"type": "string", "description": "ISO 8601"},
                     "location": {"type": "string", "description": "Место, опционально"},

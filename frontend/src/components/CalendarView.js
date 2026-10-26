@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import * as calendarApi from '../api/calendar';
 import client from '../api/client';
 import PlanningView from './PlanningView';
+import { calendarFilters, getEventColor, matchesCalendarFilter } from './calendarPresentation';
 
 const MONTHS = ['янв','фев','мар','апр','май','июн','июл','авг','сен','окт','ноя','дек'];
 const DAYS   = ['вс','пн','вт','ср','чт','пт','сб'];
@@ -20,14 +21,6 @@ function toLocalInput(iso) {
 
 const EMPTY_FORM = { title: '', start_time: '', end_time: '', location: '', description: '' };
 
-const FILTERS = [
-  { key: 'all',      label: 'Все',       color: '#E5E7EB' },
-  { key: 'труппа 1', label: 'Труппа 1',  color: '#C4B5FD' },
-  { key: 'труппа 2', label: 'Труппа 2',  color: '#FDE68A' },
-  { key: 'лаба',     label: 'Лаба',      color: '#FCA5A5' },
-  { key: 'shows',    label: 'Спектакли', color: '#6EE7B7' },
-];
-
 const MONTHS_FULL = ['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
 const DOW = ['пн','вт','ср','чт','пт','сб','вс'];
 
@@ -37,18 +30,7 @@ const HOUR_H     = 18;
 const HEADER_H   = 42;
 const LABEL_W    = 28;
 
-function getEventGroup(event, showNames, trouFilter = 'труппа 1') {
-  const t = (event.title || '').toLowerCase();
-  const knownShow = event.show_name || showNames.some(s => s && t.includes(s));
-  if (event.event_type === 'performance' || (!event.event_type && knownShow)) return 'shows';
-  if (trouFilter.trim() && t.includes(trouFilter.trim().toLowerCase())) return 'труппа 1';
-  if (t.includes('труппа 2')) return 'труппа 2';
-  if (t.includes('лаба')) return 'лаба';
-  if (event.event_type === 'rehearsal' || event.poll_show_name) return 'труппа 1';
-  return null;
-}
-
-function WeekCalendar({ events, showNames, now, trouFilter = 'труппа 1', onEventClick, onSlotClick }) {
+function WeekCalendar({ events, now, onEventClick, onSlotClick }) {
   const [weekOffset, setWeekOffset] = useState(0);
   const [tooltip, setTooltip] = useState(null);
 
@@ -180,8 +162,7 @@ function WeekCalendar({ events, showNames, now, trouFilter = 'труппа 1', o
               const h  = Math.max(6, y2 - y1);
               const x  = LABEL_W + dayIdx * colW + 3;
               const w  = colW - 6;
-              const group = getEventGroup(e, showNames, trouFilter);
-              const color = FILTERS.find(f => f.key === group)?.color || '#D1D5DB';
+              const color = getEventColor(e);
               return (
                 <rect key={idx} x={x} y={y1} width={w} height={h} rx={3}
                   fill={color} fillOpacity={endDt.getTime() <= now ? 0.35 : 0.9} style={{ cursor: 'pointer' }}
@@ -269,7 +250,7 @@ function EventCard({ event, userId, onEdit, isAdmin, isPollable, isPast, poll, o
   };
 
   return (
-    <div className="event-card" style={{ position: 'relative', opacity: isPast ? 0.5 : 1 }}>
+    <div className="event-card" style={{ position: 'relative', opacity: isPast ? 0.5 : 1, borderLeft: `4px solid ${getEventColor(event)}` }}>
       {isAdmin && (
         <button
           onClick={() => onEdit(event)}
@@ -495,6 +476,7 @@ function EventModal({ event, onClose, onSaved, onDeleted }) {
           <div className="form-group">
             <label className="form-label">Название *</label>
             <input className="form-input" value={form.title} onChange={e => set('title', e.target.value)} placeholder="Репетиция «Гамлет»" required />
+            <div className="event-meta">Репетиция: Репетиция [Цианистый Калий] или Цианистый Калий [Реп]. Показ: название спектакля без типа или с меткой [Спект].</div>
           </div>
           <div className="form-group">
             <label className="form-label">Начало *</label>
@@ -538,14 +520,13 @@ function EventModal({ event, onClose, onSaved, onDeleted }) {
   );
 }
 
-export default function CalendarView({ userId, isAdmin, trouFilter = 'труппа 1', active = true, dataVersion = 0 }) {
+export default function CalendarView({ userId, isAdmin, active = true, dataVersion = 0, initialPlanningMonth = '' }) {
   const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [modal, setModal] = useState(null); // null | 'new' | event object
-  const [filter, setFilter] = useState('труппа 1');
-  const [planning, setPlanning] = useState(false);
-  const [showNames, setShowNames] = useState([]);
+  const [filter, setFilter] = useState('rehearsals');
+  const [planning, setPlanning] = useState(!!initialPlanningMonth);
   const [calendarUrl, setCalendarUrl] = useState(null);
   const [pollSummary, setPollSummary] = useState({});
   const [now, setNow] = useState(Date.now);
@@ -559,9 +540,6 @@ export default function CalendarView({ userId, isAdmin, trouFilter = 'трупп
   }, [active]);
 
   useEffect(() => {
-    client.get('/api/sheets/shows')
-      .then(({ data }) => setShowNames((data.shows || []).map(s => s.trim().toLowerCase()).filter(Boolean)))
-      .catch(() => {});
     client.get('/api/calendar/meta')
       .then(({ data }) => setCalendarUrl(data.calendar_url || null))
       .catch(() => {});
@@ -605,15 +583,15 @@ export default function CalendarView({ userId, isAdmin, trouFilter = 'трупп
     setModal({ start_time: fmtDt(dt), end_time: fmtDt(end) });
   };
 
-  const filteredEvents = filter === 'all'
-    ? events
-    : events.filter(e => getEventGroup(e, showNames, trouFilter) === filter);
+  const filters = calendarFilters(events);
+  const effectiveFilter = filters.some(f => f.key === filter) ? filter : 'rehearsals';
+  const filteredEvents = events.filter(e => matchesCalendarFilter(e, effectiveFilter));
   // History remains in WeekCalendar; the list shows ongoing/upcoming events.
   const visibleEvents = filteredEvents
     .filter(e => new Date(e.end_time).getTime() > now)
     .sort((a, b) => new Date(a.start_time) - new Date(b.start_time));
 
-  if (planning && isAdmin) return <PlanningView onClose={() => setPlanning(false)} dataVersion={dataVersion} isAdmin={isAdmin} />;
+  if (planning) return <PlanningView onClose={() => setPlanning(false)} dataVersion={dataVersion} initialMonth={initialPlanningMonth} isAdmin={isAdmin} />;
 
   if (loading && events.length === 0) return <div className="empty-state">Загрузка...</div>;
 
@@ -637,27 +615,25 @@ export default function CalendarView({ userId, isAdmin, trouFilter = 'трупп
         </div>
       </div>
 
-      {isAdmin && <button className="btn btn-secondary" style={{ width: '100%', marginBottom: 14 }} onClick={() => setPlanning(true)}>Планирование составов →</button>}
+      <button className="btn btn-secondary" style={{ width: '100%', marginBottom: 14 }} onClick={() => setPlanning(true)}>Планирование составов →</button>
 
       <WeekCalendar
         events={events}
-        showNames={showNames}
-        trouFilter={trouFilter}
         now={now}
         onEventClick={isAdmin ? (e) => setModal(e) : null}
         onSlotClick={handleSlotClick}
       />
 
       <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
-        {FILTERS.map(f => (
+        {filters.map(f => (
           <button
             key={f.key}
             onClick={() => setFilter(f.key)}
             style={{
               padding: '4px 12px', borderRadius: 16, fontSize: 13, cursor: 'pointer',
-              border: filter === f.key ? '2px solid #555' : '1.5px solid transparent',
+              border: effectiveFilter === f.key ? '2px solid #555' : '1.5px solid transparent',
               background: f.color,
-              color: '#333', fontWeight: filter === f.key ? 700 : 400,
+              color: '#333', fontWeight: effectiveFilter === f.key ? 700 : 400,
             }}
           >
             {f.label}
@@ -672,7 +648,6 @@ export default function CalendarView({ userId, isAdmin, trouFilter = 'трупп
         <div className="empty-state">Нет событий</div>
       ) : (
         visibleEvents.map(e => {
-          const isT1 = getEventGroup(e, showNames, trouFilter) === 'труппа 1';
           const isPast = new Date(e.end_time).getTime() <= now;
           return (
             <EventCard
@@ -681,7 +656,7 @@ export default function CalendarView({ userId, isAdmin, trouFilter = 'трупп
               userId={userId}
               onEdit={setModal}
               isAdmin={isAdmin}
-              isPollable={isT1 && !isPast}
+              isPollable={e.event_type === 'rehearsal' && !isPast}
               isPast={isPast}
               poll={pollSummary[String(e.id)]}
               onPollAction={() => { fetchPollSummary(); fetchEvents(); }}

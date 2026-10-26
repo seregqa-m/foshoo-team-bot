@@ -14,6 +14,8 @@ export default function AvailabilitySection({ showNames }) {
   const [selectedDates, setSelectedDates] = useState([]);
   const [missingDates, setMissingDates] = useState([]);
   const [nonVoters, setNonVoters] = useState(null);
+  const [unregistered, setUnregistered] = useState([]);
+  const [rosterWarning, setRosterWarning] = useState(null);
   const [pinging, setPinging] = useState(false);
   const [sending, setSending] = useState(false);
   const [formError, setFormError] = useState(null);
@@ -111,6 +113,8 @@ export default function AvailabilitySection({ showNames }) {
         setShowForm(false);
       }
       setNonVoters(null);
+      setUnregistered([]);
+      setRosterWarning(null);
       loadCampaign(data.campaign_id);
     } catch (e) {
       setFormError(e.response?.data?.detail || 'Ошибка отправки');
@@ -123,6 +127,8 @@ export default function AvailabilitySection({ showNames }) {
     try {
       const r = await client.get('/api/availability/non-voters', { params: { campaign_id: campaign.id } });
       setNonVoters(r.data.participants || (r.data.non_voters || []).map(username => ({ user_id: username, username })));
+      setUnregistered(r.data.unregistered_participants || []);
+      setRosterWarning(r.data.roster_warning || null);
     } catch (e) { setFormError(e.response?.data?.detail || 'Не удалось загрузить неответивших'); }
   };
 
@@ -172,6 +178,7 @@ export default function AvailabilitySection({ showNames }) {
           </div>
           {nonVoters !== null && (
             <div style={{ marginTop: 10 }}>
+              {rosterWarning && <div className="alert alert-error" role="alert">{rosterWarning}</div>}
               {nonVoters.length === 0
                 ? <span style={{ fontSize: 13, color: '#22c55e' }}>Среди зарегистрированных участников нет ожидающих ответа</span>
                 : <>
@@ -183,6 +190,16 @@ export default function AvailabilitySection({ showNames }) {
                     </button>
                   </>
               }
+              {unregistered.length > 0 && <div style={{ marginTop: 12, fontSize: 13 }}>
+                <strong>Участники составов без подтверждённой регистрации</strong>
+                <ul style={{ paddingLeft: 20, margin: '8px 0' }}>{unregistered.map(u => <li key={`${u.name}:${u.username}`}>
+                  {u.name}{u.username ? ` (@${u.username})` : ''} — {u.show_names.join(', ')}.
+                  {' '}{u.reason === 'ambiguous_identity' ? 'Нужно проверить привязку в таблице.'
+                    : u.reason === 'membership_unverified' ? 'Членство в группе не подтверждено.' : 'Бот ещё не зарегистрировал участника.'}
+                </li>)}</ul>
+                <p>Эти участники не включены в пинг: их ответы пока нельзя надёжно сопоставить.
+                  {' '}Попросите их проголосовать в опросе — бот получит Telegram ID и проверит членство в группе.</p>
+              </div>}
             </div>
           )}
         </div>

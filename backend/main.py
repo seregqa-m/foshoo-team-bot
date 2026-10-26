@@ -16,7 +16,7 @@ from config import LOG_LEVEL, API_HOST, API_PORT, GOOGLE_CALENDAR_JSON, GOOGLE_C
 from modules.calendar.router import router as calendar_router
 from modules.calendar.services import CalendarService
 from modules.calendar.google_client import GoogleCalendarClient
-from modules.calendar.classification import classify_event, is_performance, is_troupe_event
+from modules.calendar.classification import classify_event, is_rehearsal
 from modules.polling.router import router as polling_router
 from modules.notifications.router import router as notifications_router
 from modules.availability.router import router as availability_router
@@ -75,7 +75,6 @@ def run_migrations():
             "ALTER TABLE poll_votes ADD COLUMN username TEXT",
             "ALTER TABLE notification_settings ADD COLUMN reminder_days_before INTEGER DEFAULT 3",
             "ALTER TABLE notification_settings ADD COLUMN reminder_time TEXT DEFAULT '18:00'",
-            "ALTER TABLE notification_settings ADD COLUMN troupe_filter TEXT DEFAULT 'труппа 1'",
             "ALTER TABLE notification_settings ADD COLUMN current_show TEXT",
             "ALTER TABLE availability_poll_options ADD COLUMN selected_date DATE",
             "ALTER TABLE polls ADD COLUMN telegram_chat_id BIGINT",
@@ -159,24 +158,17 @@ def _ensure_schedule_columns(db) -> None:
         return
 
     try:
-        from config import ADMIN_ID, TROUPE_FILTER
-        from modules.notifications.models import NotificationSetting
         from sheets_client import SheetsClient
-
-        setting = db.query(NotificationSetting).filter(
-            NotificationSetting.user_id == ADMIN_ID
-        ).first()
-        troupe_filter = (setting.troupe_filter if setting and setting.troupe_filter else TROUPE_FILTER).lower()
+        from modules.theater.routing import show_aliases
 
         sc = SheetsClient(GOOGLE_CALENDAR_JSON, GOOGLE_SHEETS_ID)
         show_names_lower = {s.lower() for s in (sc.get_show_names() or [])}
+        show_names_lower.update(show_aliases(db))
 
         matched_events = [
             (e.start_time, e.title)
             for e in events
-            if troupe_filter in e.title.lower()
-            or classify_event(e.title, show_names_lower)["show_name"]
-            or is_performance(e.title, show_names_lower)
+            if classify_event(e.title, show_names_lower)["event_type"] in ("rehearsal", "performance")
         ]
         if matched_events:
             added = sc.ensure_schedule_columns(matched_events)
@@ -304,9 +296,8 @@ def _poll_settings(db):
 
 async def _auto_create_polls():
     from datetime import timedelta
-    from config import ADMIN_ID, TROUPE_FILTER
+    from config import ADMIN_ID
     from modules.calendar.models import CalendarEvent
-    from modules.theater.routing import show_aliases, saved_event_show
     from modules.polling.delivery import publish_event
     with SessionLocal() as db:
         settings = _poll_settings(db)
@@ -314,12 +305,10 @@ async def _auto_create_polls():
             return
         now = local_now().date()
         target = now + timedelta(days=settings.reminder_days_before)
-        aliases = list(show_aliases(db))
         for event in db.query(CalendarEvent).filter_by(is_cancelled=False).all():
             if not now <= event.start_time.date() <= target:
                 continue
-            if not (is_troupe_event(event.title, aliases, settings.troupe_filter or TROUPE_FILTER)
-                    or (saved_event_show(db, event) and not is_performance(event.title, aliases))):
+            if not is_rehearsal(event.title):
                 continue
             try:
                 await publish_event(db, bot, event, ADMIN_ID, automatic=True)
@@ -329,11 +318,11 @@ async def _auto_create_polls():
 
 async def _send_poll_reminders():
     from datetime import datetime, timedelta
-    from config import ADMIN_ID, TROUPE_FILTER
+    from config import ADMIN_ID
     from modules.calendar.models import CalendarEvent
     from modules.polling.models import Poll
     from modules.polling.delivery import publish_event
-    from modules.theater.routing import event_destination, poll_link, show_aliases, saved_event_show
+    from modules.theater.routing import event_destination, poll_link
     from modules.attendance.roster import missing_members, mention_messages
     from modules.attendance.registration import sync_voter_registrations
     with SessionLocal() as db:
@@ -341,13 +330,11 @@ async def _send_poll_reminders():
         if not settings:
             return
         target = (local_now() + timedelta(days=1)).date()
-        aliases = list(show_aliases(db))
         recipients = {}
         for event in db.query(CalendarEvent).filter_by(is_cancelled=False).all():
             if event.start_time.date() != target:
                 continue
-            if not (is_troupe_event(event.title, aliases, settings.troupe_filter or TROUPE_FILTER)
-                    or (saved_event_show(db, event) and not is_performance(event.title, aliases))):
+            if not is_rehearsal(event.title):
                 continue
             try:
                 show = event_destination(db, event)

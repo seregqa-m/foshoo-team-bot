@@ -15,8 +15,7 @@ from modules.theater.routing import campaign_destinations, poll_link
 from modules.attendance.services import option_day
 from .models import AvailabilityCampaign, AvailabilityPoll, AvailabilityPollOption, AvailabilityVote
 from modules.calendar.models import CalendarEvent
-from modules.calendar.classification import is_troupe_event
-from modules.notifications.models import NotificationSetting
+from modules.calendar.classification import is_rehearsal
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/availability", tags=["availability"])
@@ -28,11 +27,6 @@ def _date_label(dt: date | datetime) -> str:
     day_name = format_date(dt, 'EE', locale='ru_RU').rstrip('.')
     month_day = format_date(dt, 'd MMM', locale='ru_RU')
     return f"{day_name} {month_day}"
-
-
-def _get_troupe_filter(db: Session) -> str:
-    s = db.query(NotificationSetting).filter(NotificationSetting.user_id == ADMIN_ID).first()
-    return (s.troupe_filter if s and s.troupe_filter else None) or "труппа 1"
 
 
 @router.get("/next-month-events")
@@ -47,18 +41,6 @@ def get_next_month_events(db: Session = Depends(get_db), month: str | None = Non
         raise HTTPException(422, "Месяц должен быть в формате ГГГГ-ММ") from exc
     last_next = first_next.replace(day=monthrange(first_next.year, first_next.month)[1])
 
-    troupe_filter = _get_troupe_filter(db)
-
-    show_names_lower = []
-    if GOOGLE_SHEETS_ID and os.path.exists(GOOGLE_CALENDAR_JSON):
-        try:
-            from sheets_client import SheetsClient
-            show_names_lower = [s.lower() for s in SheetsClient(
-                GOOGLE_CALENDAR_JSON, GOOGLE_SHEETS_ID
-            ).get_show_names()]
-        except Exception:
-            pass
-
     events = db.query(CalendarEvent).filter(
         CalendarEvent.is_cancelled == False,
         CalendarEvent.start_time >= datetime.combine(first_next, datetime.min.time()),
@@ -67,7 +49,7 @@ def get_next_month_events(db: Session = Depends(get_db), month: str | None = Non
 
     result = []
     for e in events:
-        if not is_troupe_event(e.title, show_names_lower, troupe_filter):
+        if not is_rehearsal(e.title):
             continue
         result.append({
             "id": e.id,
@@ -165,8 +147,21 @@ def get_non_voters(db: Session = Depends(get_db), campaign_id: int | None = None
     campaign = _find_campaign(db, campaign_id)
     groups = _campaign_non_voters(db, campaign) if campaign and campaign.polls else {}
     participants = {p['user_id']: p for people in groups.values() for p in people}
+    unregistered, roster_warning = [], None
+    if campaign and campaign.polls:
+        try:
+            if not GOOGLE_SHEETS_ID or not os.path.exists(GOOGLE_CALENDAR_JSON):
+                raise ValueError('Sheets not configured')
+            from sheets_client import SheetsClient
+            from .roster import unregistered_cast_members
+            source = SheetsClient(GOOGLE_CALENDAR_JSON, GOOGLE_SHEETS_ID, timeout=8).get_attendance_roster()
+            unregistered = unregistered_cast_members(db, campaign, source)
+        except Exception:
+            logger.warning('Cannot check unregistered cast members', exc_info=True)
+            roster_warning = 'Не удалось сверить составы. Показаны только участники, зарегистрированные у бота.'
     return {'non_voters': [p['username'] or p['name'] for p in participants.values()],
             'participants': list(participants.values()),
+            'unregistered_participants': unregistered, 'roster_warning': roster_warning,
             'chats': [{'chat_id': chat, 'non_voters': users} for chat, users in groups.items()]}
 
 
@@ -236,6 +231,7 @@ def _campaign_dates(req: CreateCampaignRequest, db: Session):
 async def create_campaign(req: CreateCampaignRequest, db: Session = Depends(get_db)):
     from bot import bot
     from babel.dates import format_date
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
     from modules.polling.delivery import delivery_lock, send_publication
     if not req.show_names:
         raise HTTPException(400, 'Не выбраны спектакли')
@@ -275,10 +271,24 @@ async def create_campaign(req: CreateCampaignRequest, db: Session = Depends(get_
                 if req.retry_unconfirmed and not poll.telegram_message_id and poll.delivery_state in ('sending', 'uncertain'):
                     poll.delivery_state = 'pending'
                     db.commit()
+                try:
+                    bot_username = (await bot.me()).username
+                    if not bot_username:
+                        raise ValueError('Bot username is missing')
+                except Exception as exc:
+                    raise HTTPException(502, 'Не удалось подготовить ссылку на результаты. Повторите отправку.') from exc
+                results_button = InlineKeyboardMarkup(inline_keyboard=[[
+                    InlineKeyboardButton(text='Результаты тут',
+                        url=f'https://t.me/{bot_username}?startapp=planning_{campaign.month}')
+                ]])
                 await send_publication(db, bot, poll,
-                    question=f"В какие даты вы свободны? {format_date(selected[0][0], 'MMMM yyyy', locale='ru_RU')}",
+                    question=(
+                        f"Планируем даты спектаклей на {format_date(selected[0][0], 'LLLL yyyy', locale='ru_RU')}\n\n"
+                        "Ответы учитываются при планировании всех спектаклей, в которых вы участвуете. "
+                        "Опрос достаточно заполнить один раз в любой группе."
+                    ),
                     options=[o.date_label for o in sorted(poll.options, key=lambda o: o.option_index)] + ['Ни одна из дат'],
-                    multiple=True)
+                    multiple=True, reply_markup=results_button)
             except HTTPException as exc:
                 errors.append({'chat_id': poll.telegram_chat_id, 'poll_id': poll.id,
                                'delivery_state': poll.delivery_state, 'error': exc.detail})

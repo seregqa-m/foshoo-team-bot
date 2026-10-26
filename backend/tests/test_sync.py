@@ -168,7 +168,8 @@ class AppLifecycleTests(unittest.IsolatedAsyncioTestCase):
             db.commit()
             ids = [e.id for e in db.query(CalendarEvent).all()]
             msg = SimpleNamespace(poll=SimpleNamespace(id='tg-test'), message_id=123)
-            with patch('modules.availability.router._ensure_campaign_columns'), patch('bot.bot.send_poll', AsyncMock(side_effect=[msg, RuntimeError('timeout')])) as send:
+            with patch('modules.availability.router._ensure_campaign_columns'), patch('bot.bot.send_poll', AsyncMock(side_effect=[msg, RuntimeError('timeout')])) as send, \
+                 patch('bot.bot.me', AsyncMock(return_value=SimpleNamespace(username='test_theater_bot'))):
                 result = await create_campaign(CreateCampaignRequest(event_ids=ids, show_names=['Test']), db)
                 self.assertEqual(result['status'], 'partial')
                 sent = db.query(AvailabilityPoll).filter(AvailabilityPoll.telegram_poll_id.isnot(None)).one()

@@ -19,6 +19,9 @@ from sqlalchemy.orm import sessionmaker
 
 class AvailabilityDateTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
+        bot_identity = patch('bot.bot.me', AsyncMock(return_value=SimpleNamespace(username='test_theater_bot')))
+        self.bot_identity = bot_identity.start()
+        self.addCleanup(bot_identity.stop)
         self.engine = create_engine('sqlite://')
         Base.metadata.create_all(self.engine)
         self.db = sessionmaker(bind=self.engine)()
@@ -29,6 +32,15 @@ class AvailabilityDateTests(unittest.IsolatedAsyncioTestCase):
     def tearDown(self):
         self.db.close()
         self.engine.dispose()
+
+    def test_month_events_recognize_bracketed_rehearsal_without_sheets(self):
+        from modules.availability.router import get_next_month_events
+        for title in ['Репетиция [Урод]', 'Урод', 'Спект [Урод]']:
+            self.db.add(CalendarEvent(title=title, start_time=datetime(2026, 10, 7, 19)))
+        self.db.commit()
+        with patch('modules.availability.router.GOOGLE_SHEETS_ID', ''):
+            result = get_next_month_events(db=self.db, month='2026-10')
+        self.assertEqual([event['title'] for event in result['events']], ['Репетиция [Урод]'])
 
     async def test_manual_dates_are_sorted_deduplicated_and_persisted_without_events(self):
         req = CreateCampaignRequest(show_names=['Урод'], dates=['2026-10-10', '2026-10-07', '2026-10-07'])
@@ -42,6 +54,9 @@ class AvailabilityDateTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(all(o.calendar_event_id is None for o in options))
         self.assertEqual(send.call_args.kwargs['options'][-1], 'Ни одна из дат')
         self.assertEqual([dt.date() for dt, _ in columns.call_args.args[0]], [date(2026, 10, 7), date(2026, 10, 10)])
+        button = send.call_args.kwargs['reply_markup'].inline_keyboard[0][0]
+        self.assertEqual(button.text, 'Результаты тут')
+        self.assertEqual(button.url, 'https://t.me/test_theater_bot?startapp=planning_2026-10')
 
     async def test_full_month_splits_into_polls_without_losing_dates(self):
         req = CreateCampaignRequest(show_names=['Урод'], dates=[date(2026, 10, n) for n in range(1, 32)])
@@ -51,6 +66,43 @@ class AvailabilityDateTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result['polls_count'], 4)
         self.assertEqual(self.db.query(AvailabilityPollOption).count(), 31)
         self.assertEqual([len(c.kwargs['options']) for c in send.call_args_list], [10, 10, 10, 5])
+        self.assertTrue(all(c.kwargs['reply_markup'].inline_keyboard[0][0].url.endswith('planning_2026-10')
+                            for c in send.call_args_list))
+
+    async def test_existing_polls_are_not_resent_or_edited_when_results_links_are_added(self):
+        req = CreateCampaignRequest(show_names=['Урод'], dates=['2026-12-23'])
+        send = AsyncMock(return_value=SimpleNamespace(poll=SimpleNamespace(id='old'), message_id=10))
+        with patch('bot.bot.send_poll', send), patch('modules.availability.router._ensure_campaign_columns'), \
+             patch('bot.bot.edit_message_reply_markup', AsyncMock()) as edit:
+            await create_campaign(req, self.db)
+            self.bot_identity.reset_mock()
+            self.bot_identity.side_effect = RuntimeError('offline')
+            result = await create_campaign(req, self.db)
+        self.assertEqual(result['status'], 'sent')
+        self.assertEqual(send.await_count, 1)
+        self.bot_identity.assert_not_awaited()
+        edit.assert_not_awaited()
+        self.assertEqual(send.call_args.kwargs['reply_markup'].inline_keyboard[0][0].url,
+                         'https://t.me/test_theater_bot?startapp=planning_2026-12')
+        self.assertEqual(send.call_args.kwargs['question'],
+                         'Планируем даты спектаклей на декабрь 2026\n\n'
+                         'Ответы учитываются при планировании всех спектаклей, в которых вы участвуете. '
+                         'Опрос достаточно заполнить один раз в любой группе.')
+
+    async def test_link_lookup_failure_leaves_publication_pending_and_retryable(self):
+        req = CreateCampaignRequest(show_names=['Урод'], dates=['2027-01-03'])
+        self.bot_identity.side_effect = RuntimeError('offline')
+        send = AsyncMock(return_value=SimpleNamespace(poll=SimpleNamespace(id='new'), message_id=11))
+        with patch('bot.bot.send_poll', send), patch('modules.availability.router._ensure_campaign_columns'):
+            result = await create_campaign(req, self.db)
+            self.assertEqual(result['status'], 'partial')
+            send.assert_not_awaited()
+            self.assertEqual(self.db.query(AvailabilityPoll).one().delivery_state, 'pending')
+            self.bot_identity.side_effect = None
+            self.assertEqual((await create_campaign(req, self.db))['status'], 'sent')
+        self.assertEqual(send.await_count, 1)
+        self.assertEqual(send.call_args.kwargs['reply_markup'].inline_keyboard[0][0].url,
+                         'https://t.me/test_theater_bot?startapp=planning_2027-01')
 
     def test_invalid_selection_is_rejected(self):
         for payload in [{'dates': []}, {'dates': ['2026-10-01', '2026-11-01']}, {'dates': ['2026-10-01'], 'event_ids': [1]}]:
@@ -60,7 +112,7 @@ class AvailabilityDateTests(unittest.IsolatedAsyncioTestCase):
             CreateCampaignRequest(show_names=['Урод'], dates=['2026-02-30'])
 
     def test_legacy_events_are_still_supported_and_same_day_is_one_option(self):
-        events = [CalendarEvent(title='Труппа 1', start_time=datetime(2026, 10, 3, hour)) for hour in (12, 19)]
+        events = [CalendarEvent(title='Репетиция [Урод]', start_time=datetime(2026, 10, 3, hour)) for hour in (12, 19)]
         self.db.add_all(events); self.db.commit()
         selected = _campaign_dates(CreateCampaignRequest(show_names=['Урод'], event_ids=[e.id for e in events]), self.db)
         self.assertEqual(len(selected), 1)
@@ -89,6 +141,8 @@ class AvailabilityDateTests(unittest.IsolatedAsyncioTestCase):
 
     def test_existing_database_migration_preserves_options_and_is_repeatable(self):
         from main import run_migrations
+        # main registers the remaining models; standalone test runs need them too.
+        Base.metadata.create_all(self.engine)
         with self.engine.begin() as conn:
             conn.execute(text('ALTER TABLE availability_poll_options DROP COLUMN selected_date'))
             conn.execute(text("INSERT INTO availability_poll_options (id, option_index, calendar_event_id) VALUES (1, 0, 99)"))
@@ -104,12 +158,12 @@ class AvailabilityDateTests(unittest.IsolatedAsyncioTestCase):
     def test_month_events_default_to_next_month_and_support_leap_year(self):
         from modules.availability.router import get_next_month_events
         events = [
-            CalendarEvent(title='труппа 1', start_time=datetime(2027, 12, 31, 23)),
-            CalendarEvent(title='труппа 1', start_time=datetime(2028, 1, 1)),
-            CalendarEvent(title='труппа 1', start_time=datetime(2028, 2, 29, 23, 59)),
-            CalendarEvent(title='труппа 1', start_time=datetime(2028, 3, 1)),
-            CalendarEvent(title='труппа 2', start_time=datetime(2028, 2, 5)),
-            CalendarEvent(title='труппа 1', start_time=datetime(2028, 2, 6), is_cancelled=True),
+            CalendarEvent(title='Репетиция [Урод]', start_time=datetime(2027, 12, 31, 23)),
+            CalendarEvent(title='Репетиция [Урод]', start_time=datetime(2028, 1, 1)),
+            CalendarEvent(title='Репетиция [Урод]', start_time=datetime(2028, 2, 29, 23, 59)),
+            CalendarEvent(title='Репетиция [Урод]', start_time=datetime(2028, 3, 1)),
+            CalendarEvent(title='Урод [Спект]', start_time=datetime(2028, 2, 5)),
+            CalendarEvent(title='Репетиция [Урод]', start_time=datetime(2028, 2, 6), is_cancelled=True),
         ]
         self.db.add_all(events); self.db.commit()
         with patch('modules.availability.router.local_now', return_value=datetime(2027, 12, 15)), patch('modules.availability.router.GOOGLE_SHEETS_ID', ''):

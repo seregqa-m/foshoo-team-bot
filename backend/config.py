@@ -49,20 +49,20 @@ MODERATION_ADMIN_ID = int(os.getenv("MODERATION_ADMIN_ID", "").strip() or ADMIN_
 # Telegram Group Chat (для отправки опросов)
 GROUP_CHAT_ID = int(os.getenv("GROUP_CHAT_ID", 0))
 
-# Troupe filter (substring used to identify main troupe events in calendar titles)
-TROUPE_FILTER = os.getenv("TROUPE_FILTER", "труппа 1")
-
 # Logging
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 
-# AI Assistant (YandexGPT via Foundation Models REST API)
+# AI Assistant: OpenAI-compatible Foundation Models providers.
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "yandex").strip().lower()
+CLOUDRU_API_KEY = os.getenv("CLOUDRU_API_KEY", "")
+CLOUDRU_MODEL = os.getenv("CLOUDRU_MODEL", "openai/gpt-oss-120b")
 YANDEX_API_KEY = os.getenv("YANDEX_API_KEY", "")
 YANDEX_FOLDER_ID = os.getenv("YANDEX_FOLDER_ID", "")
 YANDEX_GPT_MODEL = os.getenv("YANDEX_GPT_MODEL", "yandexgpt/latest")
 LLM_ENABLED = os.getenv("LLM_ENABLED", "false").lower() == "true"
 ASSISTANT_ENABLED = LLM_ENABLED and os.getenv("ASSISTANT_ENABLED", "false").lower() == "true"
 LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.3"))
-LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "1500"))
+LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "4096" if LLM_PROVIDER == "cloudru" else "1500"))
 # reasoning_effort: low | medium | high (только для reasoning-моделей типа gpt-oss)
 LLM_REASONING_EFFORT = os.getenv("LLM_REASONING_EFFORT", "")
 

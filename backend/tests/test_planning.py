@@ -179,15 +179,43 @@ class PlanningEdgeTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             assignment_updates(source, plan, 'B', 'Урод', {'Летте': 'Борис', 'Фанни': 'Анна'})
 
-    def test_admin_dependency_is_enforced_after_telegram_auth(self):
+    def test_members_can_read_but_only_admins_can_assign(self):
         from fastapi import FastAPI, Depends
         from fastapi.testclient import TestClient
-        from core.access import authorize_api, TelegramUser, _access_cache
+        from core.access import authorize_api, TelegramUser
+        from core.database import get_db
         from modules.planning.router import router
         from unittest.mock import AsyncMock
         app = FastAPI(); app.include_router(router, dependencies=[Depends(authorize_api)])
-        _access_cache.clear()
-        with patch('core.access.verify_init_data', return_value=TelegramUser(42, 'actor')), patch('core.access._is_group_admin', AsyncMock(return_value=False)), patch('core.access.is_super_admin', AsyncMock(return_value=False)), patch('core.access._known_actor', return_value=True):
-            client = TestClient(app)
-            self.assertEqual(client.get('/api/planning').status_code, 403)
-        _access_cache.clear()
+        db = MagicMock()
+        db.query.return_value.filter_by.return_value.all.return_value = []
+        app.dependency_overrides[get_db] = lambda: db
+        client = TestClient(app)
+        self.assertEqual(client.get('/api/planning').status_code, 401)
+        self.assertEqual(client.post('/api/planning/assign', json={}).status_code, 401)
+        with patch('core.access.verify_init_data', return_value=TelegramUser(42, 'actor')), \
+             patch('core.access._permissions', AsyncMock(return_value=(True, False, False))) as permissions, \
+             patch('modules.planning.router.get_client'), \
+             patch('modules.planning.router.read_plan', return_value=({}, {'month': '2026-12', 'slots': []})) as read:
+            response = client.get('/api/planning?month=2026-12')
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json()['month'], '2026-12')
+            read.assert_called_once()
+            self.assertEqual(read.call_args.args[1], '2026-12')
+            self.assertEqual(client.post('/api/planning/assign', json={}).status_code, 403)
+            self.assertEqual(read.call_count, 1)
+            # Losing membership revokes read access as well.
+            permissions.return_value = (False, False, False)
+            self.assertEqual(client.get('/api/planning?month=2026-12').status_code, 403)
+            permissions.return_value = (True, True, False)
+            self.assertEqual(client.get('/api/planning?month=2026-12').status_code, 200)
+            # Admin passes authorization and reaches body validation.
+            self.assertEqual(client.post('/api/planning/assign', json={}).status_code, 422)
+
+    def test_assignment_route_has_its_own_admin_guard(self):
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+        from modules.planning.router import router
+        app = FastAPI(); app.include_router(router)
+        # A missing admin state must fail closed, even without the shared guard.
+        self.assertEqual(TestClient(app).post('/api/planning/assign', json={}).status_code, 403)

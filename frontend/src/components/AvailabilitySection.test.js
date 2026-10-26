@@ -28,6 +28,28 @@ beforeEach(() => {
 });
 afterEach(() => { act(() => root.unmount()); container.remove(); jest.clearAllMocks(); });
 
+test('shows unregistered cast members even when registered participants all answered, without offering to ping them', async () => {
+  client.get.mockImplementation(url => Promise.resolve({ data: url.endsWith('/current')
+    ? { campaign: { id: 2, month: '2026-12', show_names: ['Урод'], polls: [] } }
+    : { participants: [], unregistered_participants: [{ name: 'Никита Мягков', username: 'q_poo', show_names: ['Урод', 'Любовь Громова'], reason: 'not_registered', can_ping: false }] } }));
+  await act(async () => root.render(<AvailabilitySection showNames={['Урод']} />));
+  await act(async () => button('Посмотреть неответивших').click());
+  expect(container.textContent).toContain('Никита Мягков (@q_poo)');
+  expect(container.textContent).toContain('Урод, Любовь Громова');
+  expect(container.textContent).toContain('не включены в пинг');
+  expect(button('Пингануть')).toBeUndefined();
+  expect(client.post).not.toHaveBeenCalled();
+});
+
+test('shows a roster warning when cast verification is unavailable', async () => {
+  client.get.mockImplementation(url => Promise.resolve({ data: url.endsWith('/current')
+    ? { campaign: { id: 2, month: '2026-12', polls: [] } }
+    : { participants: [], roster_warning: 'Не удалось сверить составы.' } }));
+  await act(async () => root.render(<AvailabilitySection showNames={['Урод']} />));
+  await act(async () => button('Посмотреть неответивших').click());
+  expect(container.querySelector('[role="alert"]').textContent).toContain('Не удалось сверить составы');
+});
+
 test('preselects unique calendar dates and sends only the final selected dates', async () => {
   await open();
   expect(container.querySelectorAll('.availability-calendar__day')).toHaveLength(31);

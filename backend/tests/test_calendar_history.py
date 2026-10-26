@@ -57,6 +57,9 @@ class CalendarHistoryTests(unittest.TestCase):
             self.assertEqual(call.kwargs['timeMax'], end.isoformat())
 
     def test_october_11_alias_is_classified_in_calendar_api(self):
+        from modules.theater.models import TheaterShow
+        show = TheaterShow(name='Любовь Громова', normalized_name='любовь громова')
+        self.db.add(show)
         self.db.add(CalendarEvent(title='ЛГ[Спект]', start_time=datetime(2026, 10, 11, 19),
                                   end_time=datetime(2026, 10, 11, 21)))
         self.db.commit()
@@ -65,6 +68,33 @@ class CalendarHistoryTests(unittest.TestCase):
         self.assertEqual(event['title'], 'ЛГ[Спект]')
         self.assertEqual(event['event_type'], 'performance')
         self.assertEqual(event['show_name'], 'Любовь Громова')
+        self.assertEqual(event['show_id'], show.id)
+
+    def test_calendar_uses_stable_catalog_identity_for_aliases_and_manual_selection(self):
+        from modules.theater.models import TheaterShow, TheaterShowAlias
+        show = TheaterShow(name='Цианистый Калий', normalized_name='цианистый калий')
+        other = TheaterShow(name='Урод', normalized_name='урод')
+        self.db.add_all([show, other])
+        self.db.flush()
+        self.db.add(TheaterShowAlias(normalized_name='калий', show_id=show.id))
+        titles = ['Репетиция [Цианистый Калий]', 'Калий [Реп]', 'Цианистый Калий',
+                  'Разбор [Реп]', 'Калий и Урод [Реп]', 'Труппа 1', 'Труппа 2']
+        for title in titles:
+            self.db.add(CalendarEvent(title=title, start_time=datetime(2026, 10, 7, 19),
+                end_time=datetime(2026, 10, 7, 21),
+                poll_show_id=show.id if title == 'Разбор [Реп]' else None,
+                poll_show_title=title if title == 'Разбор [Реп]' else None))
+        self.db.commit()
+        with patch('modules.calendar.services.local_now', return_value=as_local(datetime(2026, 10, 6))):
+            events = {e['title']: e for e in get_events(db=self.db)['events']}
+        for title in titles[:4]:
+            self.assertEqual(events[title]['show_id'], show.id)
+            self.assertEqual(events[title]['show_name'], show.name)
+        self.assertEqual(events[titles[2]]['event_type'], 'performance')
+        self.assertIsNone(events[titles[4]]['show_id'])  # Ambiguous: no arbitrary color or chat.
+        for title in titles[-2:]:
+            self.assertIsNone(events[title]['event_type'])
+            self.assertIsNone(events[title]['show_id'])
 
     def test_schedule_column_resolves_alias_but_does_not_assign_rehearsal(self):
         from sheets_client import SheetsClient, SCHEDULE_SHEET
@@ -79,7 +109,8 @@ class CalendarHistoryTests(unittest.TestCase):
             count = client.ensure_schedule_columns([
                 (datetime(2026, 10, 11, 19), 'ЛГ[Спект]'),
                 (datetime(2026, 10, 12, 19), 'ЛГ[Реп]'),
+                (datetime(2026, 10, 13, 19), 'Репетиция [Любовь Громова]'),
             ])
-        self.assertEqual(count, 2)
+        self.assertEqual(count, 3)
         values = client.api.values.return_value.update.call_args.kwargs['body']['values']
-        self.assertEqual(values[1], ['ЛЮБОВЬ ГРОМОВА', ''])
+        self.assertEqual(values[1], ['ЛЮБОВЬ ГРОМОВА', '', ''])

@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 @router.get("/shows")
 def get_show_names(db: Session = Depends(get_db)):
-    """Вернуть список названий спектаклей Труппы 1 из Google Sheets."""
+    """Вернуть список названий спектаклей из Google Sheets."""
     from config import GOOGLE_CALENDAR_JSON, GOOGLE_SHEETS_ID
     from sheets_client import SheetsClient
 

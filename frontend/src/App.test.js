@@ -13,7 +13,7 @@ jest.mock('./components/AssistantView', () => {
   };
 });
 jest.mock('./components/FinanceView', () => () => <div>finance</div>);
-jest.mock('./components/CalendarView', () => () => <div>calendar</div>);
+jest.mock('./components/CalendarView', () => ({ initialPlanningMonth }) => <div data-planning-month={initialPlanningMonth}>calendar</div>);
 jest.mock('./components/LinksView', () => () => <div>links</div>);
 jest.mock('./components/NotificationsView', () => ({ isSuperAdmin }) => <div>{isSuperAdmin ? 'global settings' : 'group settings'}</div>);
 
@@ -23,14 +23,14 @@ beforeEach(() => {
   global.IS_REACT_ACT_ENVIRONMENT = true;
   container = document.createElement('div'); document.body.appendChild(container);
   root = createRoot(container);
-  client.get.mockImplementation(url => Promise.resolve({ data: url.endsWith('/check') ? { allowed: true, is_admin: true, user_id: 42, username: 'actor' } : { troupe_filter: 'труппа 1' } }));
+  client.get.mockImplementation(url => Promise.resolve({ data: url.endsWith('/check') ? { allowed: true, is_admin: true, user_id: 42, username: 'actor' } : { assistant_enabled: false } }));
 });
 afterEach(() => { act(() => root.unmount()); container.remove(); delete window.Telegram; jest.clearAllMocks(); });
 
 test('switching tabs preserves the assistant draft', async () => {
   const regular = client.get.getMockImplementation();
   client.get.mockImplementation(url => url.endsWith('app-config')
-    ? Promise.resolve({ data: { troupe_filter: 'труппа 1', assistant_enabled: true } }) : regular(url));
+    ? Promise.resolve({ data: { assistant_enabled: true } }) : regular(url));
   await act(async () => root.render(<App />));
   act(() => Array.from(container.querySelectorAll('nav button')).find(b => b.textContent.includes('Ассистент')).click());
   const draft = container.querySelector('input');
@@ -50,7 +50,21 @@ test('failed access check does not open the application', async () => {
   expect(container.textContent).toContain('Проверка доступа недоступна');
 });
 
-test('mutations refresh the shared troupe filter', async () => {
+test('passes the Telegram destination to the calendar after authorization', async () => {
+  window.Telegram.WebApp.initDataUnsafe = { start_param: 'planning_2026-12' };
+  await act(async () => root.render(<App />));
+  expect(container.querySelector('[data-planning-month]').dataset.planningMonth).toBe('2026-12');
+  expect(container.querySelector('nav button.active').textContent).toContain('Расписание');
+});
+
+test('a planning link cannot bypass application access checks', async () => {
+  window.Telegram.WebApp.initDataUnsafe = { start_param: 'planning_2026-12' };
+  client.get.mockRejectedValue({ response: { status: 403 } });
+  await act(async () => root.render(<App />));
+  expect(container.querySelector('[data-planning-month]')).toBeNull();
+});
+
+test('mutations refresh application configuration', async () => {
   await act(async () => root.render(<App />));
   const before = client.get.mock.calls.filter(([url]) => url.endsWith('app-config')).length;
   await act(async () => window.dispatchEvent(new Event(DATA_CHANGED_EVENT)));

@@ -25,6 +25,16 @@ const open = async () => {
   await act(async () => container.querySelector('.planning-cell').click());
 };
 
+test('loads the linked month immediately and lets the user change it', async () => {
+  plan.month = '2026-12';
+  await act(async () => root.render(<PlanningView onClose={() => {}} initialMonth="2026-12" />));
+  expect(client.get).toHaveBeenCalledTimes(1);
+  expect(client.get).toHaveBeenCalledWith('/api/planning', { params: { month: '2026-12' } });
+  expect(container.querySelector('input[type="month"]').value).toBe('2026-12');
+  await act(async () => container.querySelector('[aria-label="Следующий месяц планирования"]').click());
+  expect(client.get).toHaveBeenLastCalledWith('/api/planning', { params: { month: '2027-01' } });
+});
+
 test('uses the server default month and marks today in the planning timezone at the UTC month boundary', async () => {
   const clock = jest.spyOn(Date, 'now').mockReturnValue(new Date('2028-09-30T21:05:00Z').getTime());
   try {
@@ -101,5 +111,29 @@ test('attendance is visible without roles but cannot bypass cast assignment requ
   expect(container.textContent).toContain('смогут: 8');
   expect(container.textContent).toContain('не ответили: 1');
   expect(button('Назначить спектакль')).toBeUndefined();
+  expect(client.post).not.toHaveBeenCalled();
+});
+
+test.each([false, true])('members can inspect roles and answers but cannot assign or resume (pending: %s)', async pending => {
+  if (pending) plan.slots[0].operation = { status: 'calendar_created', show_name: 'Урод', cast: { Летте: 'Борис', Фанни: 'Анна' }, start_time: '2028-10-01T18:00:00+03:00', end_time: '2028-10-01T20:00:00+03:00', location: 'Зал' };
+  await act(async () => root.render(<PlanningView onClose={() => {}} initialMonth="2028-10" />));
+  expect(container.textContent).not.toContain('Опрос занятости');
+  expect(client.get).not.toHaveBeenCalledWith('/api/availability/current', undefined);
+  await act(async () => container.querySelector('.planning-cell').click());
+  const dialog = container.querySelector('[role="dialog"]');
+  expect(dialog.textContent).toContain('Летте');
+  expect(dialog.textContent).toContain('Анна: Свободен');
+  expect(dialog.querySelector('form')).toBeNull();
+  expect(dialog.querySelector('select, input, button[type="submit"]')).toBeNull();
+  expect(client.post).not.toHaveBeenCalled();
+});
+
+test('losing admin access removes assignment controls in an already open dialog', async () => {
+  await open();
+  expect(button('Назначить спектакль')).toBeDefined();
+  await act(async () => root.render(<PlanningView onClose={() => {}} isAdmin={false} />));
+  expect(container.querySelector('[role="dialog"]')).not.toBeNull();
+  expect(button('Назначить спектакль')).toBeUndefined();
+  expect(container.querySelector('form')).toBeNull();
   expect(client.post).not.toHaveBeenCalled();
 });

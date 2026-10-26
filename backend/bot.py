@@ -248,11 +248,8 @@ def _prepare_campaign(year, month_num, chat_id=None):
     from core.database import SessionLocal
     from modules.calendar.models import CalendarEvent
     from modules.theater.models import TheaterShow
-    from modules.theater.routing import show_aliases
-    from modules.calendar.classification import is_troupe_event
-    from modules.notifications.models import NotificationSetting
+    from modules.calendar.classification import is_rehearsal
     from modules.availability.router import CreateCampaignRequest
-    from config import ADMIN_ID, TROUPE_FILTER
     first = datetime(year, month_num, 1)
     last = datetime(year, month_num, calendar.monthrange(year, month_num)[1], 23, 59, 59)
     with SessionLocal() as db:
@@ -260,15 +257,12 @@ def _prepare_campaign(year, month_num, chat_id=None):
         if chat_id is not None:
             query = query.filter_by(telegram_chat_id=chat_id)
         shows = [s.name for s in query.all()]
-        settings = db.query(NotificationSetting).filter_by(user_id=ADMIN_ID).first()
-        troupe = ((settings.troupe_filter if settings else None) or TROUPE_FILTER).lower()
-        aliases = list(show_aliases(db))
         events = db.query(CalendarEvent).filter(
             CalendarEvent.start_time >= first, CalendarEvent.start_time <= last,
             CalendarEvent.is_cancelled == False,
         ).order_by(CalendarEvent.start_time).all()
         return CreateCampaignRequest(show_names=shows,
-            event_ids=[e.id for e in events if is_troupe_event(e.title, aliases, troupe)])
+            event_ids=[e.id for e in events if is_rehearsal(e.title)])
 
 
 async def _launch_campaign_for_month(year: int, month_num: int, chat_id: int) -> dict:
