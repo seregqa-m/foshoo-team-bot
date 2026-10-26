@@ -15,11 +15,13 @@ beforeEach(() => {
     show: 'Урод', status: 'ready', covered: 2, total: 2, incomplete: false,
     roles: [{ name: 'Летте', actors }, { name: 'Фанни', actors: [actors[0]] }], suggested_cast: { Летте: 'Борис', Фанни: 'Анна' },
   }] }] };
-  client.get.mockResolvedValue({ data: plan }); client.post.mockResolvedValue({ data: {} });
+  client.get.mockImplementation(url => Promise.resolve({ data: url === '/api/availability/current'
+    ? { campaign: null } : url === '/api/sheets/shows' ? { shows: ['Урод'] } : plan }));
+  client.post.mockResolvedValue({ data: {} });
 });
 afterEach(() => { act(() => root.unmount()); container.remove(); jest.clearAllMocks(); });
 const open = async () => {
-  await act(async () => root.render(<PlanningView onClose={() => {}} />));
+  await act(async () => root.render(<PlanningView onClose={() => {}} isAdmin />));
   await act(async () => container.querySelector('.planning-cell').click());
 };
 
@@ -43,6 +45,7 @@ test('uses the server default month and marks today in the planning timezone at 
 
 test('shows role coverage and submits the chosen cast, time, location and reviewed snapshot', async () => {
   await open();
+  expect(button('Запустить опрос занятости')).toBeDefined();
   expect(container.textContent).toContain('2/2');
   expect(container.querySelector('[aria-label="Исполнитель: Летте"]').value).toBe('Борис');
   const place = container.querySelector('input[placeholder="Зал или адрес"]');

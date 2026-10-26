@@ -97,11 +97,11 @@ function App() {
   }, [allowed, dataVersion]);
 
   useEffect(() => {
-    if ((activeTab === 'assistant' && (!assistantEnabled || !canFinance)) || (activeTab === 'settings' && !isAdmin)
+    if ((activeTab === 'assistant' && (!assistantEnabled || !canFinance))
         || (activeTab === 'finance' && !canFinance)) {
       setActiveTab('calendar');
     }
-  }, [activeTab, assistantEnabled, isAdmin, canFinance]);
+  }, [activeTab, assistantEnabled, canFinance]);
 
   if (allowed === null) {
     return <div role="status" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', fontFamily: 'sans-serif' }}>{loadingStage}</div>;
@@ -144,9 +144,6 @@ function App() {
         {visitedTabs.includes('links') && <section hidden={activeTab !== 'links'}>
           <LinksView isAdmin={isAdmin} />
         </section>}
-        {isAdmin && visitedTabs.includes('settings') && <section hidden={activeTab !== 'settings'}>
-          <NotificationsView userId={userId} isSuperAdmin={isSuperAdmin} />
-        </section>}
       </main>
 
       <nav className="tab-bar">
@@ -174,12 +171,6 @@ function App() {
         >
           🗂️<span>Ресурсы</span>
         </button>
-        {isAdmin && <button
-          className={activeTab === 'settings' ? 'active' : ''}
-          onClick={() => selectTab('settings')}
-        >
-          ⚙️<span>Настройки</span>
-        </button>}
       </nav>
     </div>
   );

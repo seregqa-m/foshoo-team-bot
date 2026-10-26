@@ -613,7 +613,7 @@ export default function CalendarView({ userId, isAdmin, trouFilter = 'трупп
     .filter(e => new Date(e.end_time).getTime() > now)
     .sort((a, b) => new Date(a.start_time) - new Date(b.start_time));
 
-  if (planning && isAdmin) return <PlanningView onClose={() => setPlanning(false)} dataVersion={dataVersion} />;
+  if (planning && isAdmin) return <PlanningView onClose={() => setPlanning(false)} dataVersion={dataVersion} isAdmin={isAdmin} />;
 
   if (loading && events.length === 0) return <div className="empty-state">Загрузка...</div>;
 

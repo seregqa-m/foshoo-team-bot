@@ -1,6 +1,6 @@
 import React, { act } from 'react';
 import { createRoot } from 'react-dom/client';
-import { AvailabilitySection } from './NotificationsView';
+import AvailabilitySection from './AvailabilitySection';
 import client from '../api/client';
 
 jest.mock('../api/client', () => ({ __esModule: true, default: { get: jest.fn(), post: jest.fn() } }));

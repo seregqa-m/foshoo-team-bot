@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import client from '../api/client';
 import './PlanningView.css';
+import AvailabilitySection from './AvailabilitySection';
 
 const STATUS = { ready: 'Состав собирается', waiting: 'Ждём ответы', blocked: 'Не хватает исполнителей', occupied: 'Дата занята', ambiguous: 'Дубли даты в графике' };
 const canPlay = actor => ['yes', 'assigned'].includes(actor.status);
@@ -85,7 +86,16 @@ function CastDialog({ slot, cell, month, fingerprint, timezone, onClose, onSaved
   );
 }
 
-export default function PlanningView({ onClose, dataVersion = 0 }) {
+export default function PlanningView({ onClose, dataVersion = 0, isAdmin = false }) {
+  const [showNames, setShowNames] = useState([]);
+  useEffect(() => {
+    if (!isAdmin) return;
+    let active = true;
+    client.get('/api/sheets/shows')
+      .then(({ data }) => { if (active) setShowNames(data.shows || []); })
+      .catch(() => {});
+    return () => { active = false; };
+  }, [isAdmin]);
   const [month, setMonth] = useState('');
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -178,6 +188,7 @@ export default function PlanningView({ onClose, dataVersion = 0 }) {
           </div>}
         <p className="planning-note">Ответы из всех чатов и обоих типов опросов общие на дату. Последнее изменение ответа учитывается для всех спектаклей. Один человек занимает одну роль. Назначение на другую дату не меняет остальные ответы.</p>
       </>}
+      {isAdmin && <AvailabilitySection showNames={showNames} />}
       {selectedSlot && selectedCell && <CastDialog key={`${selectedSlot.column}:${selectedCell.show}`} slot={selectedSlot} cell={selectedCell}
         month={data.month} fingerprint={data.fingerprint} timezone={data.timezone} onClose={() => setSelected(null)} onSaved={saved} />}
     </div>

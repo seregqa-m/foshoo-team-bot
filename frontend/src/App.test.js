@@ -58,11 +58,14 @@ test('mutations refresh the shared troupe filter', async () => {
 });
 
 test('self-revocation removes global controls while retaining group-admin settings', async () => {
-  const regular = client.get.getMockImplementation();
+  const regular = url => Promise.resolve({ data: url.endsWith('/check')
+    ? { allowed: true, is_admin: true, user_id: 42 }
+    : { assistant_enabled: true } });
   client.get.mockImplementation(url => url.endsWith('/check')
     ? Promise.resolve({ data: { allowed: true, is_admin: true, is_superadmin: true, user_id: 42 } }) : regular(url));
   await act(async () => root.render(<App />));
-  act(() => Array.from(container.querySelectorAll('nav button')).find(b => b.textContent.includes('Настройки')).click());
+  expect(container.querySelector('nav').textContent).not.toContain('Настройки');
+  act(() => Array.from(container.querySelectorAll('nav button')).find(b => b.textContent.includes('Ассистент')).click());
   expect(container.textContent).toContain('global settings');
   client.get.mockImplementation(regular);
   await act(async () => window.dispatchEvent(new Event(DATA_CHANGED_EVENT)));
@@ -70,13 +73,13 @@ test('self-revocation removes global controls while retaining group-admin settin
   expect(container.textContent).toContain('group settings');
 });
 
-test('without LLM the calendar opens and admins can reach settings', async () => {
+test('without LLM the calendar opens without a separate settings tab', async () => {
   await act(async () => root.render(<App />));
   expect(container.textContent).not.toContain('Ассистент');
   expect(container.querySelector('input')).toBeNull();
   expect(container.querySelector('nav button.active').textContent).toContain('Расписание');
-  act(() => Array.from(container.querySelectorAll('nav button')).find(b => b.textContent.includes('Настройки')).click());
-  expect(container.textContent).toContain('group settings');
+  expect(container.querySelector('nav').textContent).not.toContain('Настройки');
+  expect(container.textContent).not.toContain('group settings');
 });
 
 test('ordinary members do not see administration settings', async () => {
