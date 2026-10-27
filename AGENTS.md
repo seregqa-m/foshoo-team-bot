@@ -256,7 +256,7 @@ At startup `main.py` deletes any active Telegram webhook (`bot.delete_webhook`) 
 - Local `output/`, `tmp/` and legacy `knowledge-base/` are ignored artifacts,
   excluded from releases. They are not sources of project context.
 
-### AI comment moderation (27 October 2026, source change)
+### AI comment moderation (27 October 2026)
 
 - Replaces the historical local-rule moderation described above. `classifier.py`
   uses the assistant's `get_llm_client()` with a separate moderation prompt and no
@@ -273,4 +273,6 @@ At startup `main.py` deletes any active Telegram webhook (`bot.delete_webhook`) 
   their old membership; duplicate callbacks and uncertain deletions never retry
   destructive actions. Existing legacy callback cards remain supported.
 - New tables are created by startup `create_all`; existing comment audit is kept.
-  This source note alone does not indicate production deployment.
+  Deployed to Cloud.ru as `49b0f6253ec071f610e3bdc6d2fb4daf5e9cf943`.
+  Model, Telegram permissions, DB integrity, polling, health and release hashes
+  verified after deployment; see `docs/cloudru-migration.md` for the backup.
