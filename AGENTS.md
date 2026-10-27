@@ -255,3 +255,22 @@ At startup `main.py` deletes any active Telegram webhook (`bot.delete_webhook`) 
   Verify revision, backend hashes, public index/JS and health after deployment.
 - Local `output/`, `tmp/` and legacy `knowledge-base/` are ignored artifacts,
   excluded from releases. They are not sources of project context.
+
+### AI comment moderation (27 October 2026, source change)
+
+- Replaces the historical local-rule moderation described above. `classifier.py`
+  uses the assistant's `get_llm_client()` with a separate moderation prompt and no
+  tools. Only comment text/caption and hidden links are model inputs; author data
+  is retained for audit and admin exemptions. Strict results: spam/allow/review.
+- Spam is auto-deleted when enabled; uncertainty, disabled/unavailable LLM and
+  invalid responses require human validation. `MODERATION_AUTO_DELETE=false`
+  also requires validation for confident spam. No regex fallback.
+- SQLite decisions last 24 hours without sliding expiry. Cosmetic text variants
+  share a key across authors; words, punctuation and hidden link targets remain
+  significant. Model allow decisions are not cached; human decisions are.
+- Repeated review comments share one durable validation card. Confirmation checks
+  each stored revision and current admin status before deletion. Edits invalidate
+  their old membership; duplicate callbacks and uncertain deletions never retry
+  destructive actions. Existing legacy callback cards remain supported.
+- New tables are created by startup `create_all`; existing comment audit is kept.
+  This source note alone does not indicate production deployment.

@@ -22,3 +22,24 @@ class ModerationComment(Base):
     state = Column(String, nullable=False, default='checking')
     notification_id = Column(BigInteger)
     updated_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class ModerationDecision(Base):
+    """24-hour content cache; review entries also own one validation card."""
+    __tablename__ = 'moderation_decisions'
+    id = Column(Integer, primary_key=True)
+    channel_id = Column(BigInteger, nullable=False)
+    chat_id = Column(BigInteger, nullable=False, index=True)
+    recipient_id = Column(BigInteger, nullable=False)
+    fingerprint = Column(String(64), nullable=False, index=True)
+    verdict = Column(String, nullable=False)
+    reason = Column(Text, nullable=False)
+    expires_at = Column(DateTime, nullable=False, index=True)
+    notification_id = Column(BigInteger)
+
+
+class ModerationReviewItem(Base):
+    __tablename__ = 'moderation_review_items'
+    decision_id = Column(Integer, primary_key=True)
+    comment_id = Column(Integer, primary_key=True)
+    revision = Column(Integer, nullable=False)

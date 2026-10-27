@@ -8,7 +8,9 @@ from unittest.mock import AsyncMock, patch
 with patch.dict(os.environ, {'BOT_TOKEN': '123456:offline-test-token', 'DATABASE_URL': 'sqlite://',
                              'GOOGLE_CALENDAR_JSON': '/missing'}, clear=True), patch('dotenv.load_dotenv'):
     from core.database import Base
-    from modules.moderation.models import ModerationComment
+    from modules.moderation.models import ModerationComment, ModerationDecision, ModerationReviewItem
+    from modules.moderation.classifier import Verdict, fingerprint
+    from modules.assistant.llm_client import LLMProviderError
     from modules.moderation.services import ModerationService, classify
     from bot import dp, bot as app_bot, handle_group_message
 
@@ -19,6 +21,10 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 CHANNEL, DISCUSSION = -100100, -100200
+EASY_EARNINGS_SPAM = (
+    'Есть возможность хорошо заработать за два-три часа. '
+    'Нечего сложного справится любой.10 000 руб.'
+)
 
 
 def message(**kwargs):
@@ -40,7 +46,7 @@ class ModerationTests(unittest.IsolatedAsyncioTestCase):
                       get_chat_member=AsyncMock(side_effect=self.get_member),
                       send_message=AsyncMock(return_value=NS(message_id=500)),
                       delete_message=AsyncMock(return_value=True), edit_message_text=AsyncMock())
-        self.classifier = AsyncMock(return_value=(True, 'Реклама заработка в тексте'))
+        self.classifier = AsyncMock(return_value=Verdict('spam', 'Реклама заработка в тексте'))
         mocked = patch('modules.moderation.services.classify', self.classifier)
         mocked.start()
         self.addCleanup(mocked.stop)
@@ -60,7 +66,7 @@ class ModerationTests(unittest.IsolatedAsyncioTestCase):
             return db.query(ModerationComment).one().state
 
     def query(self, action='spam', revision=1, user=42, notification_id=500):
-        return NS(data=f'mod:{action}:1:{revision}', from_user=NS(id=user),
+        return NS(data=f'mod:batch:{action}:1', from_user=NS(id=user),
                   message=NS(chat=NS(id=42, type='private'), message_id=notification_id), answer=AsyncMock())
 
     async def test_no_automatic_deletion_and_payload_includes_name_username_and_hidden_links(self):
@@ -102,7 +108,7 @@ class ModerationTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_changed_text_invalidates_old_buttons_and_old_updates_are_ignored(self):
         await self.service.inspect(message(), self.bot, 1)
-        self.classifier.return_value = (False, 'Обычный отзыв')
+        self.classifier.return_value = Verdict('allow', 'Обычный отзыв')
         await self.service.inspect(message(text='Спасибо за спектакль!'), self.bot, 3)
         await self.service.inspect(message(), self.bot, 2)
         await self.service.callback(self.query(), self.bot)
@@ -110,10 +116,10 @@ class ModerationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.state(), 'clear')
         self.assertEqual(self.classifier.await_count, 2)
 
-    async def test_changed_sender_name_is_rechecked(self):
-        self.classifier.return_value = (False, '')
+    async def test_non_cached_allow_can_be_rechecked_on_changed_payload(self):
+        self.classifier.return_value = Verdict('allow', '')
         await self.service.inspect(message(text='Привет'), self.bot, 1)
-        self.classifier.return_value = (True, 'Реклама в имени')
+        self.classifier.return_value = Verdict('spam', 'Модель уточнила решение')
         await self.service.inspect(message(text='Привет', from_user=User(
             id=10, first_name='Заработок 10000 в день', is_bot=False)), self.bot, 2)
         self.assertEqual(self.state(), 'pending')
@@ -158,11 +164,11 @@ class ModerationTests(unittest.IsolatedAsyncioTestCase):
     async def test_failed_classifier_or_notification_never_deletes(self):
         self.classifier.side_effect = TimeoutError()
         await self.service.inspect(message(), self.bot, 1)
-        self.assertEqual(self.state(), 'check_failed')
+        self.assertEqual(self.state(), 'pending')
         # Алерт улетел модератору с типом ошибки — молчать нельзя.
         alert = self.bot.send_message.call_args
         self.assertEqual(alert.args[0], 42)
-        self.assertIn('Не смогла проверить', alert.args[1])
+        self.assertIn('Нужна ваша проверка', alert.args[1])
         self.assertIn('TimeoutError', alert.args[1])
         self.classifier.side_effect = None
         self.bot.send_message.side_effect = TimeoutError()
@@ -171,7 +177,6 @@ class ModerationTests(unittest.IsolatedAsyncioTestCase):
         self.bot.delete_message.assert_not_awaited()
 
     async def test_job_ad_is_deleted_but_admin_announcement_is_exempt(self):
-        self.classifier.side_effect = classify
         self.service.auto_delete = True
         text = 'Ищем осветителя, 5000 рублей за смену, пишите мне'
         await self.service.inspect(message(text=text), self.bot, 1)
@@ -182,15 +187,179 @@ class ModerationTests(unittest.IsolatedAsyncioTestCase):
         await self.service.inspect(message(message_id=21, text=text), self.bot, 2)
         self.assertEqual(self.bot.delete_message.await_count, 1)
 
-    async def test_real_regex_moderation_works_without_llm(self):
-        self.classifier.side_effect = classify
+    async def test_easy_earnings_bursts_delete_every_copy_once(self):
         self.service.auto_delete = True
-        with patch('modules.assistant.llm_client.get_llm_client', side_effect=AssertionError('LLM forbidden')):
-            await self.service.inspect(message(), self.bot, 1)
-            self.assertEqual(self.state(), 'deleted')
-            self.bot.delete_message.assert_awaited_once()
-            await self.service.inspect(message(message_id=21, text='Очень плохой спектакль'), self.bot, 2)
-            self.assertEqual(self.bot.delete_message.await_count, 1)
+        for count in (2, 3, 30):
+            with self.subTest(count=count):
+                self.bot.delete_message.reset_mock()
+                messages = [message(message_id=count * 100 + i, text=EASY_EARNINGS_SPAM)
+                            for i in range(count)]
+                await asyncio.gather(*(self.service.inspect(msg, self.bot, msg.message_id)
+                                       for msg in messages))
+                # Re-delivery of an update must not cause a second deletion.
+                for msg in messages:
+                    await self.service.inspect(msg, self.bot, msg.message_id)
+                self.assertEqual(
+                    [call.args for call in self.bot.delete_message.await_args_list],
+                    [(DISCUSSION, msg.message_id) for msg in messages],
+                )
+                with self.Session() as db:
+                    rows = db.query(ModerationComment).filter(
+                        ModerationComment.message_id.in_([msg.message_id for msg in messages])).all()
+                    self.assertEqual(len(rows), count)
+                    self.assertTrue(all(row.state == 'deleted' for row in rows))
+        self.classifier.assert_awaited_once()
+
+    async def test_spam_cache_survives_restart_and_does_not_refresh_ttl(self):
+        self.service.auto_delete = True
+        await self.service.inspect(message(), self.bot, 1)
+        with self.Session() as db:
+            expires = db.query(ModerationDecision).one().expires_at
+        restarted = ModerationService('@example_channel', 42, -100300, self.Session)
+        await restarted.inspect(message(message_id=21, text='ЗАРАБОТОК 10000 в день,  пишите мне',
+            from_user=User(id=11, is_bot=False, first_name='Другой автор')), self.bot, 2)
+        self.classifier.assert_awaited_once()
+        with self.Session() as db:
+            decision = db.query(ModerationDecision).one()
+            self.assertEqual(expires, decision.expires_at)
+            decision.expires_at = datetime.utcnow() - timedelta(seconds=1)
+            db.commit()
+        self.classifier.return_value = Verdict('allow', 'Не спам')
+        await restarted.inspect(message(message_id=22), self.bot, 3)
+        self.assertEqual(self.classifier.await_count, 2)
+        self.assertEqual(self.bot.delete_message.await_count, 2)
+
+    async def test_changed_words_and_hidden_link_do_not_hit_spam_cache(self):
+        self.service.auto_delete = True
+        await self.service.inspect(message(), self.bot, 1)
+        self.classifier.return_value = Verdict('allow', 'Жалоба на спам')
+        await self.service.inspect(message(message_id=21, text='Удалите этот спам: ' + message().text), self.bot, 2)
+        await self.service.inspect(message(message_id=22, entities=[{
+            'type': 'text_link', 'offset': 0, 'length': 3, 'url': 'https://example.org'}]), self.bot, 3)
+        self.assertEqual(self.classifier.await_count, 3)
+        self.bot.delete_message.assert_awaited_once()
+
+    async def test_thirty_uncertain_comments_share_one_card_and_confirmation(self):
+        self.service.auto_delete = True
+        self.classifier.return_value = Verdict('review', 'Недостаточно контекста')
+        await asyncio.gather(*(self.service.inspect(message(message_id=20+i), self.bot, i+1) for i in range(30)))
+        self.classifier.assert_awaited_once()
+        self.bot.send_message.assert_awaited_once()
+        self.bot.delete_message.assert_not_awaited()
+        self.assertIn('Сообщений в группе: 30', self.bot.edit_message_text.call_args.kwargs['text'])
+        restarted = ModerationService('@example_channel', 42, -100300, self.Session)
+        await restarted.callback(self.query(), self.bot)
+        self.assertEqual(self.bot.delete_message.await_count, 30)
+        await restarted.callback(self.query(), self.bot)
+        self.assertEqual(self.bot.delete_message.await_count, 30)
+        await restarted.inspect(message(message_id=51), self.bot, 50)
+        self.assertEqual(self.bot.delete_message.await_count, 31)
+        self.classifier.assert_awaited_once()
+
+    async def test_batch_keep_leaves_all_and_caches_human_decision(self):
+        self.service.auto_delete = True
+        self.classifier.return_value = Verdict('review', 'Сомнение')
+        for i in range(3):
+            await self.service.inspect(message(message_id=20+i), self.bot, i+1)
+        await self.service.callback(self.query('keep'), self.bot)
+        await self.service.inspect(message(message_id=23), self.bot, 4)
+        self.bot.delete_message.assert_not_awaited()
+        self.classifier.assert_awaited_once()
+        self.bot.send_message.assert_awaited_once()
+        with self.Session() as db:
+            self.assertEqual(db.query(ModerationDecision).one().verdict, 'allow')
+            self.assertEqual(db.query(ModerationComment).filter_by(state='not_spam').count(), 3)
+
+    async def test_batch_excludes_edited_comments_and_new_admins(self):
+        self.service.auto_delete = True
+        self.classifier.return_value = Verdict('review', 'Сомнение')
+        for i in range(3):
+            await self.service.inspect(message(message_id=20+i, from_user=User(
+                id=10+i, is_bot=False, first_name='Автор')), self.bot, i+1)
+        self.classifier.return_value = Verdict('allow', 'Отзыв')
+        await self.service.inspect(message(text='Спасибо за спектакль!'), self.bot, 4)
+        async def member(chat, user):
+            return NS(status='administrator' if user in (999, 11) else 'member', can_delete_messages=True)
+        self.bot.get_chat_member.side_effect = member
+        await self.service.callback(self.query(), self.bot)
+        self.bot.delete_message.assert_awaited_once_with(DISCUSSION, 22)
+
+    async def test_partial_batch_failure_retries_only_confirmed_rejection(self):
+        self.classifier.return_value = Verdict('review', 'Сомнение')
+        for i in range(3):
+            await self.service.inspect(message(message_id=20+i), self.bot, i+1)
+        self.bot.delete_message.side_effect = [True, TelegramBadRequest(
+            method=DeleteMessage(chat_id=DISCUSSION, message_id=21), message='not enough rights'), TimeoutError()]
+        await self.service.callback(self.query(), self.bot)
+        self.bot.delete_message.side_effect = None
+        await self.service.callback(self.query(), self.bot)
+        self.assertEqual([call.args for call in self.bot.delete_message.await_args_list],
+                         [(DISCUSSION, 20), (DISCUSSION, 21), (DISCUSSION, 22), (DISCUSSION, 21)])
+        with self.Session() as db:
+            self.assertEqual(db.query(ModerationComment).filter_by(message_id=22).one().state, 'delete_unknown')
+
+    async def test_old_single_comment_buttons_still_work(self):
+        self.service.auto_delete = True
+        self.bot.delete_message.side_effect = TelegramBadRequest(
+            method=DeleteMessage(chat_id=DISCUSSION, message_id=20), message='not enough rights')
+        await self.service.inspect(message(), self.bot, 1)
+        self.bot.delete_message.side_effect = None
+        query = self.query()
+        query.data = 'mod:spam:1:1'
+        await self.service.callback(query, self.bot)
+        self.assertEqual(self.state(), 'deleted')
+        await self.service.callback(query, self.bot)
+        self.assertEqual(self.bot.delete_message.await_count, 2)
+
+    async def test_uncertain_edit_while_model_runs_does_not_seed_batch_or_cache(self):
+        entered, release = asyncio.Event(), asyncio.Event()
+        async def verdict(payload):
+            if payload['text'] == message().text:
+                entered.set()
+                await release.wait()
+                return Verdict('review', 'Сомнение')
+            return Verdict('allow', 'Отзыв')
+        self.classifier.side_effect = verdict
+        first = asyncio.create_task(self.service.inspect(message(), self.bot, 1))
+        await entered.wait()
+        edited = asyncio.create_task(self.service.inspect(message(text='Спасибо!'), self.bot, 2))
+        await asyncio.sleep(0)
+        release.set()
+        await asyncio.gather(first, edited)
+        self.bot.send_message.assert_not_awaited()
+        with self.Session() as db:
+            self.assertEqual(db.query(ModerationDecision).count(), 0)
+
+    async def test_notification_timeout_does_not_send_duplicate_review_cards(self):
+        self.classifier.return_value = Verdict('review', 'Сомнение')
+        self.bot.send_message.side_effect = TimeoutError()
+        await self.service.inspect(message(), self.bot, 1)
+        self.bot.send_message.side_effect = None
+        await self.service.inspect(message(message_id=21), self.bot, 2)
+        # One attempted card and one plain error alert, never a second card.
+        self.assertEqual(self.bot.send_message.await_count, 2)
+        self.assertEqual(self.bot.send_message.await_args_list[0].kwargs['reply_markup'].inline_keyboard[0][0].callback_data,
+                         'mod:batch:spam:1')
+        self.bot.delete_message.assert_not_awaited()
+
+    async def test_model_error_creates_one_actionable_batch(self):
+        self.service.auto_delete = True
+        self.classifier.side_effect = LLMProviderError('Недоступна')
+        for i in range(3):
+            await self.service.inspect(message(message_id=20+i), self.bot, i+1)
+        self.classifier.assert_awaited_once()
+        self.bot.send_message.assert_awaited_once()
+        self.bot.delete_message.assert_not_awaited()
+        await self.service.callback(self.query(), self.bot)
+        self.assertEqual(self.bot.delete_message.await_count, 3)
+
+    async def test_ordinary_comments_are_not_cached(self):
+        self.classifier.return_value = Verdict('allow', 'Отзыв')
+        for i in range(2):
+            await self.service.inspect(message(message_id=20+i, text='Спасибо!'), self.bot, i+1)
+        self.assertEqual(self.classifier.await_count, 2)
+        with self.Session() as db:
+            self.assertEqual(db.query(ModerationDecision).count(), 0)
 
     async def test_uncertain_delete_does_not_repeat_or_claim_success(self):
         await self.service.inspect(message(), self.bot, 1)
@@ -199,7 +368,7 @@ class ModerationTests(unittest.IsolatedAsyncioTestCase):
         await self.service.callback(self.query(), self.bot)
         self.assertEqual(self.state(), 'delete_unknown')
         self.bot.delete_message.assert_awaited_once()
-        self.assertIn('Не удалось подтвердить', self.bot.edit_message_text.call_args.kwargs['text'])
+        self.assertIn('удаление не подтверждено', self.bot.edit_message_text.call_args.kwargs['text'])
 
     async def test_already_deleted_message_is_handled(self):
         await self.service.inspect(message(), self.bot, 1)
@@ -207,7 +376,7 @@ class ModerationTests(unittest.IsolatedAsyncioTestCase):
                                                                message='Bad Request: message to delete not found')
         await self.service.callback(self.query(), self.bot)
         self.assertEqual(self.state(), 'deleted')
-        self.assertIn('уже отсутствует', self.bot.edit_message_text.call_args.kwargs['text'])
+        self.assertIn('Удалено: 1 из 1', self.bot.edit_message_text.call_args.kwargs['text'])
 
     async def test_expired_comment_is_not_deleted(self):
         await self.service.inspect(message(date=datetime.now(timezone.utc) - timedelta(days=3)), self.bot, 1)
@@ -265,15 +434,15 @@ class ModerationTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_auto_clear_failed_and_expired_comments_are_not_deleted(self):
         self.service.auto_delete = True
-        self.classifier.return_value = (False, 'Обычный отзыв')
+        self.classifier.return_value = Verdict('allow', 'Обычный отзыв')
         await self.service.inspect(message(), self.bot, 1)
         self.assertEqual(self.state(), 'clear')
         self.classifier.side_effect = TimeoutError()
         await self.service.inspect(message(text='Изменение'), self.bot, 2)
-        self.assertEqual(self.state(), 'check_failed')
+        self.assertEqual(self.state(), 'pending')
         self.classifier.side_effect = None
-        self.classifier.return_value = (True, 'Спам')
-        await self.service.inspect(message(date=datetime.now(timezone.utc)-timedelta(days=3)), self.bot, 3)
+        self.classifier.return_value = Verdict('spam', 'Спам')
+        await self.service.inspect(message(text='Другой старый спам', date=datetime.now(timezone.utc)-timedelta(days=3)), self.bot, 3)
         self.assertEqual(self.state(), 'expired')
         self.bot.delete_message.assert_not_awaited()
 
@@ -282,7 +451,7 @@ class ModerationTests(unittest.IsolatedAsyncioTestCase):
         async def verdict(payload):
             self.bot.get_chat_member.side_effect = None
             self.bot.get_chat_member.return_value = NS(status='administrator', can_delete_messages=True)
-            return True, 'Спам'
+            return Verdict('spam', 'Спам')
         self.classifier.side_effect = verdict
         await self.service.inspect(message(), self.bot, 1)
         self.assertEqual(self.state(), 'exempt')
@@ -295,8 +464,8 @@ class ModerationTests(unittest.IsolatedAsyncioTestCase):
             if payload['text'] == message().text:
                 entered.set()
                 await release.wait()
-                return True, 'Спам'
-            return False, 'Отзыв'
+                return Verdict('spam', 'Спам')
+            return Verdict('allow', 'Отзыв')
         self.classifier.side_effect = verdict
         first = asyncio.create_task(self.service.inspect(message(), self.bot, 1))
         await entered.wait()
@@ -321,7 +490,7 @@ class ModerationTests(unittest.IsolatedAsyncioTestCase):
         async def verdict(payload):
             self.bot.get_chat_member.side_effect = None
             self.bot.get_chat_member.return_value = NS(status='member', can_delete_messages=False)
-            return True, 'Спам'
+            return Verdict('spam', 'Спам')
         self.classifier.side_effect = verdict
         await self.service.inspect(message(), self.bot, 1)
         self.assertEqual(self.state(), 'pending')
@@ -331,16 +500,16 @@ class ModerationTests(unittest.IsolatedAsyncioTestCase):
         await self.service.inspect(message(), self.bot, 1)
         self.service.latest_updates[(DISCUSSION, 20)] = 2
         await self.service.callback(self.query(), self.bot)
-        self.assertEqual(self.state(), 'superseded')
+        self.assertEqual(self.state(), 'pending')
         self.bot.delete_message.assert_not_awaited()
 
-    async def test_failed_check_can_retry_same_content_on_new_update(self):
+    async def test_failed_model_check_reuses_review_on_new_update(self):
         self.classifier.side_effect = TimeoutError()
         await self.service.inspect(message(), self.bot, 1)
         self.classifier.side_effect = None
         await self.service.inspect(message(), self.bot, 2)
         self.assertEqual(self.state(), 'pending')
-        self.assertEqual(self.classifier.await_count, 2)
+        self.assertEqual(self.classifier.await_count, 1)
 
     async def test_reconfigured_or_disabled_channel_cannot_delete_previous_comments(self):
         await self.service.inspect(message(), self.bot, 1)
@@ -372,92 +541,3 @@ class ModerationTests(unittest.IsolatedAsyncioTestCase):
         with patch('bot._chat_shows', return_value=[]), patch('bot._detect_availability_intent') as detect:
             await handle_group_message(message(text='Запустим опрос на октябрь'))
             detect.assert_not_called()
-
-
-class ClassifierTests(unittest.IsolatedAsyncioTestCase):
-    async def test_job_spam_without_link_or_contact_request(self):
-        comments = [
-            'Вакансию водителя - перевозчика, наличие прав категории B!\n'
-            'Рассмотрим без личного тс! Оклад в неделю от 100 000р',
-            'Требуется водитель без своего автомобиля. Зарплата от 100000 рублей в неделю',
-            'Ищем водителя без личного авто. Оплата: 100 тыс. руб. за неделю',
-            'Вакансия водителя без личного тс. Оклад в неделю от １００\u00a0０００₽',
-        ]
-        for text in comments:
-            with self.subTest(text=text):
-                self.assertTrue((await classify({'text': text}))[0])
-
-    async def test_job_spam_is_independent_of_profession(self):
-        for profession in ('водителя', 'курьера', 'упаковщика', 'оператора', 'менеджера', 'актера', 'новой профессии'):
-            for conditions in ('без личного тс', 'без опыта', 'опыт не требуется', 'без вложений'):
-                text = f'Вакансия {profession}, {conditions}. Оклад в неделю от 100 000р'
-                with self.subTest(profession=profession, conditions=conditions):
-                    self.assertTrue((await classify({'text': text}))[0])
-        self.assertTrue((await classify({'text': 'Набираем сотрудников без опыта. Доход 120 тыс. руб. за неделю'}))[0])
-        self.assertTrue((await classify({'text': 'Подработка без вложений. Заработок 150000₽ в неделю'}))[0])
-
-    async def test_job_ads_are_removed_regardless_of_pay_or_conditions(self):
-        comments = [
-            'Вакансия водителя без личного тс. Оклад в месяц от 100 000р',
-            'Вакансия водителя без личного тс. Оклад в неделю от 10 000р',
-            'Вакансия водителя без личного тс. Оклад в неделю от 99 тыс. руб.',
-            'Вакансия водителя без личного тс. Оклад 100 000р. Репетиции раз в неделю',
-            'Вакансия водителя со своим авто. Оклад в неделю от 100 000р',
-            'Нужен водитель без личного тс для перевозки декораций',
-            'Ищем курьера без опыта. Оплата 5000 рублей за смену, пишите мне',
-            'Вакансия новой профессии',
-            'Предлагаем работу, подробности в личку',
-            'Открыт набор сотрудников',
-            'Ищем осветителя, 5000 рублей за смену, пишите мне',
-            'Нужен актер без опыта, пишите мне. Репетиция в субботу.',
-            'Нужен актер без опыта. Оплата 5000 рублей за спектакль, пишите мне',
-        ]
-        for text in comments:
-            with self.subTest(text=text):
-                self.assertTrue((await classify({'text': text}))[0])
-
-    async def test_obvious_spam_in_comment_and_author_name(self):
-        cases = [
-            {'text': 'Заработок 10000 в день, пишите мне'},
-            {'text': 'Привет', 'sender': {'name': 'Пассивный доход без вложений, пиши в личку'}},
-            {'text': 'Казино: бонус 5000, регистрируйся https://spam.example'},
-            {'text': 'Казино, фриспины, переходите по ссылке', 'links': ['https://spam.example']},
-            {'text': 'Крипта, гарантированный доход, напишите мне'},
-            {'text': 'Заработок １００００ в день, пишите мне'},
-        ]
-        with patch('modules.assistant.llm_client.get_llm_client', side_effect=AssertionError('Network forbidden')):
-            for payload in cases:
-                with self.subTest(payload=payload):
-                    spam, reason = await classify(payload)
-                    self.assertTrue(spam)
-                    self.assertIn('Правило:', reason)
-
-    async def test_reviews_links_profanity_and_job_discussions_are_not_spam(self):
-        comments = [
-            'Ужасный спектакль, мне вообще не понравилось',
-            'Блять, почему отменили?',
-            'Билеты https://foshoo-theatre.ru/',
-            'В пьесе герой проиграл в казино',
-            'Казино — мошенники, не регистрируйтесь! https://example.org',
-            'Поговорим про инвестиции в декорации?',
-            'Расскажу про заработок актера',
-            'Обсудим условия работы курьера без опыта на занятии',
-            'Почему здесь публикуют вакансии?',
-            'Есть ли у вас вакансии?',
-            'Ищем два билета на спектакль',
-            'Нужен адрес театра',
-            'Требуется помощь с покупкой билета',
-            'Работа актера мне понравилась',
-            'Отлично!',
-        ]
-        for text in comments:
-            with self.subTest(text=text):
-                self.assertFalse((await classify({'text': text, 'sender': {'name': 'Крипто'},
-                                                  'links': ['https://example.org']}))[0])
-        self.assertFalse((await classify({}))[0])
-
-    async def test_group_messages_do_not_invoke_llm_or_offer_polls_when_disabled(self):
-        with patch('bot.LLM_ENABLED', False), patch('bot._llm_confirm_intent') as confirm, patch('bot._chat_shows') as shows:
-            await handle_group_message(message(text='Запустим опрос на октябрь'))
-            confirm.assert_not_called()
-            shows.assert_not_called()

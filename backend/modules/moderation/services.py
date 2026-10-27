@@ -1,6 +1,6 @@
 """One discussion group, one reviewer. Automatic spam removal with durable deletion outcomes."""
 import asyncio
-from datetime import datetime
+from datetime import datetime, timedelta
 import hashlib
 import json
 import logging
@@ -10,8 +10,8 @@ import time
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from core.database import SessionLocal
-from .rules import classify
-from .models import ModerationComment
+from .classifier import Verdict, classify, fingerprint
+from .models import ModerationComment, ModerationDecision, ModerationReviewItem
 
 logger = logging.getLogger(__name__)
 
@@ -61,9 +61,9 @@ class ModerationService:
                     raise ValueError('Выдайте боту права администратора с удалением сообщений в группе обсуждений.')
                 self.target = (channel.id, discussion.id)
                 self.expires = time.monotonic() + 300
-                self.status = ('Модерация по правилам подключена. Спам удаляется автоматически; отчёты — в личку.'
+                self.status = ('ИИ-модерация подключена. Спам удаляется автоматически; сомнения — на проверку. Кеш — 24 часа.'
                                if self.auto_delete else
-                               'Модерация по правилам подключена. Уведомления — в личку; удаление — только по кнопке.')
+                               'ИИ-модерация подключена. Уведомления — в личку; удаление — только по кнопке.')
             except ValueError as exc:
                 self.status = str(exc)
             except Exception as exc:
@@ -137,9 +137,10 @@ class ModerationService:
             'username': (author.username or '') if author else '', 'kind': 'user',
         }}
         try:
-            spam, reason = await classify(payload)
-            result = 'Обнаружены признаки спама.' if spam else 'Явных признаков спама нет.'
-            text = (f'🔎 Проверка пересланного текста\n{result}\n{reason}\n\n'
+            verdict = await classify(payload)
+            result = {'spam': 'Обнаружен спам.', 'allow': 'Спам не обнаружен.',
+                      'review': 'Модель сомневается: нужна ваша проверка.'}[verdict.verdict]
+            text = (f'🔎 Проверка пересланного текста\n{result}\n{verdict.reason}\n\n'
                     'Telegram не передал ID исходной группы и комментария. '
                     'Источник не подтверждён; удаление возможно только вручную в Telegram.')
         except Exception as exc:
@@ -221,23 +222,46 @@ class ModerationService:
                     row.state = 'clear'
                     db.commit()
                     return
-                spam, reason = await classify(payload)
+                now = datetime.utcnow()
+                key = fingerprint(payload)
+                decision = db.query(ModerationDecision).filter(
+                    ModerationDecision.channel_id == row.channel_id,
+                    ModerationDecision.chat_id == row.chat_id,
+                    ModerationDecision.recipient_id == self.recipient_id,
+                    ModerationDecision.fingerprint == key,
+                    ModerationDecision.expires_at > now,
+                ).order_by(ModerationDecision.id.desc()).first()
+                if decision:
+                    verdict = Verdict(decision.verdict, decision.reason)
+                else:
+                    try:
+                        verdict = await classify(payload)
+                    except Exception as exc:
+                        logger.warning('Moderation model failed (%s) message=%s', type(exc).__name__, row.message_id)
+                        verdict = Verdict('review', f'Модель не смогла проверить комментарий ({type(exc).__name__}). Нужна ваша проверка.')
                 if self.latest_updates.get((row.chat_id, row.message_id), update_id) != update_id:
                     row.state = 'superseded'
                     db.commit()
                     return
-                row.reason = reason
-                row.state = ('pending' if self.auto_delete else 'notifying') if spam else 'clear'
+                review = verdict.verdict == 'review' or (verdict.verdict == 'spam' and not self.auto_delete)
+                if review and decision and decision.verdict != 'review':
+                    # A change to manual mode must not revive an old card's buttons.
+                    decision = None
+                if not decision and verdict.verdict != 'allow':
+                    decision = ModerationDecision(channel_id=row.channel_id, chat_id=row.chat_id,
+                        recipient_id=self.recipient_id, fingerprint=key,
+                        verdict='review' if review else verdict.verdict, reason=verdict.reason,
+                        expires_at=datetime.utcnow() + timedelta(hours=24))
+                    db.add(decision)
+                row.reason = verdict.reason
+                spam = verdict.verdict == 'spam'
+                row.state = 'pending' if review or spam else 'clear'
                 db.commit()
                 logger.info('Moderation verdict message=%s update=%s spam=%s state=%s',
                             row.message_id, update_id, spam, row.state)
-                if spam and not self.auto_delete:
-                    sent = await bot.send_message(self.recipient_id, self.notification(row),
-                                                  reply_markup=self.keyboard(row), parse_mode=None,
-                                                  disable_web_page_preview=True)
-                    row.notification_id = sent.message_id
-                    row.state = 'pending'
-                    db.commit()
+                if review:
+                    await self._queue_review(bot, row, decision, db)
+                    return
             except Exception as exc:
                 row.state = 'notification_failed' if row.state == 'notifying' else 'check_failed'
                 db.commit()
@@ -253,6 +277,116 @@ class ModerationService:
                     db.commit()
                 except Exception as exc:
                     logger.warning('Moderation result delivery failed (%s); saved state=%s', type(exc).__name__, row.state)
+
+    @staticmethod
+    def _review_keyboard(decision):
+        return InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text='🗑 Спам — удалить все', callback_data=f'mod:batch:spam:{decision.id}')],
+            [InlineKeyboardButton(text='✅ Не спам — оставить все', callback_data=f'mod:batch:keep:{decision.id}')],
+        ])
+
+    @staticmethod
+    def _review_rows(db, decision):
+        return db.query(ModerationComment).join(
+            ModerationReviewItem, ModerationReviewItem.comment_id == ModerationComment.id,
+        ).filter(
+            ModerationReviewItem.decision_id == decision.id,
+            ModerationReviewItem.revision == ModerationComment.revision,
+            ModerationComment.channel_id == decision.channel_id,
+            ModerationComment.chat_id == decision.chat_id,
+            ModerationComment.recipient_id == decision.recipient_id,
+            ModerationComment.state.in_(('pending', 'notifying', 'notification_failed')),
+        ).order_by(ModerationComment.id).all()
+
+    async def _queue_review(self, bot, row, decision, db):
+        item = db.get(ModerationReviewItem, (decision.id, row.id))
+        if item:
+            item.revision = row.revision
+        else:
+            db.add(ModerationReviewItem(decision_id=decision.id, comment_id=row.id, revision=row.revision))
+        row.state = 'pending'
+        db.commit()
+        count = len(self._review_rows(db, decision))
+        link = f'https://t.me/c/{str(row.chat_id)[4:]}/{row.message_id}'
+        body = (f'🔎 Нужна ваша проверка\nСообщений в группе: {count}\n'
+                f'Пример от: {excerpt(row.author, 200)}\n{link}\n\n'
+                f'{excerpt(row.text, 2400)}\n\nПричина: {excerpt(decision.reason, 450)}\n\n'
+                'Кнопка применится ко всем неизменённым сообщениям этой группы. '
+                'Одинаковые комментарии за 24 часа объединяются здесь.')
+        keyboard = self._review_keyboard(decision)
+        if decision.notification_id is None:
+            # A lost send response must not create many independent cards.
+            decision.notification_id = -1
+            row.state = 'notifying'
+            db.commit()
+            try:
+                sent = await bot.send_message(self.recipient_id, body, reply_markup=keyboard,
+                                              parse_mode=None, disable_web_page_preview=True)
+            except TelegramBadRequest:
+                decision.notification_id = None  # Telegram definitively rejected the send.
+                db.commit()
+                raise
+            decision.notification_id = sent.message_id
+        elif decision.notification_id > 0:
+            try:
+                await bot.edit_message_text(chat_id=self.recipient_id, message_id=decision.notification_id,
+                                            text=body, reply_markup=keyboard, parse_mode=None,
+                                            disable_web_page_preview=True)
+            except Exception as exc:
+                # The old card still approves all current members of the batch.
+                logger.warning('Moderation review count update failed (%s)', type(exc).__name__)
+        row.notification_id = decision.notification_id if decision.notification_id > 0 else None
+        row.state = 'pending'
+        db.commit()
+
+    async def _batch_callback(self, query, bot):
+        match = re.fullmatch(r'mod:batch:(spam|keep):(\d+)', query.data or '')
+        if (not match or query.from_user.id != self.recipient_id or not query.message
+                or query.message.chat.type != 'private' or query.message.chat.id != self.recipient_id):
+            await query.answer('Действие недоступно.', show_alert=True)
+            return
+        await query.answer('Обрабатываю…')
+        action, decision_id = match.groups()
+        async with self.lock:
+            with self.session_factory() as db:
+                decision = db.get(ModerationDecision, int(decision_id))
+                if (not self.channel or not decision or decision.recipient_id != self.recipient_id
+                        or decision.notification_id != query.message.message_id or decision.verdict != 'review'):
+                    return
+                if await self.resolve(bot, force=True) != (decision.channel_id, decision.chat_id):
+                    await bot.send_message(self.recipient_id, 'Не удалось подтвердить канал и права бота. Повторите позже.')
+                    return
+                rows = [row for row in self._review_rows(db, decision)
+                        if self.latest_updates.get((row.chat_id, row.message_id), row.last_update_id) <= row.last_update_id]
+                if not rows:
+                    await bot.send_message(self.recipient_id, 'В этой группе нет неизменённых комментариев для обработки.')
+                    return
+                deleted = 0
+                for row in rows:
+                    if action == 'keep':
+                        row.state = 'not_spam'
+                    else:
+                        await self._delete_comment(bot, row, db)
+                        deleted += row.state == 'deleted'
+                    row.updated_at = datetime.utcnow()
+                    db.commit()
+                pending = any(row.state == 'pending' for row in rows)
+                decision.verdict = 'review' if pending else ('spam' if action == 'spam' else 'allow')
+                decision.reason = 'Модератор подтвердил спам.' if action == 'spam' else 'Модератор подтвердил: не спам.'
+                decision.expires_at = datetime.utcnow() + timedelta(hours=24)
+                db.commit()
+                result = (f'🗑 Удалено: {deleted} из {len(rows)}. Остальные оставлены или удаление не подтверждено.'
+                          if action == 'spam' else f'✅ Не спам. Оставлено сообщений: {len(rows)}.')
+                if pending:
+                    result += '\nУдаление части сообщений отклонено или права не подтверждены. Можно повторить проверку кнопкой.'
+                else:
+                    result += '\nРешение сохранено на 24 часа.'
+                try:
+                    await bot.edit_message_text(chat_id=self.recipient_id, message_id=decision.notification_id,
+                        text=result, parse_mode=None,
+                        reply_markup=self._review_keyboard(decision) if pending else None)
+                except Exception as exc:
+                    logger.warning('Moderation batch result delivery failed (%s)', type(exc).__name__)
 
     async def _alert_check_failed(self, bot, row, exc_type):
         # Notification path is already broken when we hit notification_failed,
@@ -271,6 +405,8 @@ class ModerationService:
             logger.warning('Moderation alert send failed (%s)', type(alert_exc).__name__)
 
     async def callback(self, query, bot):
+        if (query.data or '').startswith('mod:batch:'):
+            return await self._batch_callback(query, bot)
         match = re.fullmatch(r'mod:(spam|keep):(\d+):(\d+)', query.data or '')
         if (not match or query.from_user.id != self.recipient_id or not query.message or
                 query.message.chat.type != 'private' or query.message.chat.id != self.recipient_id):
