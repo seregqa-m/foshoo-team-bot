@@ -89,6 +89,7 @@ def run_migrations():
             "ALTER TABLE calendar_events ADD COLUMN poll_show_id INTEGER",
             "ALTER TABLE calendar_events ADD COLUMN poll_show_title TEXT",
             "ALTER TABLE attendance_voters ADD COLUMN legacy_access BOOLEAN",
+            "ALTER TABLE moderation_comments ADD COLUMN sender_chat_id BIGINT",
         ]:
             table, column = stmt.split()[2], stmt.split()[5]
             if column not in {c["name"] for c in inspect(conn).get_columns(table)}:

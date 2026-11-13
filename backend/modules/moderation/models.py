@@ -12,6 +12,7 @@ class ModerationComment(Base):
     message_id = Column(BigInteger, nullable=False)
     recipient_id = Column(BigInteger, nullable=False)
     author_id = Column(BigInteger)
+    sender_chat_id = Column(BigInteger)
     author = Column(String, nullable=False, default='')
     text = Column(Text, nullable=False)
     content_hash = Column(String(64), nullable=False)
@@ -43,3 +44,16 @@ class ModerationReviewItem(Base):
     decision_id = Column(Integer, primary_key=True)
     comment_id = Column(Integer, primary_key=True)
     revision = Column(Integer, nullable=False)
+
+
+class ModerationBan(Base):
+    """One durable ban attempt per confirmed comment revision."""
+    __tablename__ = 'moderation_bans'
+    comment_id = Column(Integer, primary_key=True)
+    revision = Column(Integer, primary_key=True)
+    chat_id = Column(BigInteger, nullable=False, index=True)
+    author_kind = Column(String, nullable=False)
+    author_id = Column(BigInteger, nullable=False, index=True)
+    state = Column(String, nullable=False)
+    result = Column(Text, nullable=False, default='')
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow)

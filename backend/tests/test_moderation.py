@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, patch
 with patch.dict(os.environ, {'BOT_TOKEN': '123456:offline-test-token', 'DATABASE_URL': 'sqlite://',
                              'GOOGLE_CALENDAR_JSON': '/missing'}, clear=True), patch('dotenv.load_dotenv'):
     from core.database import Base
-    from modules.moderation.models import ModerationComment, ModerationDecision, ModerationReviewItem
+    from modules.moderation.models import ModerationComment, ModerationDecision, ModerationReviewItem, ModerationBan
     from modules.moderation.classifier import Verdict, fingerprint
     from modules.assistant.llm_client import LLMProviderError
     from modules.moderation.services import ModerationService, classify
@@ -45,6 +45,8 @@ class ModerationTests(unittest.IsolatedAsyncioTestCase):
         self.bot = NS(id=999, get_chat=AsyncMock(side_effect=self.get_chat),
                       get_chat_member=AsyncMock(side_effect=self.get_member),
                       send_message=AsyncMock(return_value=NS(message_id=500)),
+                      ban_chat_member=AsyncMock(return_value=True),
+                      ban_chat_sender_chat=AsyncMock(return_value=True),
                       delete_message=AsyncMock(return_value=True), edit_message_text=AsyncMock())
         self.classifier = AsyncMock(return_value=Verdict('spam', 'Реклама заработка в тексте'))
         mocked = patch('modules.moderation.services.classify', self.classifier)
@@ -59,7 +61,140 @@ class ModerationTests(unittest.IsolatedAsyncioTestCase):
             id=DISCUSSION, type='supergroup', linked_chat_id=CHANNEL)
 
     async def get_member(self, chat, user):
-        return NS(status='administrator' if user == self.bot.id else 'member', can_delete_messages=True)
+        return NS(status='administrator' if user == self.bot.id else 'member',
+                  can_delete_messages=True, can_restrict_members=True)
+
+    async def test_spam_deletes_and_bans_only_in_discussion(self):
+        self.service.auto_delete = True
+        await self.service.inspect(message(), self.bot, 1)
+        self.bot.ban_chat_member.assert_awaited_once_with(chat_id=DISCUSSION, user_id=10, revoke_messages=True)
+        self.bot.ban_chat_sender_chat.assert_not_awaited()
+        self.assertIn('заблокирован', self.bot.send_message.call_args.args[1])
+        with self.Session() as db:
+            self.assertEqual(db.query(ModerationBan).one().state, 'banned')
+        restarted = ModerationService('@example_channel', 42, -100300, self.Session)
+        await restarted.inspect(message(), self.bot, 2)
+        self.bot.ban_chat_member.assert_awaited_once()
+
+    async def test_manual_review_does_not_ban_until_confirmation(self):
+        await self.service.inspect(message(), self.bot, 1)
+        self.bot.ban_chat_member.assert_not_awaited()
+        self.assertIn('блокирует авторов', self.bot.send_message.call_args.args[1])
+        await self.service.callback(self.query(), self.bot)
+        await self.service.callback(self.query(), self.bot)
+        self.bot.ban_chat_member.assert_awaited_once()
+        self.assertIn('Заблокировано авторов: 1', self.bot.edit_message_text.call_args.kwargs['text'])
+
+    async def test_ban_timeout_is_durable_and_not_retried_for_another_comment(self):
+        self.service.auto_delete = True
+        self.bot.ban_chat_member.side_effect = TimeoutError()
+        await self.service.inspect(message(), self.bot, 1)
+        self.assertEqual(self.state(), 'deleted')
+        with self.Session() as db:
+            self.assertEqual(db.query(ModerationBan).one().state, 'unknown')
+        restarted = ModerationService('@example_channel', 42, -100300, self.Session)
+        await restarted.inspect(message(message_id=21), self.bot, 2)
+        self.bot.ban_chat_member.assert_awaited_once()
+        self.assertIn('не подтверждена', self.bot.send_message.call_args.args[1])
+
+    async def test_crash_during_ban_blocks_automatic_retry(self):
+        self.service.auto_delete = True
+        self.bot.ban_chat_member.side_effect = asyncio.CancelledError()
+        with self.assertRaises(asyncio.CancelledError):
+            await self.service.inspect(message(), self.bot, 1)
+        with self.Session() as db:
+            self.assertEqual(db.query(ModerationBan).one().state, 'banning')
+        restarted = ModerationService('@example_channel', 42, -100300, self.Session)
+        await restarted.inspect(message(message_id=21), self.bot, 2)
+        self.bot.ban_chat_member.assert_awaited_once()
+
+    async def test_sender_channel_is_banned_instead_of_telegram_placeholder_user(self):
+        self.service.auto_delete = True
+        await self.service.inspect(message(sender_chat=Chat(id=-100900, type='channel', title='Spam')), self.bot, 1)
+        self.bot.ban_chat_sender_chat.assert_awaited_once_with(chat_id=DISCUSSION, sender_chat_id=-100900)
+        self.bot.ban_chat_member.assert_not_awaited()
+
+    async def test_missing_ban_right_keeps_deletion_and_reports_failure(self):
+        self.service.auto_delete = True
+        async def member(chat, user):
+            return NS(status='administrator' if user == 999 else 'member',
+                      can_delete_messages=True, can_restrict_members=False)
+        self.bot.get_chat_member.side_effect = member
+        await self.service.inspect(message(), self.bot, 1)
+        self.assertEqual(self.state(), 'deleted')
+        self.bot.ban_chat_member.assert_not_awaited()
+        self.assertIn('нужно право блокировать', self.bot.send_message.call_args.args[1])
+
+    async def test_promotion_between_deletion_and_ban_prevents_ban(self):
+        self.service.auto_delete = True
+        async def delete(*args):
+            self.bot.get_chat_member.side_effect = None
+            self.bot.get_chat_member.return_value = NS(status='administrator', can_delete_messages=True,
+                                                       can_restrict_members=True)
+            return True
+        self.bot.delete_message.side_effect = delete
+        await self.service.inspect(message(), self.bot, 1)
+        self.bot.ban_chat_member.assert_not_awaited()
+        with self.Session() as db:
+            self.assertEqual(db.query(ModerationBan).one().state, 'exempt')
+
+    async def test_edit_during_deletion_prevents_stale_ban(self):
+        self.service.auto_delete = True
+        async def delete(*args):
+            self.service.latest_updates[(DISCUSSION, 20)] = 2
+            return True
+        self.bot.delete_message.side_effect = delete
+        await self.service.inspect(message(), self.bot, 1)
+        self.bot.ban_chat_member.assert_not_awaited()
+        with self.Session() as db:
+            self.assertEqual(db.query(ModerationBan).one().state, 'skipped')
+
+    async def test_keep_and_uncertain_delete_do_not_ban(self):
+        await self.service.inspect(message(), self.bot, 1)
+        await self.service.callback(self.query('keep'), self.bot)
+        self.bot.ban_chat_member.assert_not_awaited()
+        self.service.auto_delete = True
+        self.bot.delete_message.side_effect = TimeoutError()
+        await self.service.inspect(message(message_id=21, text='Другой спам'), self.bot, 2)
+        self.bot.ban_chat_member.assert_not_awaited()
+
+    async def test_confirmed_ban_failure_does_not_claim_success(self):
+        from aiogram.methods import BanChatMember
+        self.bot.ban_chat_member.side_effect = TelegramBadRequest(
+            method=BanChatMember(chat_id=DISCUSSION, user_id=10), message='not enough rights')
+        await self.service.inspect(message(), self.bot, 1)
+        await self.service.callback(self.query(), self.bot)
+        body = self.bot.edit_message_text.call_args.kwargs['text']
+        self.assertIn('Заблокировано авторов: 0', body)
+        self.assertIn('Блокировка не подтверждена', body)
+        with self.Session() as db:
+            self.assertEqual(db.query(ModerationBan).one().state, 'failed')
+
+    async def test_legacy_channel_comment_without_sender_id_is_not_guessed(self):
+        await self.service.inspect(message(sender_chat=Chat(id=-100900, type='channel', title='Spam')), self.bot, 1)
+        with self.Session() as db:
+            db.query(ModerationComment).one().sender_chat_id = None
+            db.commit()
+        await self.service.callback(self.query(), self.bot)
+        self.bot.delete_message.assert_awaited_once()
+        self.bot.ban_chat_member.assert_not_awaited()
+        self.bot.ban_chat_sender_chat.assert_not_awaited()
+
+    def test_ban_schema_migrates_existing_comments_without_inventing_authors(self):
+        import main
+        from sqlalchemy import text, inspect
+        Base.metadata.create_all(self.engine)
+        with self.engine.begin() as conn:
+            conn.execute(text('ALTER TABLE moderation_comments DROP COLUMN sender_chat_id'))
+            conn.execute(text('DROP TABLE moderation_bans'))
+        # Startup creates new tables first, then adds columns to old tables.
+        Base.metadata.create_all(self.engine)
+        with patch('main.engine', self.engine):
+            main.run_migrations()
+            main.run_migrations()
+        self.assertIn('sender_chat_id', {c['name'] for c in inspect(self.engine).get_columns('moderation_comments')})
+        with self.Session() as db:
+            self.assertEqual(db.query(ModerationBan).count(), 0)
 
     def state(self):
         with self.Session() as db:

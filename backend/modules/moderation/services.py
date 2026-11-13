@@ -1,4 +1,4 @@
-"""One discussion group, one reviewer. Automatic spam removal with durable deletion outcomes."""
+"""One discussion group, one reviewer. Spam removal and durable author bans."""
 import asyncio
 from datetime import datetime, timedelta
 import hashlib
@@ -11,7 +11,7 @@ from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from core.database import SessionLocal
 from .classifier import Verdict, classify, fingerprint
-from .models import ModerationComment, ModerationDecision, ModerationReviewItem
+from .models import ModerationComment, ModerationDecision, ModerationReviewItem, ModerationBan
 
 logger = logging.getLogger(__name__)
 
@@ -61,9 +61,11 @@ class ModerationService:
                     raise ValueError('Выдайте боту права администратора с удалением сообщений в группе обсуждений.')
                 self.target = (channel.id, discussion.id)
                 self.expires = time.monotonic() + 300
-                self.status = ('ИИ-модерация подключена. Спам удаляется автоматически; сомнения — на проверку. Кеш — 24 часа.'
+                self.status = ('ИИ-модерация подключена. Спам удаляется, авторы блокируются; сомнения — на проверку. Кеш — 24 часа.'
                                if self.auto_delete else
-                               'ИИ-модерация подключена. Уведомления — в личку; удаление — только по кнопке.')
+                               'ИИ-модерация подключена. Удаление спама и блокировка авторов — после подтверждения кнопкой.')
+                if not getattr(member, 'can_restrict_members', False):
+                    self.status += ' Для блокировки авторов выдайте боту право блокировать участников.'
             except ValueError as exc:
                 self.status = str(exc)
             except Exception as exc:
@@ -83,7 +85,7 @@ class ModerationService:
         link = f'https://t.me/c/{str(row.chat_id)[4:]}/{row.message_id}'
         return InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text='Открыть комментарий', url=link)],
-            [InlineKeyboardButton(text='🗑 Это спам — удалить', callback_data=f'mod:spam:{row.id}:{row.revision}')],
+            [InlineKeyboardButton(text='🚫 Спам — удалить и заблокировать автора', callback_data=f'mod:spam:{row.id}:{row.revision}')],
             [InlineKeyboardButton(text='✅ Это не спам', callback_data=f'mod:keep:{row.id}:{row.revision}')],
         ])
 
@@ -169,6 +171,7 @@ class ModerationService:
             'text': text, 'links': links,
             'sender_name': sender_name, 'username': username, 'kind': kind,
             'author_id': author_id,
+            'sender_chat_id': message.sender_chat.id if message.sender_chat else None,
         }
 
     async def _inspect(self, message, bot, update_id, target):
@@ -208,6 +211,7 @@ class ModerationService:
             row.message_time = fields['message_time']
             row.updated_at = datetime.utcnow()
             row.author_id = fields['author_id']
+            row.sender_chat_id = fields.get('sender_chat_id')
             row.author = (f"{fields['sender_name']} (@{fields['username']})"
                           if fields['username'] else fields['sender_name'])
             db.commit()
@@ -281,7 +285,7 @@ class ModerationService:
     @staticmethod
     def _review_keyboard(decision):
         return InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text='🗑 Спам — удалить все', callback_data=f'mod:batch:spam:{decision.id}')],
+            [InlineKeyboardButton(text='🚫 Спам — удалить и заблокировать авторов', callback_data=f'mod:batch:spam:{decision.id}')],
             [InlineKeyboardButton(text='✅ Не спам — оставить все', callback_data=f'mod:batch:keep:{decision.id}')],
         ])
 
@@ -312,7 +316,9 @@ class ModerationService:
                 f'Пример от: {excerpt(row.author, 200)}\n{link}\n\n'
                 f'{excerpt(row.text, 2400)}\n\nПричина: {excerpt(decision.reason, 450)}\n\n'
                 'Кнопка применится ко всем неизменённым сообщениям этой группы. '
-                'Одинаковые комментарии за 24 часа объединяются здесь.')
+                'Одинаковые комментарии за 24 часа объединяются здесь. '
+                'Подтверждение спама также блокирует авторов в группе комментариев. '
+                'При бане пользователя Telegram удаляет и остальные его сообщения в этой группе.')
         keyboard = self._review_keyboard(decision)
         if decision.notification_id is None:
             # A lost send response must not create many independent cards.
@@ -377,6 +383,15 @@ class ModerationService:
                 db.commit()
                 result = (f'🗑 Удалено: {deleted} из {len(rows)}. Остальные оставлены или удаление не подтверждено.'
                           if action == 'spam' else f'✅ Не спам. Оставлено сообщений: {len(rows)}.')
+                if action == 'spam':
+                    bans = [db.get(ModerationBan, (row.id, row.revision)) for row in rows]
+                    blocked = {(ban.author_kind, ban.author_id) for ban in bans
+                               if ban and ban.state == 'banned'}
+                    unresolved = sum(row.state == 'deleted' and (not ban or ban.state != 'banned')
+                                     for row, ban in zip(rows, bans))
+                    result += f'\nЗаблокировано авторов: {len(blocked)}.'
+                    if unresolved:
+                        result += f'\nБлокировка не подтверждена для {unresolved} сообщений — проверьте авторов вручную.'
                 if pending:
                     result += '\nУдаление части сообщений отклонено или права не подтверждены. Можно повторить проверку кнопкой.'
                 else:
@@ -463,7 +478,7 @@ class ModerationService:
             try:
                 await bot.delete_message(row.chat_id, row.message_id)
                 row.state = 'deleted'
-                result = '🗑 Спам удалён. Автор не заблокирован.'
+                result = '🗑 Спам удалён.'
             except TelegramBadRequest as exc:
                 if 'message to delete not found' in exc.message.lower():
                     row.state = 'deleted'
@@ -477,7 +492,71 @@ class ModerationService:
                 result = 'Не удалось подтвердить удаление. Проверьте комментарий вручную; повторное удаление заблокировано.'
         row.updated_at = datetime.utcnow()
         db.commit()
+        if row.state == 'deleted':
+            result += ' ' + await self._ban_author(bot, row, db)
         return result
+
+    async def _ban_author(self, bot, row, db):
+        existing = db.get(ModerationBan, (row.id, row.revision))
+        if existing:
+            return existing.result or 'Результат блокировки неизвестен; проверьте автора вручную.'
+        kind = 'channel' if row.sender_chat_id else 'user'
+        author_id = row.sender_chat_id or row.author_id
+        if not author_id:
+            return 'ID автора неизвестен; блокировка возможна только вручную.'
+        attempt = ModerationBan(comment_id=row.id, revision=row.revision, chat_id=row.chat_id,
+                                author_kind=kind, author_id=author_id, state='checking')
+        db.add(attempt)
+        db.commit()
+
+        def finish(state, result):
+            attempt.state, attempt.result = state, result
+            attempt.updated_at = datetime.utcnow()
+            db.commit()
+            return result
+
+        uncertain = db.query(ModerationBan).filter(
+            ModerationBan.chat_id == row.chat_id, ModerationBan.author_kind == kind,
+            ModerationBan.author_id == author_id,
+            ModerationBan.state.in_(('banning', 'unknown')),
+        ).first()
+        if uncertain:
+            return finish('unknown', 'Предыдущая блокировка автора не подтверждена; проверьте её вручную. Автоповтора не будет.')
+        try:
+            target = await self.resolve(bot, force=True)
+            if target != (row.channel_id, row.chat_id):
+                return finish('skipped', 'Не удалось подтвердить группу для блокировки; проверьте автора вручную.')
+            if author_id in (*target, bot.id):
+                return finish('exempt', 'Собственный канал, группа и бот исключены из блокировки.')
+            rights = await bot.get_chat_member(row.chat_id, bot.id)
+            if rights.status != 'administrator' or not getattr(rights, 'can_restrict_members', False):
+                return finish('failed', 'Не удалось заблокировать автора: боту нужно право блокировать участников.')
+            if kind == 'user':
+                member = await bot.get_chat_member(row.chat_id, author_id)
+                if member.status in ('creator', 'administrator'):
+                    return finish('exempt', 'Автор теперь администратор и не заблокирован.')
+                if member.status == 'kicked':
+                    return finish('banned', 'Автор уже заблокирован в группе комментариев.')
+        except Exception as exc:
+            logger.warning('Moderation ban precheck failed (%s)', type(exc).__name__)
+            return finish('failed', 'Не удалось проверить права для блокировки; проверьте автора вручную.')
+        if self.latest_updates.get((row.chat_id, row.message_id), row.last_update_id) > row.last_update_id:
+            return finish('skipped', 'Получено изменение комментария; автор не заблокирован.')
+        attempt.state = 'banning'
+        db.commit()  # A lost response or restart must never repeat a ban blindly.
+        try:
+            if kind == 'channel':
+                success = await bot.ban_chat_sender_chat(chat_id=row.chat_id, sender_chat_id=author_id)
+            else:
+                success = await bot.ban_chat_member(chat_id=row.chat_id, user_id=author_id, revoke_messages=True)
+            if success is not True:
+                raise RuntimeError('Ban not confirmed')
+        except TelegramBadRequest:
+            return finish('failed', 'Telegram отклонил блокировку автора; проверьте права бота и заблокируйте вручную.')
+        except Exception as exc:
+            logger.warning('Moderation ban uncertain (%s)', type(exc).__name__)
+            return finish('unknown', 'Результат блокировки неизвестен; проверьте автора вручную. Автоповтора не будет.')
+        return finish('banned', 'Автор заблокирован в группе комментариев без срока.')
 
     async def _finish_notice(self, bot, row, result, keep_buttons=False):
         try:
