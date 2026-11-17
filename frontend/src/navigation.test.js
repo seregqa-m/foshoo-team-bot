@@ -1,4 +1,13 @@
-import { getInitialPlanningMonth } from './navigation';
+import { getInitialPlanningMonth, getInitialTab } from './navigation';
+
+test('availability link opens the personal calendar without expanding planning', () => {
+  const tg = { initDataUnsafe: { start_param: 'availability' } };
+  expect(getInitialTab(tg, '')).toBe('availability');
+  expect(getInitialPlanningMonth(tg, '')).toBe('');
+  expect(getInitialTab({}, '?tgWebAppStartParam=availability')).toBe('availability');
+  expect(getInitialTab({}, '?tgWebAppStartParam=planning_2027-01')).toBe('availability');
+  expect(getInitialTab({}, '?tgWebAppStartParam=availability_invalid')).toBe('calendar');
+});
 
 test('reads the Telegram launch parameter and the URL fallback', () => {
   expect(getInitialPlanningMonth({ initDataUnsafe: { start_param: 'planning_2026-12' } }, '')).toBe('2026-12');

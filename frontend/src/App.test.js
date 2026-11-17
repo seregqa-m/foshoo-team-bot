@@ -65,6 +65,21 @@ test('a planning link cannot bypass application access checks', async () => {
   expect(container.querySelector('[data-planning-month]')).toBeNull();
 });
 
+test('personal availability link selects its tab without a planning destination', async () => {
+  window.Telegram.WebApp.initDataUnsafe = { start_param: 'availability' };
+  await act(async () => root.render(<App />));
+  expect(container.querySelector('nav button.active').textContent).toContain('Занятость');
+  expect(container.querySelector('[data-planning-month]').dataset.planningMonth).toBe('');
+});
+
+test('personal availability link still requires application access', async () => {
+  window.Telegram.WebApp.initDataUnsafe = { start_param: 'availability' };
+  client.get.mockRejectedValue({ response: { status: 403 } });
+  await act(async () => root.render(<App />));
+  expect(container.querySelector('[data-planning-month]')).toBeNull();
+  expect(container.querySelector('nav')).toBeNull();
+});
+
 test('mutations refresh application configuration', async () => {
   await act(async () => root.render(<App />));
   const before = client.get.mock.calls.filter(([url]) => url.endsWith('app-config')).length;

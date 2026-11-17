@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import './index.css';
 import client, { DATA_CHANGED_EVENT } from './api/client';
 import { loadTelegram } from './telegram';
-import { getInitialPlanningMonth } from './navigation';
+import { getInitialPlanningMonth, getInitialTab } from './navigation';
 import AssistantView from './components/AssistantView';
 import CalendarView from './components/CalendarView';
 import AvailabilityView from './components/AvailabilityView';
@@ -49,7 +49,7 @@ function App() {
         tg.expand();
         const planningMonth = getInitialPlanningMonth(tg);
         setInitialPlanningMonth(planningMonth);
-        if (planningMonth) {
+        if (getInitialTab(tg) === 'availability') {
           setVisitedTabs(tabs => tabs.includes('availability') ? tabs : [...tabs, 'availability']);
           setActiveTab('availability');
         }
