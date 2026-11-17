@@ -118,7 +118,7 @@ SQLite in development (`theater_bot.db` in `backend/`). `core/database.py` expos
 
 ### Frontend
 
-Single-page React app (`frontend/src/App.js`) with calendar, finance, resources
+Single-page React app (`frontend/src/App.js`) with calendar, availability, finance, resources
 and (when enabled and authorized) assistant tabs. Settings (`NotificationsView`)
 open from the assistant; there is no separate settings tab. Admins manage monthly
 polls in `AvailabilitySection` inside `PlanningView`, below the cast summary.
@@ -169,7 +169,14 @@ The confirmed key for availability is **(Telegram user_id, local calendar date)*
 
 `DayAnswer` is the current answer, `AnswerSource` deduplicates per-publication payloads, `AnswerHistory` retains accepted changes, and `PollUpdate` deduplicates Telegram updates. Regular polls and availability options freeze their dates. A moved event needs new-day answers; a different show on the same date uses existing answers. Preserve these invariants.
 
-The calendar's «Моя занятость» screen lets any authenticated member change their
+The separate «Занятость» tab (`AvailabilityView`) opens a Monday-first monthly
+calendar in `MyAvailabilityView`: green=yes, red=no, amber=unknown, gray=no answer,
+with symbols and accessible labels in addition to color. Selecting a date opens
+its answer controls below the grid. Cast planning stays behind a button on this
+tab and returns to the same personal month/date; planning deep links select this
+tab and open the requested planning month. The event calendar has no planning
+or personal-attendance buttons.
+The «Моя занятость» screen lets any authenticated member change their
 own existing day answers without finding or reopening a Telegram poll. It lists
 `DayAnswer` rows by month (including retractions); past dates are read-only.
 `GET/PUT /api/attendance/me` takes identity only from signed initData. Writes use

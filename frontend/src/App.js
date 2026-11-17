@@ -5,6 +5,7 @@ import { loadTelegram } from './telegram';
 import { getInitialPlanningMonth } from './navigation';
 import AssistantView from './components/AssistantView';
 import CalendarView from './components/CalendarView';
+import AvailabilityView from './components/AvailabilityView';
 import NotificationsView from './components/NotificationsView';
 import FinanceView from './components/FinanceView';
 import LinksView from './components/LinksView';
@@ -46,7 +47,12 @@ function App() {
         if (!active) return;
         tg.ready();
         tg.expand();
-        setInitialPlanningMonth(getInitialPlanningMonth(tg));
+        const planningMonth = getInitialPlanningMonth(tg);
+        setInitialPlanningMonth(planningMonth);
+        if (planningMonth) {
+          setVisitedTabs(tabs => tabs.includes('availability') ? tabs : [...tabs, 'availability']);
+          setActiveTab('availability');
+        }
         checkingAccess = true;
         setLoadingStage('Проверка доступа…');
         return client.get('/api/auth/check', { timeout: 15000 });
@@ -136,7 +142,10 @@ function App() {
           />
         </section>}
         {visitedTabs.includes('calendar') && <section hidden={activeTab !== 'calendar'}>
-          <CalendarView active={activeTab === 'calendar'} dataVersion={dataVersion} userId={userId} isAdmin={isAdmin} initialPlanningMonth={initialPlanningMonth} />
+          <CalendarView active={activeTab === 'calendar'} dataVersion={dataVersion} userId={userId} isAdmin={isAdmin} />
+        </section>}
+        {visitedTabs.includes('availability') && <section hidden={activeTab !== 'availability'}>
+          <AvailabilityView active={activeTab === 'availability'} dataVersion={dataVersion} isAdmin={isAdmin} initialPlanningMonth={initialPlanningMonth} />
         </section>}
         {canFinance && visitedTabs.includes('finance') && <section hidden={activeTab !== 'finance'}>
           <FinanceView active={activeTab === 'finance'} dataVersion={dataVersion} username={username} isAdmin={isAdmin} />
@@ -158,6 +167,12 @@ function App() {
           onClick={() => selectTab('calendar')}
         >
           📅<span>Расписание</span>
+        </button>
+        <button
+          className={activeTab === 'availability' ? 'active' : ''}
+          onClick={() => selectTab('availability')}
+        >
+          🗓️<span>Занятость</span>
         </button>
         {canFinance && <button
           className={activeTab === 'finance' ? 'active' : ''}

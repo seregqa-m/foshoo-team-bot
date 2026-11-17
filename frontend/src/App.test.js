@@ -13,7 +13,8 @@ jest.mock('./components/AssistantView', () => {
   };
 });
 jest.mock('./components/FinanceView', () => () => <div>finance</div>);
-jest.mock('./components/CalendarView', () => ({ initialPlanningMonth }) => <div data-planning-month={initialPlanningMonth}>calendar</div>);
+jest.mock('./components/CalendarView', () => () => <div>calendar</div>);
+jest.mock('./components/AvailabilityView', () => ({ initialPlanningMonth, isAdmin }) => <div data-planning-month={initialPlanningMonth} data-admin={!!isAdmin}>availability</div>);
 jest.mock('./components/LinksView', () => () => <div>links</div>);
 jest.mock('./components/NotificationsView', () => ({ isSuperAdmin }) => <div>{isSuperAdmin ? 'global settings' : 'group settings'}</div>);
 
@@ -50,11 +51,11 @@ test('failed access check does not open the application', async () => {
   expect(container.textContent).toContain('Проверка доступа недоступна');
 });
 
-test('passes the Telegram destination to the calendar after authorization', async () => {
+test('opens a planning deep link in the availability tab after authorization', async () => {
   window.Telegram.WebApp.initDataUnsafe = { start_param: 'planning_2026-12' };
   await act(async () => root.render(<App />));
   expect(container.querySelector('[data-planning-month]').dataset.planningMonth).toBe('2026-12');
-  expect(container.querySelector('nav button.active').textContent).toContain('Расписание');
+  expect(container.querySelector('nav button.active').textContent).toContain('Занятость');
 });
 
 test('a planning link cannot bypass application access checks', async () => {
@@ -155,4 +156,14 @@ test('slow Telegram SDK displays its stage and does not send unsigned auth reque
   });
   expect(container.querySelector('nav')).not.toBeNull();
   document.querySelector('script[src*="telegram.org"]').remove();
+});
+
+test('availability is a separate tab for an ordinary member without financial access', async () => {
+  client.get.mockResolvedValue({ data: { allowed: true, is_admin: false, can_finance: false, user_id: 42 } });
+  await act(async () => root.render(<App />));
+  const tab = [...container.querySelectorAll('nav button')].find(b => b.textContent.includes('Занятость'));
+  await act(async () => tab.click());
+  expect(tab.className).toBe('active');
+  expect(container.querySelector('[data-planning-month]').dataset.admin).toBe('false');
+  expect(container.querySelector('[data-planning-month]').closest('section').hidden).toBe(false);
 });

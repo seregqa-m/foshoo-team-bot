@@ -1,16 +1,34 @@
-.my-availability h1 { font-size: 23px; margin: 18px 0 8px; }
-.my-availability p { font-size: 14px; line-height: 1.5; }
-.my-availability__toolbar { display: flex; align-items: center; gap: 6px; margin: 18px 0; }
-.my-availability__toolbar input { flex: 1; min-width: 0; width: 100%; min-height: 44px; font: inherit; }
-.my-availability__toolbar button { min-height: 44px; padding: 8px 10px; }
-.my-availability__day { margin: 12px 0; padding: 14px; border: 1px solid #ddd; border-radius: 12px; background: #fff; }
+.my-availability h1 { font-size: 23px; margin: 0; }
+.my-availability p { font-size: 13px; line-height: 1.5; }
+.my-availability__title { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.my-availability__title button { font-size: 12px; padding: 8px 10px; min-height: 40px; }
+.my-availability__intro { color: #666; }
+.my-availability__toolbar { display: flex; align-items: center; gap: 10px; margin: 20px 0 16px; }
+.my-availability__toolbar input { flex: 1; min-width: 0; width: 100%; min-height: 44px; padding: 8px; border: 1px solid var(--border); border-radius: 10px; background: #fff; color: var(--text); font: inherit; font-weight: 600; text-align: center; }
+.my-availability__toolbar button { min-height: 44px; min-width: 44px; padding: 8px; }
+.my-availability__calendar { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px; }
+.my-availability__weekday { padding: 0 0 5px; text-align: center; font-size: 12px; color: #666; }
+.my-availability--yes { --answer-bg: #dff2e5; --answer-ink: #205939; }
+.my-availability--no { --answer-bg: #fbe2e2; --answer-ink: #8a2525; }
+.my-availability--unknown { --answer-bg: #fff0c4; --answer-ink: #755112; }
+.my-availability--unanswered { --answer-bg: #f3f3f4; --answer-ink: #73737b; }
+.my-availability__cell { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; height: 58px; min-width: 0; border: 2px solid transparent; border-radius: 10px; background: var(--answer-bg); color: var(--answer-ink); font: inherit; font-size: 16px; font-weight: 600; cursor: pointer; }
+.my-availability__cell small { font-size: 12px; line-height: 1; color: inherit; }
+.my-availability__cell--past { opacity: .6; }
+.my-availability__cell[aria-pressed="true"] { border-color: #28252a; opacity: 1; }
+.my-availability__cell:disabled { cursor: default; }
+.my-availability__legend { display: flex; flex-wrap: wrap; gap: 8px 14px; margin: 14px 0 18px; font-size: 11px; color: #555; }
+.my-availability__legend > span { display: inline-flex; gap: 5px; align-items: center; }
+.my-availability__legend i { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; border-radius: 5px; background: var(--answer-bg); color: var(--answer-ink); font-style: normal; font-weight: 600; }
+.my-availability__selection { padding: 14px; margin-bottom: 12px; border: 1px solid var(--border); border-radius: 12px; background: #fafafa; }
 .my-availability__heading { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 12px; }
 .my-availability__heading h2 { font-size: 16px; margin: 0; }
-.my-availability__heading span { font-size: 13px; }
+.my-availability__heading > span { font-size: 12px; color: #666; }
 .my-availability__answers { display: flex; gap: 6px; }
-.my-availability__answers button { flex: 1; min-width: 0; min-height: 44px; padding: 8px 4px; border: 1px solid #ccc; border-radius: 8px; background: #fff; color: #333; font: inherit; font-size: 13px; cursor: pointer; }
-.my-availability__answers button[aria-pressed="true"] { background: #28252a; border-color: #28252a; color: #fff; opacity: 1; }
+.my-availability__answers button { flex: 1; min-width: 0; min-height: 46px; padding: 8px 3px; border: 2px solid transparent; border-radius: 8px; background: var(--answer-bg); color: var(--answer-ink); font: inherit; font-size: 12px; cursor: pointer; }
+.my-availability__answers button[aria-pressed="true"] { border-color: #28252a; font-weight: 600; }
 .my-availability__answers button:disabled { cursor: default; }
-.my-availability__answers button:focus-visible { outline: 2px solid #651d32; outline-offset: 2px; }
-.my-availability__notice { background: #f1f2f5; padding: 12px; border-radius: 8px; }
-.my-availability__hint, .my-availability small { color: #666; }
+.my-availability button:focus-visible, .my-availability input:focus-visible { outline: 2px solid #651d32; outline-offset: 2px; }
+.my-availability__notice { background: #f1f2f5; padding: 10px 12px; border-radius: 8px; margin: 10px 0; }
+.my-availability__hint, .my-availability__loading { color: #666; margin: 12px 0; }
+.availability-planning-link { width: 100%; margin-top: 12px; min-height: 48px; text-align: left; }

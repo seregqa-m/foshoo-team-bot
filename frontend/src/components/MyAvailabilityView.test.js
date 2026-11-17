@@ -4,10 +4,10 @@ import MyAvailabilityView from './MyAvailabilityView';
 import client from '../api/client';
 
 jest.mock('../api/client', () => ({ __esModule: true, default: { get: jest.fn(), put: jest.fn() } }));
-
 let root, container, data;
-const daySection = day => [...container.querySelectorAll('section')].find(s => s.getAttribute('aria-label').includes(day));
-const choice = (day, text) => [...daySection(day).querySelectorAll('button')].find(b => b.textContent === text);
+const cell = date => container.querySelector(`[data-date="${date}"]`);
+const choice = text => [...container.querySelectorAll('.my-availability__answers button')].find(b => b.textContent === text);
+const select = date => act(async () => cell(date).click());
 
 beforeEach(() => {
   global.IS_REACT_ACT_ENVIRONMENT = true;
@@ -16,6 +16,8 @@ beforeEach(() => {
   data = { month: '2026-12', days: [
     { date: '2026-12-19', answer: 'no', revision: 3, editable: true },
     { date: '2026-12-20', answer: 'yes', revision: 1, editable: true },
+    { date: '2026-12-23', answer: 'unknown', revision: 1, editable: true },
+    { date: '2026-12-27', answer: null, revision: 2, editable: true },
   ] };
   client.get.mockImplementation(() => Promise.resolve({ data: JSON.parse(JSON.stringify(data)) }));
   client.put.mockImplementation(async (url, payload) => {
@@ -26,15 +28,30 @@ beforeEach(() => {
 });
 afterEach(() => { act(() => root.unmount()); container.remove(); jest.resetAllMocks(); });
 
-test('changes only the chosen date and displays the saved answer', async () => {
-  await act(async () => root.render(<MyAvailabilityView onClose={() => {}} />));
-  expect(choice('19', 'Не могу').getAttribute('aria-pressed')).toBe('true');
-  await act(async () => choice('19', 'Могу').click());
+test('shows a Monday-first month with answer colors and accessible labels', async () => {
+  await act(async () => root.render(<MyAvailabilityView />));
+  expect(container.querySelectorAll('[data-date]')).toHaveLength(31);
+  const grid = container.querySelector('.my-availability__calendar');
+  expect(grid.children[7].hasAttribute('aria-hidden')).toBe(true); // December 1 is Tuesday.
+  expect(grid.children[8]).toBe(cell('2026-12-01'));
+  expect(cell('2026-12-19').className).toContain('--no');
+  expect(cell('2026-12-20').className).toContain('--yes');
+  expect(cell('2026-12-23').className).toContain('--unknown');
+  expect(cell('2026-12-01').className).toContain('--unanswered');
+  expect(cell('2026-12-19').getAttribute('aria-label')).toContain('Не могу');
+  expect(client.put).not.toHaveBeenCalled();
+});
+
+test('changes only the selected date and updates its calendar color', async () => {
+  await act(async () => root.render(<MyAvailabilityView />));
+  await select('2026-12-19');
+  expect(choice('Не могу').getAttribute('aria-pressed')).toBe('true');
+  await act(async () => choice('Могу').click());
   expect(client.put).toHaveBeenCalledWith('/api/attendance/me', {
     date: '2026-12-19', answer: 'yes', expected_revision: 3,
   });
-  expect(choice('19', 'Могу').getAttribute('aria-pressed')).toBe('true');
-  expect(choice('20', 'Могу').getAttribute('aria-pressed')).toBe('true');
+  expect(cell('2026-12-19').className).toContain('--yes');
+  expect(cell('2026-12-19').getAttribute('aria-pressed')).toBe('true');
   expect(data.days[1].revision).toBe(1);
   expect(container.textContent).toContain('Сохранено.');
 });
@@ -45,14 +62,17 @@ test('a concurrent change reloads the actual answer before another choice', asyn
     throw { response: { status: 409 } };
   });
   await act(async () => root.render(<MyAvailabilityView />));
-  await act(async () => choice('19', 'Могу').click());
-  expect(choice('19', 'Пока не знаю').getAttribute('aria-pressed')).toBe('true');
+  await select('2026-12-19');
+  await act(async () => choice('Могу').click());
+  expect(choice('Пока не знаю').getAttribute('aria-pressed')).toBe('true');
+  expect(cell('2026-12-19').className).toContain('--unknown');
   expect(container.textContent).toContain('Ответ уже изменился');
   expect(container.textContent).not.toContain('Сохранено.');
 });
 
-test('month navigation crosses the year and stale reads cannot replace the new month', async () => {
+test('navigation crosses the year, clears selection and rejects late reads', async () => {
   await act(async () => root.render(<MyAvailabilityView />));
+  await select('2026-12-19');
   let resolveOld;
   client.get.mockImplementationOnce(() => new Promise(resolve => { resolveOld = resolve; }));
   await act(async () => container.querySelector('[aria-label="Следующий месяц"]').click());
@@ -61,30 +81,51 @@ test('month navigation crosses the year and stale reads cannot replace the new m
   await act(async () => resolveOld({ data: { month: '2027-01', days: data.days } }));
   expect(client.get).toHaveBeenCalledWith('/api/attendance/me', { params: { month: '2027-01' } });
   expect(container.querySelector('input').value).toBe('2027-02');
-  expect(container.querySelectorAll('section')).toHaveLength(0);
+  expect(container.querySelectorAll('[data-date]')).toHaveLength(28);
+  expect(container.querySelector('.my-availability__selection')).toBeNull();
   expect(container.textContent).toContain('пока нет ответов');
 });
 
-test('past dates are read-only and load failure never exposes stale answer buttons', async () => {
+test('past and unrecorded days are read-only, while a retracted answer can be changed', async () => {
   data.days[0].editable = false;
   await act(async () => root.render(<MyAvailabilityView />));
-  expect(daySection('19').querySelectorAll('button')).toHaveLength(0);
+  await select('2026-12-19');
+  expect(choice('Могу')).toBeUndefined();
+  expect(container.textContent).toContain('Дата прошла');
+  await select('2026-12-01');
+  expect(choice('Могу')).toBeUndefined();
+  expect(container.textContent).toContain('вы ещё не отвечали');
+  await select('2026-12-27');
+  expect(choice('Могу').disabled).toBe(false);
+});
+
+test('load failure never exposes stale answer controls', async () => {
+  await act(async () => root.render(<MyAvailabilityView />));
+  await select('2026-12-19');
   client.get.mockRejectedValueOnce(new Error('offline'));
   await act(async () => [...container.querySelectorAll('button')].find(b => b.textContent === 'Обновить').click());
   expect(container.querySelector('[role="alert"]').textContent).toContain('Не удалось загрузить');
-  expect(container.querySelectorAll('section')).toHaveLength(0);
+  expect(choice('Могу')).toBeUndefined();
 });
 
-test('a save blocks other writes and ambiguous failure reloads the saved state', async () => {
+test('save blocks other choices and ambiguous failure reloads the saved state', async () => {
   let rejectSave;
   client.put.mockImplementationOnce(() => new Promise((resolve, reject) => { rejectSave = reject; }));
   await act(async () => root.render(<MyAvailabilityView />));
-  await act(async () => choice('19', 'Могу').click());
-  expect(choice('20', 'Не могу').disabled).toBe(true);
+  await select('2026-12-19');
+  await act(async () => choice('Могу').click());
+  expect(cell('2026-12-20').disabled).toBe(true);
   expect(container.querySelector('input').disabled).toBe(true);
   data.days[0].answer = 'yes'; data.days[0].revision = 4;
   await act(async () => rejectSave(new Error('lost response')));
-  expect(choice('19', 'Могу').getAttribute('aria-pressed')).toBe('true');
+  expect(cell('2026-12-19').className).toContain('--yes');
   expect(container.textContent).toContain('Не удалось подтвердить сохранение');
   expect(client.put).toHaveBeenCalledTimes(1);
+});
+
+test('leap February includes all 29 dates', async () => {
+  client.get.mockResolvedValue({ data: { month: '2028-02', days: [] } });
+  await act(async () => root.render(<MyAvailabilityView initialMonth="2028-02" />));
+  expect(container.querySelectorAll('[data-date]')).toHaveLength(29);
+  expect(cell('2028-02-29')).not.toBeNull();
 });

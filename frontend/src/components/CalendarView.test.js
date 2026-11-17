@@ -10,8 +10,6 @@ jest.mock('../api/calendar', () => ({
   getEvents: jest.fn(), launchPoll: jest.fn(), getEventEditor: jest.fn(),
   updateEvent: jest.fn(), createEvent: jest.fn(), deleteEvent: jest.fn(),
 }));
-jest.mock('./PlanningView', () => ({ initialMonth, onClose, isAdmin }) => <div data-planning-month={initialMonth} data-can-assign={!!isAdmin}><button onClick={onClose}>К расписанию</button></div>);
-jest.mock('./MyAvailabilityView', () => ({ onClose }) => <div data-personal-answers><button onClick={onClose}>К расписанию</button></div>);
 
 let root, container;
 const event = (id, title, start, end) => ({
@@ -20,32 +18,10 @@ const event = (id, title, start, end) => ({
 const button = text => [...container.querySelectorAll('button')].find(b => b.textContent === text);
 const titles = () => [...container.querySelectorAll('.event-title')].map(el => el.textContent);
 
-test('a planning launch opens the chosen month and allows returning to the calendar', async () => {
-  await act(async () => root.render(<CalendarView userId={42} isAdmin initialPlanningMonth="2026-12" />));
-  expect(container.querySelector('[data-planning-month]').dataset.planningMonth).toBe('2026-12');
-  expect(container.querySelector('[data-can-assign]').dataset.canAssign).toBe('true');
-  await act(async () => button('К расписанию').click());
-  expect(container.querySelector('[data-planning-month]')).toBeNull();
-  expect(container.querySelector('.page-title').textContent).toBe('Расписание');
-});
-
-test('a planning launch opens read-only planning for an ordinary member', async () => {
-  await act(async () => root.render(<CalendarView userId={42} isAdmin={false} initialPlanningMonth="2026-12" />));
-  expect(container.querySelector('[data-planning-month]').dataset.planningMonth).toBe('2026-12');
-  expect(container.querySelector('[data-can-assign]').dataset.canAssign).toBe('false');
-});
-
-test('an ordinary member can also open planning from the calendar', async () => {
+test('schedule keeps events separate from availability and cast planning', async () => {
   await act(async () => root.render(<CalendarView userId={42} isAdmin={false} />));
-  await act(async () => button('Планирование составов →').click());
-  expect(container.querySelector('[data-can-assign]').dataset.canAssign).toBe('false');
-});
-
-test('an ordinary member can open personal answers and return to the calendar', async () => {
-  await act(async () => root.render(<CalendarView userId={42} isAdmin={false} />));
-  await act(async () => button('Моя занятость →').click());
-  expect(container.querySelector('[data-personal-answers]')).not.toBeNull();
-  await act(async () => button('К расписанию').click());
+  expect(button('Планирование составов →')).toBeUndefined();
+  expect(button('Моя занятость →')).toBeUndefined();
   expect(container.querySelector('.page-title').textContent).toBe('Расписание');
 });
 

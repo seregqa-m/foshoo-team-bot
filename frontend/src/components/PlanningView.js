@@ -93,7 +93,7 @@ function CastDialog({ slot, cell, month, fingerprint, timezone, onClose, onSaved
   );
 }
 
-export default function PlanningView({ onClose, dataVersion = 0, initialMonth = '', isAdmin = false }) {
+export default function PlanningView({ onClose, closeLabel = '← К расписанию', dataVersion = 0, initialMonth = '', isAdmin = false }) {
   const [showNames, setShowNames] = useState([]);
   useEffect(() => {
     if (!isAdmin) return;
@@ -150,7 +150,7 @@ export default function PlanningView({ onClose, dataVersion = 0, initialMonth = 
   };
   return (
     <div className="planning-view">
-      <button className="btn btn-secondary" onClick={onClose}>← К расписанию</button>
+      <button className="btn btn-secondary" onClick={onClose}>{closeLabel}</button>
       <h1>Планирование составов</h1>
       <p className="planning-note">Сравните даты и спектакли. Нажмите на ячейку, чтобы посмотреть роли и доступность исполнителей.{isAdmin && ' Администратор может выбрать состав и назначить спектакль.'}</p>
       <div className="planning-toolbar">
