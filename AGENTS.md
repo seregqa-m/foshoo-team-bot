@@ -169,6 +169,16 @@ The confirmed key for availability is **(Telegram user_id, local calendar date)*
 
 `DayAnswer` is the current answer, `AnswerSource` deduplicates per-publication payloads, `AnswerHistory` retains accepted changes, and `PollUpdate` deduplicates Telegram updates. Regular polls and availability options freeze their dates. A moved event needs new-day answers; a different show on the same date uses existing answers. Preserve these invariants.
 
+The calendar's «Моя занятость» screen lets any authenticated member change their
+own existing day answers without finding or reopening a Telegram poll. It lists
+`DayAnswer` rows by month (including retractions); past dates are read-only.
+`GET/PUT /api/attendance/me` takes identity only from signed initData. Writes use
+the shared lock and an expected revision; each accepted edit has its own source
+so an identical earlier app choice cannot suppress a later intentional change.
+Conflicts reload the current answer, and retries cannot overwrite newer votes.
+Planning reads the change immediately; the minute worker exports it to Sheets.
+Original Telegram poll selections and publication vote records remain historical.
+
 The existing cast planner merges the common answers into Sheets data and includes every show in the theater catalog, retaining legacy Sheets shows. Unknown casts remain incomplete. Roles are still maintained in Sheets; attendance export must never overwrite a role cell. Planner assignment and export share `answer_lock`. Export failures retain the committed answer and are retried by the background worker. Once a common answer exists, a manual yes/no edit in Sheets does not override it.
 
 Availability campaigns publish one copy per distinct mapped chat, with up to 9 dates plus «Ни одна из дат». Selecting that option alone means no on every date; when combined with dates, explicit selected dates win. Unselected dates become no only after that part is answered. Campaign history is retained. Same dates/destinations reuse existing publications; confirmed delivery failures can retry without duplicating success. An unconfirmed send requires explicit checking of the chat before retry. A bot-triggered campaign is scoped to shows mapped to that chat and requires its admin or a superadmin.

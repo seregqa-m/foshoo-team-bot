@@ -11,6 +11,7 @@ jest.mock('../api/calendar', () => ({
   updateEvent: jest.fn(), createEvent: jest.fn(), deleteEvent: jest.fn(),
 }));
 jest.mock('./PlanningView', () => ({ initialMonth, onClose, isAdmin }) => <div data-planning-month={initialMonth} data-can-assign={!!isAdmin}><button onClick={onClose}>К расписанию</button></div>);
+jest.mock('./MyAvailabilityView', () => ({ onClose }) => <div data-personal-answers><button onClick={onClose}>К расписанию</button></div>);
 
 let root, container;
 const event = (id, title, start, end) => ({
@@ -38,6 +39,14 @@ test('an ordinary member can also open planning from the calendar', async () => 
   await act(async () => root.render(<CalendarView userId={42} isAdmin={false} />));
   await act(async () => button('Планирование составов →').click());
   expect(container.querySelector('[data-can-assign]').dataset.canAssign).toBe('false');
+});
+
+test('an ordinary member can open personal answers and return to the calendar', async () => {
+  await act(async () => root.render(<CalendarView userId={42} isAdmin={false} />));
+  await act(async () => button('Моя занятость →').click());
+  expect(container.querySelector('[data-personal-answers]')).not.toBeNull();
+  await act(async () => button('К расписанию').click());
+  expect(container.querySelector('.page-title').textContent).toBe('Расписание');
 });
 
 beforeEach(() => {

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import * as calendarApi from '../api/calendar';
 import client from '../api/client';
 import PlanningView from './PlanningView';
+import MyAvailabilityView from './MyAvailabilityView';
 import { calendarFilters, calendarDetails, getEventDetailKey, getEventColor, matchesCalendarFilter } from './calendarPresentation';
 import './CalendarView.css';
 
@@ -532,6 +533,7 @@ export default function CalendarView({ userId, isAdmin, active = true, dataVersi
   const [filter, setFilter] = useState('rehearsals');
   const [detailFilter, setDetailFilter] = useState('');
   const [planning, setPlanning] = useState(!!initialPlanningMonth);
+  const [myAvailability, setMyAvailability] = useState(false);
   const [calendarUrl, setCalendarUrl] = useState(null);
   const [pollSummary, setPollSummary] = useState({});
   const [now, setNow] = useState(Date.now);
@@ -606,6 +608,7 @@ export default function CalendarView({ userId, isAdmin, active = true, dataVersi
   }, [loading, filter, effectiveFilter, detailFilter, effectiveDetail]);
 
   if (planning) return <PlanningView onClose={() => setPlanning(false)} dataVersion={dataVersion} initialMonth={initialPlanningMonth} isAdmin={isAdmin} />;
+  if (myAvailability) return <MyAvailabilityView onClose={() => { setMyAvailability(false); fetchPollSummary(); }} active={active} dataVersion={dataVersion} />;
 
   if (loading && events.length === 0) return <div className="empty-state">Загрузка...</div>;
 
@@ -630,6 +633,7 @@ export default function CalendarView({ userId, isAdmin, active = true, dataVersi
       </div>
 
       <button className="btn btn-secondary" style={{ width: '100%', marginBottom: 14 }} onClick={() => setPlanning(true)}>Планирование составов →</button>
+      <button className="btn btn-secondary" style={{ width: '100%', marginBottom: 14 }} onClick={() => setMyAvailability(true)}>Моя занятость →</button>
 
       <WeekCalendar
         events={events}

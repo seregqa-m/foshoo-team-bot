@@ -21,6 +21,7 @@ from modules.polling.router import router as polling_router
 from modules.notifications.router import router as notifications_router
 from modules.availability.router import router as availability_router
 from modules.planning.router import router as planning_router
+from modules.attendance.router import router as attendance_router
 from modules.admin.router import router as admin_router
 from modules.theater.router import router as theater_router
 import modules.attendance.models  # noqa: common person/day answers must survive poll cleanup
@@ -433,6 +434,7 @@ app.include_router(polling_router, dependencies=[Depends(authorize_api)])
 app.include_router(notifications_router, dependencies=[Depends(authorize_api)])
 app.include_router(availability_router, dependencies=[Depends(authorize_api)])
 app.include_router(planning_router, dependencies=[Depends(authorize_api)])
+app.include_router(attendance_router, dependencies=[Depends(authorize_api)])
 app.include_router(assistant_router, dependencies=[Depends(authorize_api)])
 app.include_router(links_router, dependencies=[Depends(authorize_api)])
 app.include_router(afisha_router, dependencies=[Depends(authorize_api)])

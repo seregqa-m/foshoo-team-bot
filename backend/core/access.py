@@ -223,6 +223,7 @@ async def _authorize_api(request: Request):
     member_writes = {
         "/api/finance/expense", "/api/finance/income",
         "/api/assistant/chat", "/api/assistant/execute",
+        "/api/attendance/me",
     }
     voting = path.startswith("/api/polls/") and path.endswith("/vote")
     if request.method not in ("GET", "HEAD", "OPTIONS") and path not in member_writes and not voting and not admin:
