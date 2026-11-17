@@ -277,18 +277,22 @@ async def create_campaign(req: CreateCampaignRequest, db: Session = Depends(get_
                         raise ValueError('Bot username is missing')
                 except Exception as exc:
                     raise HTTPException(502, 'Не удалось подготовить ссылку на результаты. Повторите отправку.') from exc
-                results_button = InlineKeyboardMarkup(inline_keyboard=[[
+                availability_url = f'https://t.me/{bot_username}?startapp=availability'
+                poll_buttons = InlineKeyboardMarkup(inline_keyboard=[[
                     InlineKeyboardButton(text='Результаты тут',
                         url=f'https://t.me/{bot_username}?startapp=planning_{campaign.month}')
+                ], [
+                    InlineKeyboardButton(text='Изменить ответы', url=availability_url)
                 ]])
                 await send_publication(db, bot, poll,
                     question=(
                         f"Планируем даты спектаклей на {format_date(selected[0][0], 'LLLL yyyy', locale='ru_RU')}\n\n"
-                        "Ответы учитываются при планировании всех спектаклей, в которых вы участвуете. "
-                        "Опрос достаточно заполнить один раз в любой группе."
+                        "Ответы общие для всех ваших спектаклей — заполните опрос один раз в любой группе.\n\n"
+                        "Изменить только нужные даты, не заполняя опрос заново:\n"
+                        f"{availability_url}"
                     ),
                     options=[o.date_label for o in sorted(poll.options, key=lambda o: o.option_index)] + ['Ни одна из дат'],
-                    multiple=True, reply_markup=results_button)
+                    multiple=True, reply_markup=poll_buttons)
             except HTTPException as exc:
                 errors.append({'chat_id': poll.telegram_chat_id, 'poll_id': poll.id,
                                'delivery_state': poll.delivery_state, 'error': exc.detail})

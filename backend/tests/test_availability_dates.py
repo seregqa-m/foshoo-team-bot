@@ -57,6 +57,10 @@ class AvailabilityDateTests(unittest.IsolatedAsyncioTestCase):
         button = send.call_args.kwargs['reply_markup'].inline_keyboard[0][0]
         self.assertEqual(button.text, 'Результаты тут')
         self.assertEqual(button.url, 'https://t.me/test_theater_bot?startapp=planning_2026-10')
+        edit_button = send.call_args.kwargs['reply_markup'].inline_keyboard[1][0]
+        self.assertEqual(edit_button.text, 'Изменить ответы')
+        self.assertEqual(edit_button.url, 'https://t.me/test_theater_bot?startapp=availability')
+        self.assertIn(edit_button.url, send.call_args.kwargs['question'])
 
     async def test_full_month_splits_into_polls_without_losing_dates(self):
         req = CreateCampaignRequest(show_names=['Урод'], dates=[date(2026, 10, n) for n in range(1, 32)])
@@ -68,6 +72,8 @@ class AvailabilityDateTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([len(c.kwargs['options']) for c in send.call_args_list], [10, 10, 10, 5])
         self.assertTrue(all(c.kwargs['reply_markup'].inline_keyboard[0][0].url.endswith('planning_2026-10')
                             for c in send.call_args_list))
+        self.assertTrue(all(c.kwargs['reply_markup'].inline_keyboard[1][0].url ==
+                            'https://t.me/test_theater_bot?startapp=availability' for c in send.call_args_list))
 
     async def test_existing_polls_are_not_resent_or_edited_when_results_links_are_added(self):
         req = CreateCampaignRequest(show_names=['Урод'], dates=['2026-12-23'])
@@ -86,8 +92,21 @@ class AvailabilityDateTests(unittest.IsolatedAsyncioTestCase):
                          'https://t.me/test_theater_bot?startapp=planning_2026-12')
         self.assertEqual(send.call_args.kwargs['question'],
                          'Планируем даты спектаклей на декабрь 2026\n\n'
-                         'Ответы учитываются при планировании всех спектаклей, в которых вы участвуете. '
-                         'Опрос достаточно заполнить один раз в любой группе.')
+                         'Ответы общие для всех ваших спектаклей — заполните опрос один раз в любой группе.\n\n'
+                         'Изменить только нужные даты, не заполняя опрос заново:\n'
+                         'https://t.me/test_theater_bot?startapp=availability')
+
+    async def test_long_bot_name_and_month_keep_the_complete_link_within_poll_limit(self):
+        self.bot_identity.return_value = SimpleNamespace(username='x' * 28 + '_bot')
+        req = CreateCampaignRequest(show_names=['Урод'], dates=['2026-09-01'])
+        send = AsyncMock(return_value=SimpleNamespace(poll=SimpleNamespace(id='long'), message_id=12))
+        with patch('bot.bot.send_poll', send), patch('modules.availability.router._ensure_campaign_columns'):
+            await create_campaign(req, self.db)
+        url = send.call_args.kwargs['reply_markup'].inline_keyboard[1][0].url
+        question = send.call_args.kwargs['question']
+        self.assertLessEqual(len(question), 300)
+        self.assertTrue(question.endswith(url))
+        self.assertIn('не заполняя опрос заново', question)
 
     async def test_link_lookup_failure_leaves_publication_pending_and_retryable(self):
         req = CreateCampaignRequest(show_names=['Урод'], dates=['2027-01-03'])
