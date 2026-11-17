@@ -121,6 +121,8 @@ def _known_actor(username: str, user_id: int | None = None) -> bool:
         raise HTTPException(503, "Проверка доступа временно недоступна") from None
 
 
+# Cache only the separate Sheets/finance entitlement, never application entry
+# or Telegram administrator privileges. Membership is checked on every request.
 _access_cache = OrderedDict()
 
 
@@ -161,30 +163,35 @@ async def _permissions(user):
     if await is_super_admin(user.id):
         return True, True, True
     key = (user.id, user.username)
-    # Cache operations contain no awaits; network calls never hold a global lock.
     cached = _access_cache.get(key)
-    if cached and cached[0] > time.monotonic():
-        return (*cached[1:], False)
+    use_cache = cached is not None and cached[0] > time.monotonic()
+
+    async def legacy_access():
+        if use_cache:
+            return cached[1]
+        return await _access_step("sheets", asyncio.to_thread(_known_actor, user.username, user.id), SHEETS_ACCESS_TIMEOUT)
+
     results = await asyncio.gather(
         _is_group_admin(user.id),
-        _access_step("sheets", asyncio.to_thread(_known_actor, user.username, user.id), SHEETS_ACCESS_TIMEOUT),
+        legacy_access(),
         _group_member_access(user), return_exceptions=True)
     admin, legacy, group = (result is True for result in results)
-    errors = [result for result in results if isinstance(result, Exception)]
-    allowed = admin or legacy
+    allowed = admin or group
     if not allowed:
-        # Group-based access is checked on every request, including after departure
-        # or disconnecting the last mapped chat. Sheets cannot keep this access alive.
-        if group:
-            return True, False, False
-        if errors:
+        _access_cache.pop(key, None)
+        # Sheets cannot admit a non-member or override an uncertain Telegram check.
+        if any(isinstance(results[index], Exception) for index in (0, 2)):
             raise HTTPException(503, 'Проверка доступа временно недоступна') from None
         return False, False, False
-    # Failed/timed-out checks never reach the cache.
-    _access_cache[key] = (time.monotonic() + 60, allowed, admin)
-    _access_cache.move_to_end(key)
-    while len(_access_cache) > 512:
-        _access_cache.popitem(last=False)
+    if legacy:
+        # Preserve expiry even if it elapsed while awaiting Telegram.
+        expiry = cached[0] if use_cache else time.monotonic() + 60
+        _access_cache[key] = (expiry, True, False)
+        _access_cache.move_to_end(key)
+        while len(_access_cache) > 512:
+            _access_cache.popitem(last=False)
+    else:
+        _access_cache.pop(key, None)
     return allowed, admin, False
 
 

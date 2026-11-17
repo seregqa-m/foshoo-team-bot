@@ -91,6 +91,110 @@ class GroupParticipantsTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(error.exception.status_code, 503)
         self.assertFalse(access._access_cache)
 
+    async def test_sheet_entry_does_not_allow_outsider(self):
+        with patch('core.access._known_actor', return_value=True), \
+             patch.object(main.bot, 'get_chat_member', AsyncMock(return_value=NS(status='left'))):
+            self.assertEqual(await access._permissions(access.TelegramUser(42, 'actor')), (False, False, False))
+        self.assertFalse(access._access_cache)
+
+    async def test_sheet_access_cache_cannot_keep_departed_member_in(self):
+        user = access.TelegramUser(42, 'actor')
+        with patch('core.access._known_actor', return_value=True), \
+             patch.object(main.bot, 'get_chat_member', AsyncMock(return_value=NS(status='member'))):
+            self.assertEqual(await access._permissions(user), (True, False, False))
+        self.assertTrue(access._access_cache)
+        with patch.object(main.bot, 'get_chat_member', AsyncMock(return_value=NS(status='left'))):
+            self.assertEqual(await access._permissions(user), (False, False, False))
+
+    async def test_cached_finance_does_not_extend_expiry_or_skip_membership_checks(self):
+        user = access.TelegramUser(42, 'actor')
+        with patch('core.access._known_actor', return_value=True) as sheets, \
+             patch.object(main.bot, 'get_chat_member', AsyncMock(return_value=NS(status='member'))) as membership:
+            self.assertEqual(await access._permissions(user), (True, False, False))
+            expiry = access._access_cache[(42, 'actor')][0]
+            self.assertEqual(await access._permissions(user), (True, False, False))
+            self.assertEqual(access._access_cache[(42, 'actor')][0], expiry)
+            sheets.assert_called_once_with('actor', 42)
+            self.assertEqual(membership.await_count, 4)
+
+    async def test_group_admin_revocation_is_not_hidden_by_finance_cache(self):
+        user = access.TelegramUser(42, 'actor')
+        with patch('core.access._known_actor', return_value=True), \
+             patch('core.access._is_group_admin', AsyncMock(side_effect=[True, False])), \
+             patch.object(main.bot, 'get_chat_member', AsyncMock(return_value=NS(status='member'))):
+            self.assertEqual(await access._permissions(user), (True, True, False))
+            self.assertEqual(await access._permissions(user), (True, False, False))
+
+    async def test_finance_expiring_during_membership_check_is_not_renewed(self):
+        user = access.TelegramUser(42, 'actor')
+        access._access_cache[(42, 'actor')] = (101, True, False)
+        with patch('core.access.time') as clock, patch('core.access._known_actor', return_value=True) as sheets:
+            clock.monotonic.return_value = 100
+
+            async def check(_user):
+                clock.monotonic.return_value = 102
+                return True
+
+            with patch('core.access._group_member_access', side_effect=check):
+                self.assertEqual(await access._permissions(user), (True, False, False))
+                self.assertEqual(access._access_cache[(42, 'actor')][0], 101)
+                sheets.assert_not_called()
+                self.assertEqual(await access._permissions(user), (True, False, False))
+                sheets.assert_called_once_with('actor', 42)
+
+    async def test_four_groups_allow_member_independently_of_sheets(self):
+        self.db.add_all([TheaterShow(name='Третий', normalized_name='третий', telegram_chat_id=-1003),
+                         TheaterShow(name='Четвёртый', normalized_name='четвёртый', telegram_chat_id=-1004)])
+        self.db.commit()
+        for sheet_result in (False, True, HTTPException(503, 'Sheets unavailable')):
+            with self.subTest(sheet_result=sheet_result):
+                access._access_cache.clear()
+                with patch('core.access._known_actor', side_effect=[sheet_result]), \
+                     patch.object(main.bot, 'get_chat_member', AsyncMock(return_value=NS(status='member'))) as check:
+                    self.assertEqual(await access._permissions(access.TelegramUser(42, 'actor')), (True, False, False))
+                self.assertEqual({call.args[0] for call in check.await_args_list}, {-1001, -1002, -1003, -1004})
+
+    async def test_one_confirmed_group_suffices_when_another_fails(self):
+        async def check(chat, uid):
+            if chat == -1001:
+                raise TimeoutError()
+            return NS(status='member')
+        with patch('core.access._known_actor', side_effect=HTTPException(503, 'Sheets unavailable')), \
+             patch.object(main.bot, 'get_chat_member', side_effect=check):
+            self.assertEqual(await access._permissions(access.TelegramUser(42, 'actor')), (True, False, False))
+
+    async def test_sheet_entry_cannot_override_unverified_membership(self):
+        with patch('core.access._known_actor', return_value=True), \
+             patch.object(main.bot, 'get_chat_member', AsyncMock(side_effect=TimeoutError())):
+            with self.assertRaises(HTTPException) as error:
+                await access._permissions(access.TelegramUser(42, 'actor'))
+            self.assertEqual(error.exception.status_code, 503)
+        self.assertFalse(access._access_cache)
+
+    async def test_login_and_finance_follow_membership_and_separate_sheet_right(self):
+        from tests.test_admin import headers
+        client = TestClient(main.app)
+        self.addCleanup(client.close)
+        # Exercise signed requests through the real auth dependency, including a
+        # departure after a successful login without a chat_member notification.
+        with patch('main.RECOVERY_MODE', False):
+            for sheet, status, expected, finance in [
+                    (True, 'member', 200, True),
+                    (True, 'left', 403, None),
+                    (False, 'member', 200, False),
+                    (False, 'left', 403, None),
+                    (True, 'kicked', 403, None)]:
+                with self.subTest(sheet=sheet, status=status), \
+                     patch('core.access._known_actor', return_value=sheet), \
+                     patch.object(main.bot, 'get_chat_member', AsyncMock(return_value=NS(status=status))):
+                    response = client.get('/api/auth/check', headers=headers(42, 'actor'))
+                    self.assertEqual(response.status_code, expected, response.text)
+                    if expected == 200:
+                        self.assertEqual(response.json()['can_finance'], finance)
+                        self.assertFalse(response.json()['is_admin'])
+                    else:
+                        self.assertEqual(client.get('/api/finance/balance', headers=headers(42, 'actor')).status_code, 403)
+
     async def test_disconnecting_group_revokes_access_on_next_request(self):
         with patch.object(main.bot, 'get_chat_member', AsyncMock(return_value=NS(status='member'))):
             self.assertTrue((await access._permissions(access.TelegramUser(42)))[0])

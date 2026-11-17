@@ -158,7 +158,7 @@ class AdminTests(unittest.TestCase):
             self.assertTrue(auth['is_superadmin'])
         with self.Session() as db:
             change_role(db, 84, 42, False)
-        with patch('core.access._known_actor', return_value=True):
+        with patch('core.access._known_actor', return_value=True), patch('core.access._group_member_access', AsyncMock(return_value=True)):
             auth = self.client.get('/api/auth/check', headers=headers()).json()
             self.assertFalse(auth['is_superadmin'])
             self.assertFalse(auth['is_admin'])

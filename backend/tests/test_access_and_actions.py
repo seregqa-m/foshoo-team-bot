@@ -59,7 +59,7 @@ class AccessTests(unittest.TestCase):
             return {"ok": True}
         client = TestClient(app)
         self.assertEqual(client.get('/api/calendar/events').status_code, 401)
-        with patch('core.access.verify_init_data', return_value=TelegramUser(42, 'actor')), patch('core.access._is_group_admin', AsyncMock(return_value=False)), patch('core.access._known_actor', return_value=True):
+        with patch('core.access.verify_init_data', return_value=TelegramUser(42, 'actor')), patch('core.access._is_group_admin', AsyncMock(return_value=False)), patch('core.access._known_actor', return_value=True), patch('core.access._group_member_access', AsyncMock(return_value=True)):
             self.assertEqual(client.get('/api/calendar/events').status_code, 200)
             self.assertEqual(client.post('/api/calendar/events').status_code, 403)
             self.assertEqual(client.post('/api/finance/expense', json={'user_id': 99}).status_code, 403)
@@ -70,7 +70,7 @@ class AccessTests(unittest.TestCase):
         from core.access import _access_cache
         _access_cache.clear()
         with patch('core.access.verify_init_data', return_value=TelegramUser(42, 'actor')), patch('core.access._is_group_admin', AsyncMock(return_value=False)), patch('core.access._known_actor', side_effect=HTTPException(503, 'unavailable')):
-            self.assertEqual(client.get('/api/calendar/events').status_code, 503)
+            self.assertEqual(client.get('/api/calendar/events').status_code, 403)
 
 
 class DatabaseTests(unittest.IsolatedAsyncioTestCase):
@@ -188,13 +188,13 @@ class AccessLatencyTests(unittest.IsolatedAsyncioTestCase):
                 await release.wait()
             return True
         self.access._access_cache[(2, "cached")] = (time.monotonic() + 60, True, False)
-        with patch("core.access._is_group_admin", side_effect=group_admin):
+        with patch("core.access._is_group_admin", side_effect=group_admin), patch('core.access._known_actor', return_value=False):
             slow = asyncio.create_task(self.access._permissions(TelegramUser(1, "slow")))
             try:
                 await asyncio.wait_for(entered.wait(), 1)
                 cached = await asyncio.wait_for(self.access._permissions(TelegramUser(2, "cached")), .2)
                 fresh = await asyncio.wait_for(self.access._permissions(TelegramUser(3, "fresh")), .2)
-                self.assertEqual(cached, (True, False, False))
+                self.assertEqual(cached, (True, True, False))
                 self.assertEqual(fresh, (True, True, False))
                 self.assertFalse(slow.done())
             finally:
@@ -223,11 +223,9 @@ class AccessLatencyTests(unittest.IsolatedAsyncioTestCase):
             return True
         self.access._access_cache[(1, "actor")] = (time.monotonic() - 1, True, True)
         try:
-            with patch("core.access._is_group_admin", AsyncMock(return_value=False)), patch("core.access._known_actor", side_effect=stalled), patch("core.access.SHEETS_ACCESS_TIMEOUT", .01):
-                with self.assertRaises(HTTPException) as error:
-                    await self.access._permissions(TelegramUser(1, "actor"))
-                self.assertEqual(error.exception.status_code, 503)
-                self.assertLess(self.access._access_cache[(1, "actor")][0], time.monotonic())
+            with patch("core.access._is_group_admin", AsyncMock(return_value=False)), patch("core.access._known_actor", side_effect=stalled), patch("core.access.SHEETS_ACCESS_TIMEOUT", .01), patch('core.access._group_member_access', AsyncMock(return_value=True)):
+                self.assertEqual(await self.access._permissions(TelegramUser(1, "actor")), (True, False, False))
+                self.assertNotIn((1, "actor"), self.access._access_cache)
         finally:
             release.set()
 
