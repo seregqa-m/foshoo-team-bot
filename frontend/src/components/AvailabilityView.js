@@ -8,11 +8,11 @@ export default function AvailabilityView({ active = true, dataVersion = 0, isAdm
 
   return <>
     <section hidden={planning}>
-      <MyAvailabilityView active={active && !planning} dataVersion={dataVersion}
-        initialMonth={initialPlanningMonth} onMonthChange={setMonth} />
       <button className="btn btn-secondary availability-planning-link" onClick={() => setPlanning(true)}>
         Планирование составов →
       </button>
+      <MyAvailabilityView active={active && !planning} dataVersion={dataVersion}
+        initialMonth={initialPlanningMonth} onMonthChange={setMonth} />
     </section>
     {planning && <PlanningView onClose={() => setPlanning(false)} closeLabel="← К моей занятости"
       dataVersion={dataVersion} initialMonth={month} isAdmin={isAdmin} />}

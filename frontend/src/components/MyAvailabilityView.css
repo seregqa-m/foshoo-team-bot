@@ -31,4 +31,4 @@
 .my-availability button:focus-visible, .my-availability input:focus-visible { outline: 2px solid #651d32; outline-offset: 2px; }
 .my-availability__notice { background: #f1f2f5; padding: 10px 12px; border-radius: 8px; margin: 10px 0; }
 .my-availability__hint, .my-availability__loading { color: #666; margin: 12px 0; }
-.availability-planning-link { width: 100%; margin-top: 12px; min-height: 48px; text-align: left; }
+.availability-planning-link { width: 100%; margin-bottom: 16px; min-height: 48px; text-align: left; }
