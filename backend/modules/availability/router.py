@@ -288,8 +288,7 @@ async def create_campaign(req: CreateCampaignRequest, db: Session = Depends(get_
                     question=(
                         f"Планируем даты спектаклей на {format_date(selected[0][0], 'LLLL yyyy', locale='ru_RU')}\n\n"
                         "Ответы общие для всех ваших спектаклей — заполните опрос один раз в любой группе.\n\n"
-                        "Изменить только нужные даты, не заполняя опрос заново:\n"
-                        f"{availability_url}"
+                        "Изменить только нужные даты, не заполняя опрос заново, можно кнопкой «Изменить ответы»."
                     ),
                     options=[o.date_label for o in sorted(poll.options, key=lambda o: o.option_index)] + ['Ни одна из дат'],
                     multiple=True, reply_markup=poll_buttons)

@@ -60,7 +60,7 @@ class AvailabilityDateTests(unittest.IsolatedAsyncioTestCase):
         edit_button = send.call_args.kwargs['reply_markup'].inline_keyboard[1][0]
         self.assertEqual(edit_button.text, 'Изменить ответы')
         self.assertEqual(edit_button.url, 'https://t.me/test_theater_bot?startapp=availability')
-        self.assertIn(edit_button.url, send.call_args.kwargs['question'])
+        self.assertNotIn(edit_button.url, send.call_args.kwargs['question'])
 
     async def test_full_month_splits_into_polls_without_losing_dates(self):
         req = CreateCampaignRequest(show_names=['Урод'], dates=[date(2026, 10, n) for n in range(1, 32)])
@@ -93,10 +93,9 @@ class AvailabilityDateTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(send.call_args.kwargs['question'],
                          'Планируем даты спектаклей на декабрь 2026\n\n'
                          'Ответы общие для всех ваших спектаклей — заполните опрос один раз в любой группе.\n\n'
-                         'Изменить только нужные даты, не заполняя опрос заново:\n'
-                         'https://t.me/test_theater_bot?startapp=availability')
+                         'Изменить только нужные даты, не заполняя опрос заново, можно кнопкой «Изменить ответы».')
 
-    async def test_long_bot_name_and_month_keep_the_complete_link_within_poll_limit(self):
+    async def test_edit_link_stays_in_button_and_question_fits_poll_limit(self):
         self.bot_identity.return_value = SimpleNamespace(username='x' * 28 + '_bot')
         req = CreateCampaignRequest(show_names=['Урод'], dates=['2026-09-01'])
         send = AsyncMock(return_value=SimpleNamespace(poll=SimpleNamespace(id='long'), message_id=12))
@@ -105,7 +104,9 @@ class AvailabilityDateTests(unittest.IsolatedAsyncioTestCase):
         url = send.call_args.kwargs['reply_markup'].inline_keyboard[1][0].url
         question = send.call_args.kwargs['question']
         self.assertLessEqual(len(question), 300)
-        self.assertTrue(question.endswith(url))
+        self.assertEqual(url, 'https://t.me/' + 'x' * 28 + '_bot?startapp=availability')
+        self.assertNotIn('https://', question)
+        self.assertIn('кнопкой «Изменить ответы»', question)
         self.assertIn('не заполняя опрос заново', question)
 
     async def test_link_lookup_failure_leaves_publication_pending_and_retryable(self):
