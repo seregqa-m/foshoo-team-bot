@@ -1,5 +1,9 @@
 import logging
 import os
+import base64
+import hashlib
+import json
+from collections import deque
 from datetime import date, timedelta
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -339,15 +343,25 @@ def sync_all(db: Session = Depends(get_db)):
     return {"status": "synced", **result}
 
 
+def _accounting_date(value):
+    try:
+        return date.fromisoformat(_safe_date(value) or "").isoformat()
+    except ValueError:
+        return ""
+
+
 @router.get("/transactions")
-def get_transactions(limit: int = 10, db: Session = Depends(get_db)):
-    """Последние N операций (доходы + расходы) из БД, отсортированные по дате."""
+@serialized_finance
+def get_transactions(limit: int = 10, db: Session = Depends(get_db), cursor: str | None = None):
+    """Page through a stable mixed ledger; changed snapshots must be refreshed."""
+    if not 1 <= limit <= 100:
+        raise HTTPException(422, "Размер страницы должен быть от 1 до 100")
     items = []
     for e in db.query(ExpenseLog).all():
         items.append({
             "id": e.id, "type": "expense", "fingerprint": fingerprint(e),
-            "date": _iso_to_dmy(e.date) if e.date else "",
-            "_iso": e.date or "",
+            "date": _iso_to_dmy(_accounting_date(e.date)) if _accounting_date(e.date) else "",
+            "_iso": _accounting_date(e.date),
             "amount": str(e.amount) if e.amount is not None else "0",
             "what": e.what, "project": e.project,
             "who": BANK_NAME if e.expense_type == BANK_EXPENSE else e.who,
@@ -357,48 +371,125 @@ def get_transactions(limit: int = 10, db: Session = Depends(get_db)):
     for i in db.query(IncomeLog).all():
         items.append({
             "id": i.id, "type": "income", "fingerprint": fingerprint(i),
-            "date": _iso_to_dmy(i.date) if i.date else "",
-            "_iso": i.date or "",
+            "date": _iso_to_dmy(_accounting_date(i.date)) if _accounting_date(i.date) else "",
+            "_iso": _accounting_date(i.date),
             "amount": str(i.amount) if i.amount is not None else "0",
             "what": i.what, "project": i.project, "who": "",
             "expense_type": "", "comment": i.comment or "",
             "created_at": i.created_at.isoformat() if i.created_at else "",
         })
 
-    items.sort(key=lambda x: x["_iso"], reverse=True)
-    for item in items:
+    items.sort(key=lambda x: (x["_iso"], x["type"], x["id"]), reverse=True)
+    version = hashlib.sha256(json.dumps(
+        [(item['type'], item['id'], item['fingerprint']) for item in items]
+    ).encode()).hexdigest()
+    offset = 0
+    if cursor is not None:
+        try:
+            if len(cursor) > 512:
+                raise ValueError
+            saved_version, offset = json.loads(base64.urlsafe_b64decode(cursor).decode())
+            if not isinstance(saved_version, str) or type(offset) is not int or offset < 0:
+                raise ValueError
+        except (ValueError, TypeError, UnicodeError):
+            raise HTTPException(422, "Некорректная страница истории") from None
+        if saved_version != version:
+            raise HTTPException(409, "История изменилась. Обновите список операций.")
+    page = items[offset:offset + limit]
+    next_cursor = (base64.urlsafe_b64encode(json.dumps([version, offset + limit]).encode()).decode()
+                   if offset + limit < len(items) else None)
+    for item in page:
         del item["_iso"]
-    return {"transactions": items[:limit]}
+    return {"transactions": page, "next_cursor": next_cursor}
 
 
 def _person_name(value):
     return " ".join((value or "").split())
 
 
-def _summarize_reimbursements(rows):
-    """Refunds come from ExpenseLog, never the unused legacy ReturnsLog."""
+def _summarize_reimbursements(rows, today, start):
+    """Allocate each refund once, oldest dated debt first, never to future costs.
+
+    Sheets contains dates, not payment times: costs on the same date precede
+    refunds regardless of import IDs or sheet row order. Undated costs remain
+    outstanding; undated refunds cannot safely compensate any dated expense.
+    """
     people = {}
     unassigned = {"personal": 0, "returned": 0}
+    recent_unassigned = {"personal": 0, "returned": 0}
+    undated = {"personal": 0, "returned": 0}
+    future_count = invalid_amounts = 0
     for row in rows:
         name = _person_name(row.who)
         field = "personal" if row.expense_type == "Личные траты" else "returned"
         amount = _amt(row.amount)
-        if not name or name.casefold() in ("—", "-", BANK_NAME.casefold()):
-            # Unknown refunds cannot safely be assigned to an unknown spender.
-            unassigned[field] += amount
+        day = _accounting_date(row.date)
+        if amount <= 0:
+            invalid_amounts += 1
             continue
-        person = people.setdefault(name.casefold(), {"who": name, "personal": 0, "returned": 0})
+        if day and day > today.isoformat():
+            future_count += 1
+            continue
+        if not day:
+            undated[field] += amount
+        if not name or name.casefold() in ("—", "-", BANK_NAME.casefold()):
+            unassigned[field] += amount
+            if day and start.isoformat() <= day:
+                recent_unassigned[field] += amount
+            continue
+        person = people.setdefault(name.casefold(), {
+            "who": name, "personal": 0, "returned": 0, "entries": [],
+        })
         person[field] += amount
+        person['entries'].append((day, field, amount))
 
-    outstanding = [
-        {**person, "amount": person["personal"] - person["returned"]}
-        for person in people.values() if person["personal"] > person["returned"]
-    ]
-    outstanding.sort(key=lambda person: (-person["amount"], person["who"].casefold()))
+    outstanding, recent, unapplied = [], [], []
+    for person in people.values():
+        debts = deque()
+        unknown_debt = excess = recent_personal = 0
+        # 'personal' sorts before 'returned' on the same accounting date.
+        for day, field, amount in sorted(person['entries']):
+            if not day:
+                if field == 'personal':
+                    unknown_debt += amount
+                else:
+                    excess += amount
+            elif field == 'personal':
+                debts.append([day, amount])
+                if day >= start.isoformat():
+                    recent_personal += amount
+            else:
+                while amount and debts:
+                    paid = min(amount, debts[0][1])
+                    debts[0][1] -= paid
+                    amount -= paid
+                    if not debts[0][1]:
+                        debts.popleft()
+                excess += amount
+        amount = unknown_debt + sum(value for _, value in debts)
+        if amount:
+            outstanding.append({key: person[key] for key in ('who', 'personal', 'returned')} | {'amount': amount})
+        recent_amount = sum(value for day, value in debts if day >= start.isoformat())
+        if recent_amount:
+            recent.append(dict(who=person['who'], personal=recent_personal,
+                               returned=recent_personal - recent_amount, amount=recent_amount))
+        if excess:
+            unapplied.append(dict(who=person['who'], amount=excess))
+    for group in (outstanding, recent, unapplied):
+        group.sort(key=lambda person: (-person['amount'], person['who'].casefold()))
     return {
-        "total": sum(person["amount"] for person in outstanding) + max(0, unassigned["personal"]),
+        "total": sum(person["amount"] for person in outstanding) + unassigned["personal"],
         "people": outstanding,
         "unassigned": unassigned,
+        "unapplied_returns": unapplied,
+        "undated": undated,
+        "future_count": future_count,
+        "invalid_amounts": invalid_amounts,
+        "recent": {
+            "total": sum(person['amount'] for person in recent) + recent_unassigned['personal'],
+            "people": recent, "unassigned": recent_unassigned,
+            "from_date": start.isoformat(), "to_date": today.isoformat(),
+        },
     }
 
 
@@ -409,21 +500,7 @@ def get_reimbursements(db: Session = Depends(get_db)):
     ).order_by(ExpenseLog.id).all()
     today = local_now().date()
     start = today - timedelta(days=29)
-    recent = []
-    for row in rows:
-        try:
-            row_date = date.fromisoformat(_safe_date(row.date) or "")
-        except ValueError:
-            continue
-        if start <= row_date <= today:
-            recent.append(row)
-    return {
-        **_summarize_reimbursements(rows),
-        "recent": {
-            **_summarize_reimbursements(recent),
-            "from_date": start.isoformat(), "to_date": today.isoformat(),
-        },
-    }
+    return _summarize_reimbursements(rows, today, start)
 
 
 @router.get("/reimbursements/history")

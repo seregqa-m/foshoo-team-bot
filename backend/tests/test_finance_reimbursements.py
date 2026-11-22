@@ -80,6 +80,8 @@ class FinanceReimbursementTests(unittest.TestCase):
     def test_empty_ledger_has_no_debt(self):
         self.assertEqual(finance.get_reimbursements(self.db),
                          dict(total=0, people=[], unassigned=dict(personal=0, returned=0),
+                              unapplied_returns=[], undated=dict(personal=0, returned=0),
+                              future_count=0, invalid_amounts=0,
                               recent=dict(total=0, people=[], unassigned=dict(personal=0, returned=0),
                                           from_date="2026-09-21", to_date="2026-10-20")))
 
@@ -92,10 +94,71 @@ class FinanceReimbursementTests(unittest.TestCase):
         self.expense("Анна", 75, "Возврат", date="2026-09-20")
         self.expense("Анна", 9000, finance.BANK_EXPENSE)
         result = finance.get_reimbursements(self.db)
-        self.assertEqual(result["recent"]["total"], 550)
+        self.assertEqual(result["recent"]["total"], 600)
         self.assertEqual(result["recent"]["people"], [
-            dict(who="Анна", personal=600, returned=50, amount=550)])
-        self.assertEqual(result["total"], 15475)
+            dict(who="Анна", personal=600, returned=0, amount=600)])
+        self.assertEqual(result["total"], 13475)
+        self.assertEqual(result['undated'], dict(personal=12000, returned=0))
+        self.assertEqual(result['future_count'], 1)
+
+    def test_refund_at_window_start_cannot_hide_later_expenses(self):
+        self.expense('Анна', 20000, date='2026-09-20')
+        self.expense('Анна', 20000, 'Возврат', date='2026-09-21')
+        for day, amount in [('2026-09-24', 5000), ('2026-10-03', 5000),
+                            ('2026-10-12', 5000), ('2026-10-19', 2200)]:
+            self.expense('Анна', amount, date=day)
+        result = finance.get_reimbursements(self.db)
+        self.assertEqual(result['total'], 17200)
+        self.assertEqual(result['recent']['total'], 17200)
+        with patch('finance_router.local_now', return_value=datetime(2026, 10, 22)):
+            later = finance.get_reimbursements(self.db)
+        self.assertEqual(later['total'], 17200)
+        self.assertEqual(later['recent']['total'], 17200)
+
+    def test_refund_is_allocated_once_to_oldest_costs_across_window_boundary(self):
+        self.expense('Анна', 800, date='2026-09-01')
+        self.expense('Анна', 500, date='2026-09-25')
+        self.expense('Анна', 1000, 'Возврат', date='2026-09-26')
+        self.expense('Анна', 200, date='2026-10-01')
+        result = finance.get_reimbursements(self.db)
+        self.assertEqual(result['total'], 500)
+        self.assertEqual(result['recent']['people'], [dict(who='Анна', personal=700, returned=200, amount=500)])
+
+    def test_overpayment_cannot_pay_later_costs_even_if_imported_out_of_order(self):
+        self.expense('Анна', 700, date='2026-10-10')
+        self.expense('Анна', 1200, 'Возврат', date='2026-09-15')
+        self.expense('Анна', 1000, date='2026-09-01')
+        result = finance.get_reimbursements(self.db)
+        self.assertEqual(result['total'], 700)
+        self.assertEqual(result['recent']['total'], 700)
+        self.assertEqual(result['unapplied_returns'], [dict(who='Анна', amount=200)])
+
+    def test_same_day_costs_precede_refunds_regardless_of_import_id(self):
+        self.expense('Анна', 1000, 'Возврат')
+        self.expense('Анна', 1200)
+        result = finance.get_reimbursements(self.db)
+        self.assertEqual(result['total'], 200)
+        self.assertEqual(result['recent']['total'], 200)
+        self.assertEqual(result['unapplied_returns'], [])
+
+    def test_undated_and_future_refunds_cannot_silently_clear_debt(self):
+        self.expense('Анна', 300, date=None)
+        self.expense('Анна', 500, date='2026-09-01')
+        self.expense('Анна', 200, 'Возврат', date='2026-09-02')
+        self.expense('Анна', 900, 'Возврат', date='invalid')
+        self.expense('Анна', 1000, 'Возврат', date='2026-10-21')
+        result = finance.get_reimbursements(self.db)
+        self.assertEqual(result['total'], 600)
+        self.assertEqual(result['undated'], dict(personal=300, returned=900))
+        self.assertEqual(result['unapplied_returns'], [dict(who='Анна', amount=900)])
+        self.assertEqual(result['future_count'], 1)
+
+    def test_nonpositive_sheet_values_are_flagged_not_used_as_payments(self):
+        self.expense('Анна', 200)
+        self.expense('Анна', -100, 'Возврат')
+        result = finance.get_reimbursements(self.db)
+        self.assertEqual(result['total'], 200)
+        self.assertEqual(result['invalid_amounts'], 1)
 
     def test_recent_refund_of_old_debt_does_not_reduce_other_person_or_become_negative(self):
         self.expense("Анна", 1000, date="2020-01-01")

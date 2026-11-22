@@ -89,8 +89,7 @@ function PersonHistory({ who, onClose }) {
 export default function ReimbursementSummary({ data, loading }) {
   const [person, setPerson] = useState(null);
   const closeHistory = React.useCallback(() => setPerson(null), []);
-  // Keep people present in either period; the recent figure is a period balance,
-  // not an allocation of old refunds to individual purchases.
+  // Recent debt is the still-unpaid part of costs incurred in the last 30 days.
   const people = new Map();
   (data?.people || []).forEach(row => people.set(nameKey(row.who), { ...row, recent: 0 }));
   (data?.recent?.people || []).forEach(row => {
@@ -112,10 +111,26 @@ export default function ReimbursementSummary({ data, loading }) {
             <div><span>За 30 дней</span><strong>{data.recent ? money(data.recent.total) : '—'}</strong></div>
           </div>
           <p className="reimbursement-note reimbursement-center">
-            Личные траты минус возвраты за тот же период.
+            Возврат погашает сначала самые ранние траты, затем более поздние — не позже даты возврата.
             {data.recent && <> Последние 30 дней: {dateLabel(data.recent.from_date)}–{dateLabel(data.recent.to_date)}.</>}
-            {' '}Возвраты могут относиться к более ранним тратам; отрицательный остаток показан как 0.
+            {' '}В колонке «30 дней» — непогашенные траты за этот период. Избыток возврата не уменьшает будущие траты.
+            {' '}В пределах одного дня траты учитываются перед возвратами.
           </p>
+          {data.unapplied_returns?.length > 0 && <div role="status" className="alert alert-error">
+            Есть возвраты, которые не удалось зачесть в предшествующие траты. Проверьте полноту истории и даты:
+            <ul>{data.unapplied_returns.map(row => <li key={nameKey(row.who)}>
+              <button onClick={() => setPerson(row.who)}>{row.who}</button>: {money(row.amount)}.
+            </li>)}</ul>
+            Эти суммы не вычитаются из последующих трат.
+          </div>}
+          {!!(data.undated?.personal || data.undated?.returned) && <div role="status" className="alert alert-error">
+            Есть операции без корректной даты. Личные траты {money(data.undated.personal)} оставлены к возврату;
+            {' '}возвраты {money(data.undated.returned)} не зачтены. Уточните даты в таблице.
+          </div>}
+          {!!data.future_count && <p className="reimbursement-note">Операции с будущими датами пока не включены: {data.future_count}.</p>}
+          {!!data.invalid_amounts && <div role="status" className="alert alert-error">
+            Не учтены операции с неположительной суммой: {data.invalid_amounts}. Проверьте суммы в таблице.
+          </div>}
           <UnassignedNotice data={data.unassigned} label="За всё время" />
           {data.recent && <UnassignedNotice data={data.recent.unassigned} label="За 30 дней" />}
           {rows.length > 0 && (
@@ -138,7 +153,7 @@ export default function ReimbursementSummary({ data, loading }) {
             </>
           )}
           {data.unassigned.personal > 0 && <div>Без имени: {money(data.unassigned.personal)}</div>}
-          {data.total === 0 && data.unassigned.returned === 0 && (
+          {data.total === 0 && data.unassigned.returned === 0 && !data.unapplied_returns?.length && !data.invalid_amounts && (
             <div className="reimbursement-note reimbursement-center">Все личные траты компенсированы</div>
           )}
         </>

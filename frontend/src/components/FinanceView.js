@@ -236,6 +236,11 @@ export default function FinanceView({ username, isAdmin, active = true, dataVers
     return d.toISOString().slice(0, 10);
   });
   const [transactions, setTransactions] = useState([]);
+  const [nextCursor, setNextCursor] = useState(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState(null);
+  const [historyStale, setHistoryStale] = useState(false);
+  const historyRequest = useRef(null);
 
   const [refreshVersion, setRefreshVersion] = useState(0);
   const savingRef = useRef(false);
@@ -252,6 +257,11 @@ export default function FinanceView({ username, isAdmin, active = true, dataVers
     setError(null);
     setLoading(true);
     setReimbursements(null);
+    setTransactions([]);
+    setNextCursor(null);
+    setHistoryError(null);
+    setHistoryStale(false);
+    setHistoryLoading(false);
     const controller = new AbortController();
     const [y, m, d] = fromDate.split('-');
     const params = { period: chartPeriod, from_date: fromDate ? `${d}.${m}.${y}` : undefined };
@@ -264,6 +274,7 @@ export default function FinanceView({ username, isAdmin, active = true, dataVers
       if (controller.signal.aborted) return;
       setBalance(balanceResponse.data.balance);
       setTransactions(transactionsResponse.data.transactions);
+      setNextCursor(transactionsResponse.data.next_cursor || null);
       setChartData(chartResponse.data.data);
       setReimbursements(reimbursementsResponse.data);
     }).catch(e => {
@@ -271,8 +282,39 @@ export default function FinanceView({ username, isAdmin, active = true, dataVers
     }).finally(() => {
       if (!controller.signal.aborted) setLoading(false);
     });
-    return () => controller.abort();
+    return () => {
+      controller.abort();
+      historyRequest.current?.abort();
+      historyRequest.current = null;
+    };
   }, [active, dataVersion, refreshVersion, chartPeriod, fromDate]);
+
+  const loadMoreTransactions = async () => {
+    if (!active || loading || !nextCursor || historyRequest.current || historyStale) return;
+    const controller = new AbortController();
+    historyRequest.current = controller;
+    setHistoryLoading(true);
+    setHistoryError(null);
+    try {
+      const { data } = await client.get('/api/finance/transactions', {
+        params: { cursor: nextCursor }, signal: controller.signal,
+      });
+      if (controller.signal.aborted) return;
+      setTransactions(rows => [...rows, ...data.transactions]);
+      setNextCursor(data.next_cursor || null);
+    } catch (e) {
+      if (!controller.signal.aborted) {
+        const stale = e.response?.status === 409;
+        setHistoryStale(stale);
+        setHistoryError(stale ? 'История изменилась. Обновите список операций.' : 'Не удалось загрузить более ранние операции. Попробуйте ещё раз.');
+      }
+    } finally {
+      if (historyRequest.current === controller) {
+        historyRequest.current = null;
+        if (!controller.signal.aborted) setHistoryLoading(false);
+      }
+    }
+  };
 
   const deleteTransaction = async (type, id, fingerprint) => {
     if (!window.confirm('Удалить операцию из БД и таблицы?')) return;
@@ -423,10 +465,10 @@ export default function FinanceView({ username, isAdmin, active = true, dataVers
         <ReimbursementSummary data={reimbursements} loading={loading} />
       )}
 
-      {/* Последние операции */}
+      {/* История операций */}
       {transactions.length > 0 && (
         <div className="card-white" style={{ padding: '12px 0', marginBottom: 16 }}>
-          <div style={{ fontSize: 13, fontWeight: 600, padding: '0 16px', marginBottom: 8 }}>Последние операции</div>
+          <div style={{ fontSize: 13, fontWeight: 600, padding: '0 16px', marginBottom: 8 }}>История операций</div>
           {transactions.map(tx => (
             <div key={`${tx.type}-${tx.id}`} style={{
               display: 'flex', alignItems: 'center', gap: 10,
@@ -459,6 +501,14 @@ export default function FinanceView({ username, isAdmin, active = true, dataVers
               >×</button>}
             </div>
           ))}
+          <div style={{ padding: '12px 16px 0' }}>
+            {historyError && <div role="alert" className="alert alert-error">{historyError}</div>}
+            {historyStale ? <button className="btn btn-secondary" onClick={refreshFinance}>Обновить историю</button>
+              : nextCursor ? <button className="btn btn-secondary" onClick={loadMoreTransactions} disabled={historyLoading || loading || !active}>
+                {historyLoading ? 'Загружаем…' : 'Показать ещё'}
+              </button>
+                : <span style={{ fontSize: 12, color: '#666' }}>Показаны все операции</span>}
+          </div>
         </div>
       )}
 

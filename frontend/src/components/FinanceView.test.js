@@ -71,7 +71,7 @@ test('three summaries share one place and chart controls survive switching', asy
   await act(async () => button('История').click());
   await act(async () => button('К возврату').click());
   expect(container.querySelector('svg')).toBeNull();
-  expect(container.textContent).toContain('Личные траты минус возвраты за тот же период');
+  expect(container.textContent).toContain('Возврат погашает сначала самые ранние траты');
   expect(container.textContent).toContain((1300).toLocaleString('ru-RU') + ' ₽');
   expect(container.querySelectorAll('tbody tr')).toHaveLength(2);
   expect(container.querySelector('tbody').textContent).toContain('Анна Иванова');
@@ -173,4 +173,87 @@ test('unassigned rows are visible and mark the total as provisional', async () =
   expect(container.textContent).toContain('Итог предварительный');
   expect(container.textContent).toContain('Без имени: 200 ₽');
   expect(container.textContent).toContain('Возвраты без получателя не вычтены');
+});
+
+test('unapplied returns are visible with history even when there is no outstanding debt', async () => {
+  responses['/api/finance/reimbursements'] = {
+    total: 0, people: [], unassigned: { personal: 0, returned: 0 },
+    unapplied_returns: [{ who: 'Анна Иванова', amount: 13700 }],
+  };
+  await act(async () => root.render(<FinanceView username="actor" />));
+  await act(async () => button('К возврату').click());
+  expect(container.textContent).toContain('Эти суммы не вычитаются из последующих трат');
+  expect(container.textContent).not.toContain('Все личные траты компенсированы');
+  await act(async () => button('Анна Иванова').click());
+  expect(container.querySelector('[role="dialog"]')).not.toBeNull();
+});
+
+test('history loads successive pages and ends only after the last one', async () => {
+  responses['/api/finance/transactions'].next_cursor = 'page2';
+  client.get.mockImplementation((url, options) => {
+    if (url === '/api/finance/transactions' && options?.params?.cursor) {
+      const last = options.params.cursor === 'page3';
+      return Promise.resolve({ data: { transactions: [{ id: last ? 3 : 2, type: 'income',
+        what: last ? 'Самая старая' : 'Более ранняя', amount: 100 }], next_cursor: last ? null : 'page3' } });
+    }
+    return Promise.resolve({ data: responses[url] });
+  });
+  await act(async () => root.render(<FinanceView username="actor" />));
+  await act(async () => button('Показать ещё').click());
+  expect(container.textContent).toContain('Клининг');
+  expect(container.textContent).toContain('Более ранняя');
+  await act(async () => button('Показать ещё').click());
+  expect(container.textContent).toContain('Самая старая');
+  expect(button('Показать ещё')).toBeUndefined();
+  expect(container.textContent).toContain('Показаны все операции');
+  expect(client.get).toHaveBeenCalledWith('/api/finance/transactions', expect.objectContaining({ params: { cursor: 'page3' } }));
+});
+
+test('failed history page can be retried without losing previously loaded operations', async () => {
+  responses['/api/finance/transactions'].next_cursor = 'page2';
+  let fail = true;
+  client.get.mockImplementation((url, options) => {
+    if (options?.params?.cursor) return fail ? Promise.reject(new Error('offline'))
+      : Promise.resolve({ data: { transactions: [{ id: 2, type: 'expense', what: 'Реквизит', amount: 100 }], next_cursor: null } });
+    return Promise.resolve({ data: responses[url] });
+  });
+  await act(async () => root.render(<FinanceView username="actor" />));
+  await act(async () => button('Показать ещё').click());
+  expect(container.textContent).toContain('Не удалось загрузить более ранние операции');
+  expect(container.textContent).toContain('Клининг');
+  fail = false;
+  await act(async () => button('Показать ещё').click());
+  expect(container.textContent).toContain('Реквизит');
+  expect(container.textContent).not.toContain('Не удалось загрузить более ранние операции');
+});
+
+test('history refresh after a changed snapshot restarts at the newest page', async () => {
+  responses['/api/finance/transactions'].next_cursor = 'page2';
+  client.get.mockImplementation((url, options) => options?.params?.cursor
+    ? Promise.reject({ response: { status: 409 } }) : Promise.resolve({ data: responses[url] }));
+  await act(async () => root.render(<FinanceView username="actor" />));
+  await act(async () => button('Показать ещё').click());
+  expect(button('Показать ещё')).toBeUndefined();
+  expect(container.textContent).toContain('История изменилась');
+  responses['/api/finance/transactions'] = { transactions: [{ id: 9, type: 'income', what: 'Новая запись', amount: 100 }], next_cursor: null };
+  await act(async () => button('Обновить историю').click());
+  expect(container.textContent).toContain('Новая запись');
+  expect(container.textContent).not.toContain('Клининг');
+  expect(container.textContent).not.toContain('История изменилась');
+});
+
+test('double clicks and late history responses cannot duplicate or restore stale rows', async () => {
+  responses['/api/finance/transactions'].next_cursor = 'page2';
+  let finishPage;
+  client.get.mockImplementation((url, options) => options?.params?.cursor
+    ? new Promise(resolve => { finishPage = resolve; }) : Promise.resolve({ data: responses[url] }));
+  await act(async () => root.render(<FinanceView username="actor" dataVersion={0} />));
+  const more = button('Показать ещё');
+  await act(async () => { more.click(); more.click(); });
+  expect(client.get.mock.calls.filter(([, options]) => options?.params?.cursor)).toHaveLength(1);
+  responses['/api/finance/transactions'] = { transactions: [{ id: 5, type: 'income', what: 'Актуальная запись', amount: 100 }], next_cursor: null };
+  await act(async () => root.render(<FinanceView username="actor" dataVersion={1} />));
+  await act(async () => finishPage({ data: { transactions: [{ id: 2, type: 'expense', what: 'Устаревшая запись', amount: 100 }], next_cursor: null } }));
+  expect(container.textContent).toContain('Актуальная запись');
+  expect(container.textContent).not.toContain('Устаревшая запись');
 });
