@@ -54,9 +54,13 @@ def attendance_totals(db, chat_id, day):
 
 
 def mention_messages(heading, people, links=()):
-    """ID mentions work without usernames; HTML names cannot inject markup."""
+    """Show usernames when available; stable ID mentions also work without them."""
     # Bound both Telegram's text limit and entity count.
     for offset in range(0, len(people), 20):
-        mentions = ' '.join(f'<a href="tg://user?id={p["user_id"]}">{escape(p["name"][:80])}</a>'
-                            for p in people[offset:offset + 20])
+        mentions = []
+        for person in people[offset:offset + 20]:
+            username = (person.get('username') or '').strip().lstrip('@')
+            label = f'@{username}' if username else person['name']
+            mentions.append(f'<a href="tg://user?id={person["user_id"]}">{escape(label[:80])}</a>')
+        mentions = ' '.join(mentions)
         yield escape(heading) + '\n' + mentions + ('\n\n' + '\n'.join(links) if links else '')

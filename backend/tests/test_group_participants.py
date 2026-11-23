@@ -253,6 +253,11 @@ class GroupParticipantsTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('tg://user?id=42', text)
         self.assertIn('Анна &lt;&amp;&gt;', text)
         self.assertNotIn('Анна <&>', text)
+        self.user.username = 'anna'
+        self.join(-1001)
+        text = list(mention_messages('Первый', members(self.db, -1001)))[0]
+        self.assertIn('<a href="tg://user?id=42">@anna</a>', text)
+        self.assertNotIn('Анна', text)
 
     async def test_failed_refresh_stops_reminder_instead_of_using_stale_members(self):
         self.join(-1001)
