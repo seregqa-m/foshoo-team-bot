@@ -172,7 +172,7 @@ export default function PlanningView({ onClose, closeLabel = '← К распи�
         <p className="planning-note">Дробь — закрытые роли / все роли. Учитываются все зарегистрированные участники чата спектакля, даже если роли ещё не заполнены. Пока человек не голосовал и бот не получил событие его вступления, его может не быть в списке.</p>
         {data.warnings.map(warning => <div className="planning-warning" key={warning}>{warning}</div>)}
         {!data.shows.length ? <div className="empty-state">{isAdmin ? 'Добавьте роли и исполнителей в «Составы спектаклей».' : 'Роли и исполнители пока не заполнены.'}</div>
-          : !data.slots.length ? <div className="empty-state">В этом месяце нет дат в графике.{isAdmin && ' Запустите опрос занятости на нужный месяц.'}</div>
+          : !data.slots.length ? <div className="empty-state">В этом месяце нет дат в графике.{isAdmin && ' Запустите опрос на нужный месяц.'}</div>
           : !slots.length ? <div className="empty-state">Полный состав пока не собирается. Выключите фильтр, чтобы увидеть, каких ответов или исполнителей не хватает.</div>
           : <div className="planning-table-scroll" tabIndex="0" aria-label="Сводка составов по датам">
             <table className="planning-table"><thead><tr><th scope="col">Дата</th>{visibleShows.map(name => <th scope="col" key={name}>{name}</th>)}</tr></thead>

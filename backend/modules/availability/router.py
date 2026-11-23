@@ -148,7 +148,7 @@ def _find_campaign(db, campaign_id=None):
     if campaign_id is not None:
         campaign = db.get(AvailabilityCampaign, campaign_id)
         if not campaign:
-            raise HTTPException(404, 'Опрос занятости не найден')
+            raise HTTPException(404, 'Опрос не найден')
         return campaign
     return db.query(AvailabilityCampaign).order_by(AvailabilityCampaign.id.desc()).first()
 
@@ -225,6 +225,10 @@ async def ping_non_voters(db: Session = Depends(get_db), campaign_id: int | None
     await sync_voter_registrations(bot, chat_ids=chats, force=True, strict=True)
     db.expire_all()
     groups = await asyncio.to_thread(_campaign_non_voters, db, campaign, chats)
+    month_name = ('январе', 'феврале', 'марте', 'апреле', 'мае', 'июне',
+                  'июле', 'августе', 'сентябре', 'октябре', 'ноябре', 'декабре')[
+                      date.fromisoformat(campaign.month + '-01').month - 1]
+    heading = f'Отметьте, в какие дни вы свободны в {month_name}'
     sent, errors = set(), []
     for chat, users in groups.items():
         if not users:
@@ -237,7 +241,7 @@ async def ping_non_voters(db: Session = Depends(get_db), campaign_id: int | None
         link = poll_link(chat, first.telegram_message_id)
         links = [link] if link else []
         try:
-            for message in mention_messages(f'Отметьте занятость на {campaign.month}!', users, links):
+            for message in mention_messages(heading, users, links):
                 await bot.send_message(chat_id=chat, text=message, parse_mode='HTML')
             sent.update(person['user_id'] for person in users)
         except Exception:

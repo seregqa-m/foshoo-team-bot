@@ -172,7 +172,7 @@ function App() {
           className={activeTab === 'availability' ? 'active' : ''}
           onClick={() => selectTab('availability')}
         >
-          🗓️<span>Занятость</span>
+          🗓️<span>Свободные даты</span>
         </button>
         {canFinance && <button
           className={activeTab === 'finance' ? 'active' : ''}

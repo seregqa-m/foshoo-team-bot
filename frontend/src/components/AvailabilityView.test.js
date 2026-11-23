@@ -25,7 +25,7 @@ test('calendar is primary; planning opens the selected month and preserves the c
   expect(container.querySelector('[data-planning-month]').dataset.planningMonth).toBe('2026-12');
   expect(container.querySelector('[data-planning-month]').dataset.admin).toBe('false');
   expect(day.closest('section').hidden).toBe(true);
-  await act(async () => button('← К моей занятости').click());
+  await act(async () => button('← К моим датам').click());
   expect(container.querySelector('[data-planning-month]')).toBeNull();
   expect(day.getAttribute('aria-pressed')).toBe('true');
   expect(day.closest('section').hidden).toBe(false);
@@ -36,7 +36,7 @@ test('poll result deep link opens planning directly in the requested month', asy
   expect(container.querySelector('[data-planning-month]').dataset.planningMonth).toBe('2027-01');
   expect(container.querySelector('[data-planning-month]').dataset.admin).toBe('true');
   expect(client.get).not.toHaveBeenCalled();
-  await act(async () => button('← К моей занятости').click());
+  await act(async () => button('← К моим датам').click());
   expect(client.get).toHaveBeenCalledWith('/api/attendance/me', { params: { month: '2027-01' } });
 });
 

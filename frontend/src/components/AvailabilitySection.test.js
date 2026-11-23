@@ -9,7 +9,7 @@ const button = text => [...container.querySelectorAll('button')].find(b => b.tex
 const day = n => container.querySelectorAll('.availability-calendar__day')[n - 1];
 const open = async () => {
   await act(async () => root.render(<AvailabilitySection showNames={['Урод']} />));
-  await act(async () => button('Запустить опрос занятости').click());
+  await act(async () => button('Запустить опрос').click());
 };
 beforeEach(() => {
   global.IS_REACT_ACT_ENVIRONMENT = true;
@@ -197,7 +197,7 @@ test('changing month loads its dates and sends only that month', async () => {
   await act(async () => { day(8).click(); button('Урод').click(); });
   await act(async () => button('Отправить в чаты').click());
   expect(client.post).toHaveBeenCalledWith('/api/availability/campaign', { show_names: ['Урод'], dates: ['2026-11-05', '2026-11-08'] });
-  await act(async () => button('Запустить опрос занятости').click());
+  await act(async () => button('Запустить опрос').click());
   expect(container.querySelector('input[type="month"]').value).toBe('2026-10');
 });
 

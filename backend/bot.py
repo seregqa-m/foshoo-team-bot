@@ -202,7 +202,7 @@ async def _llm_confirm_intent(text: str, month_label: str) -> bool:
             LLMMsg(role="system", text="Ты определяешь намерение. Отвечай строго: да или нет."),
             LLMMsg(role="user", text=(
                 f"Пользователь написал в чате театральной студии: «{text}»\n\n"
-                f"Человек предлагает провести опрос занятости на {month_label}? да/нет"
+                f"Человек предлагает провести опрос о свободных датах в {month_label}? да/нет"
             )),
         ])
         return "да" in (resp.text or "").lower()
@@ -232,7 +232,7 @@ async def handle_group_message(message: Message):
         ),
         InlineKeyboardButton(text="❌ Не надо", callback_data="avail_cancel"),
     ]])
-    await message.reply(f"Запустить опрос занятости на {month_label}?", reply_markup=kb)
+    await message.reply(f"Запустить опрос о свободных датах в {month_label}?", reply_markup=kb)
 
 
 def _chat_shows(chat_id):
@@ -299,7 +299,7 @@ async def on_avail_start(callback: CallbackQuery):
         result = await _launch_campaign_for_month(year, month_num, chat_id)
         if result["ok"]:
             await callback.message.reply(
-                f"✅ Опрос занятости запущен: {result['polls_count']} опрос(а) "
+                f"✅ Опрос запущен: {result['polls_count']} опрос(а) "
                 f"на {result['events_count']} дат"
             )
         else:

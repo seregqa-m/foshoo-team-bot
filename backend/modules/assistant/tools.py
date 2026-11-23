@@ -691,7 +691,7 @@ async def _create_availability_campaign_handler(db: Session, args: dict, ctx: di
 CREATE_AVAILABILITY_CAMPAIGN = Tool(
     name="create_availability_campaign",
     description=(
-        "Запустить ежемесячный опрос занятости на следующий месяц. "
+        "Запустить ежемесячный опрос о свободных датах на следующий месяц. "
         "show_names — список спектаклей из CONTEXT.shows (обычно те что «в "
         "работе»). event_ids — даты из CONTEXT.upcoming_events (или получи "
         "полный список через get_events_in_range на следующий месяц). "
@@ -701,7 +701,7 @@ CREATE_AVAILABILITY_CAMPAIGN = Tool(
         "type": "function",
         "function": {
             "name": "create_availability_campaign",
-            "description": "Создать новую кампанию опроса занятости. Требует подтверждения.",
+            "description": "Создать опрос о свободных датах. Требует подтверждения.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -723,7 +723,7 @@ CREATE_AVAILABILITY_CAMPAIGN = Tool(
     handler=_create_availability_campaign_handler,
     safety_level="confirm",
     preview_builder=lambda args: {
-        "title": "Опрос занятости",
+        "title": "Новый опрос",
         "lines": [
             f"Спектакли: {', '.join(args.get('show_names') or [])}",
             f"Дат: {len(args.get('event_ids') or [])}",

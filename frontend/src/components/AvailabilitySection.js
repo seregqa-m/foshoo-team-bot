@@ -124,7 +124,7 @@ export default function AvailabilitySection({ showNames }) {
 
   return (
     <>
-      <div className="section-label" style={{ marginTop: 16 }}>Опросы занятости</div>
+      <div className="section-label" style={{ marginTop: 16 }}>Опросы</div>
 
       {campaigns === undefined ? (
         <div className="card-white" style={{ padding: '12px 16px', color: '#888', fontSize: 13 }}>
@@ -133,7 +133,7 @@ export default function AvailabilitySection({ showNames }) {
       ) : (
         <>
           <button className="btn btn-secondary" style={{ fontSize: 13, marginBottom: 10 }} onClick={openForm} disabled={sending}>
-            {campaigns.length ? 'Новый опрос' : 'Запустить опрос занятости'}
+            {campaigns.length ? 'Новый опрос' : 'Запустить опрос'}
           </button>
           {campaigns.length === 0 && <p style={{ fontSize: 13, color: '#666' }}>Опрос ещё не запускался</p>}
         </>

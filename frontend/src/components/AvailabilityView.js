@@ -14,7 +14,7 @@ export default function AvailabilityView({ active = true, dataVersion = 0, isAdm
       <MyAvailabilityView active={active && !planning} dataVersion={dataVersion}
         initialMonth={initialPlanningMonth} onMonthChange={setMonth} />
     </section>
-    {planning && <PlanningView onClose={() => setPlanning(false)} closeLabel="← К моей занятости"
+    {planning && <PlanningView onClose={() => setPlanning(false)} closeLabel="← К моим датам"
       dataVersion={dataVersion} initialMonth={month} isAdmin={isAdmin} />}
   </>;
 }

@@ -73,20 +73,20 @@ export default function MyAvailabilityView({ active = true, dataVersion = 0, ini
 
   return <div className="my-availability">
     <div className="my-availability__title">
-      <h1>Моя занятость</h1>
+      <h1>Мои даты</h1>
       <button className="btn btn-secondary" disabled={!!saving || loading} onClick={() => setRefresh(value => value + 1)}>Обновить</button>
     </div>
     <p className="my-availability__intro">Нажмите на дату, чтобы изменить ответ на этот день.</p>
     <div className="my-availability__toolbar">
       <button className="btn btn-secondary" aria-label="Предыдущий месяц" onClick={() => moveMonth(-1)} disabled={!!saving || (!month && !data)}>←</button>
-      <input type="month" aria-label="Месяц занятости" value={month || data?.month || ''}
+      <input type="month" aria-label="Месяц" value={month || data?.month || ''}
         disabled={!!saving} onChange={event => changeMonth(event.target.value)} />
       <button className="btn btn-secondary" aria-label="Следующий месяц" onClick={() => moveMonth(1)} disabled={!!saving || (!month && !data)}>→</button>
     </div>
     {error && <p role="alert">{error}</p>}
     {loading && <p role="status" className="my-availability__loading">Загрузка ответов…</p>}
     {!error && data && <>
-      <div className="my-availability__calendar" role="group" aria-label="Календарь занятости" aria-busy={loading}>
+      <div className="my-availability__calendar" role="group" aria-label="Мои даты" aria-busy={loading}>
         {WEEKDAYS.map(day => <span className="my-availability__weekday" key={day}>{day}</span>)}
         {Array.from({ length: offset }, (_, i) => <span key={`empty-${i}`} aria-hidden="true" />)}
         {Array.from({ length: daysInMonth }, (_, i) => {

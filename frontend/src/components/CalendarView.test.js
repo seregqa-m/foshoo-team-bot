@@ -21,7 +21,7 @@ const titles = () => [...container.querySelectorAll('.event-title')].map(el => e
 test('schedule keeps events separate from availability and cast planning', async () => {
   await act(async () => root.render(<CalendarView userId={42} isAdmin={false} />));
   expect(button('Планирование составов →')).toBeUndefined();
-  expect(button('Моя занятость →')).toBeUndefined();
+  expect(button('Мои даты →')).toBeUndefined();
   expect(container.querySelector('.page-title').textContent).toBe('Расписание');
 });
 

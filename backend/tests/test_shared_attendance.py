@@ -461,6 +461,7 @@ class SharedAttendanceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result['count'], 2)
         send.assert_awaited_once()
         self.assertEqual(send.call_args.kwargs['chat_id'], -100111)
+        self.assertTrue(send.call_args.kwargs['text'].startswith('Отметьте, в какие дни вы свободны в октябре\n'))
         self.assertIn('tg://user?id=43', send.call_args.kwargs['text'])
         self.assertNotIn('tg://user?id=44', send.call_args.kwargs['text'])
         self.assertEqual(send.call_args.kwargs['text'].count('https://t.me/'), 1)

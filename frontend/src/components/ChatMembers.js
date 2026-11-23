@@ -19,7 +19,7 @@ export default function ChatMembers({ chatId }) {
   }, [endpoint, reload]);
   return <div>
     <p>Список пополняется после голосования и событий вступления в группу. Полный список старых участников Telegram боту не передаёт.</p>
-    <p>Все зарегистрированные участники, которые состоят в группе, учитываются в занятости. Напоминания получают те, кто ещё не ответил.</p>
+    <p>Все зарегистрированные участники группы получают напоминания, если ещё не ответили на опрос.</p>
     {error && <p role="alert">{error}</p>}
     <button className="btn btn-secondary" disabled={busy} onClick={() => setReload(value => value + 1)}>Обновить участников</button>
     {busy && <p role="status">Загрузка…</p>}

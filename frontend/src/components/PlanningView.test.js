@@ -55,7 +55,7 @@ test('uses the server default month and marks today in the planning timezone at 
 
 test('shows role coverage and submits the chosen cast, time, location and reviewed snapshot', async () => {
   await open();
-  expect(button('Запустить опрос занятости')).toBeDefined();
+  expect(button('Запустить опрос')).toBeDefined();
   expect(container.textContent).toContain('2/2');
   expect(container.querySelector('[aria-label="Исполнитель: Летте"]').value).toBe('Борис');
   const place = container.querySelector('input[placeholder="Зал или адрес"]');
@@ -117,7 +117,7 @@ test('attendance is visible without roles but cannot bypass cast assignment requ
 test.each([false, true])('members can inspect roles and answers but cannot assign or resume (pending: %s)', async pending => {
   if (pending) plan.slots[0].operation = { status: 'calendar_created', show_name: 'Урод', cast: { Летте: 'Борис', Фанни: 'Анна' }, start_time: '2028-10-01T18:00:00+03:00', end_time: '2028-10-01T20:00:00+03:00', location: 'Зал' };
   await act(async () => root.render(<PlanningView onClose={() => {}} initialMonth="2028-10" />));
-  expect(container.textContent).not.toContain('Опрос занятости');
+  expect(container.textContent).not.toContain('Опросы');
   expect(client.get).not.toHaveBeenCalledWith('/api/availability/campaigns');
   await act(async () => container.querySelector('.planning-cell').click());
   const dialog = container.querySelector('[role="dialog"]');
