@@ -9,7 +9,7 @@ const dateLabel = value => new Date(`${value}T12:00:00`).toLocaleDateString('ru-
   day: 'numeric', month: 'long', weekday: 'short',
 });
 
-export default function MyAvailabilityView({ active = true, dataVersion = 0, initialMonth = '', onMonthChange }) {
+export default function MyAvailabilityView({ active = true, dataVersion = 0, initialMonth = '', onMonthChange, isSuperAdmin = false }) {
   const [month, setMonth] = useState(initialMonth);
   const [selectedDate, setSelectedDate] = useState('');
   const [data, setData] = useState(null);
@@ -19,20 +19,46 @@ export default function MyAvailabilityView({ active = true, dataVersion = 0, ini
   const [saving, setSaving] = useState('');
   const [refresh, setRefresh] = useState(0);
   const savingRef = useRef(false);
+  const [targetId, setTargetId] = useState('');
+  const [participants, setParticipants] = useState([]);
+  const [participantsError, setParticipantsError] = useState('');
+  const [participantsLoading, setParticipantsLoading] = useState(false);
+  const [rosterRefresh, setRosterRefresh] = useState(0);
+  const delegated = isSuperAdmin && !!targetId;
+  const endpoint = delegated ? `/api/attendance/participants/${targetId}` : '/api/attendance/me';
+  const participant = participants.find(person => String(person.telegram_user_id) === targetId);
+
+  useEffect(() => {
+    if (!active || !isSuperAdmin) return;
+    let cancelled = false;
+    setParticipantsLoading(true); setParticipantsError('');
+    client.get('/api/attendance/participants')
+      .then(({ data: result }) => {
+        if (cancelled) return;
+        setParticipants(result.participants);
+        if (result.incomplete) setParticipantsError('Не всех участников удалось проверить. Нажмите «Обновить».');
+      })
+      .catch(() => { if (!cancelled) setParticipantsError('Не удалось загрузить участников. Нажмите «Обновить».'); })
+      .finally(() => { if (!cancelled) setParticipantsLoading(false); });
+    return () => { cancelled = true; };
+  }, [active, isSuperAdmin, dataVersion, rosterRefresh]);
 
   useEffect(() => {
     if (!active) return;
     let cancelled = false;
     setLoading(true);
+    setData(current => current?.endpoint === endpoint ? current : null);
     setError('');
-    client.get('/api/attendance/me', month ? { params: { month } } : undefined)
+    client.get(endpoint, month ? { params: { month } } : undefined)
       .then(({ data: result }) => {
-        if (!cancelled) { setData(result); onMonthChange?.(result.month); }
+        if (!cancelled) { setData({ ...result, endpoint }); onMonthChange?.(result.month); }
       })
-      .catch(() => { if (!cancelled) setError('Не удалось загрузить ответы. Нажмите «Обновить».'); })
+      .catch(err => { if (!cancelled) setError(err.response?.status === 403
+        ? 'Нет доступа к ответам этого участника. Обновите список участников.'
+        : 'Не удалось загрузить ответы. Нажмите «Обновить».'); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [month, refresh, active, dataVersion, onMonthChange]);
+  }, [month, refresh, active, dataVersion, onMonthChange, endpoint]);
 
   const changeMonth = value => {
     if (!/^(?!0000)\d{4}-(0[1-9]|1[0-2])$/.test(value)) return;
@@ -49,11 +75,11 @@ export default function MyAvailabilityView({ active = true, dataVersion = 0, ini
     savingRef.current = true;
     setSaving(day.date); setNotice('');
     try {
-      const { data: saved } = await client.put('/api/attendance/me', {
+      const { data: saved } = await client.put(endpoint, {
         date: day.date, answer, expected_revision: day.revision,
       });
-      setData(current => current && ({ ...current, days: current.days.map(item => item.date === saved.date ? saved : item) }));
-      setNotice(`${dateLabel(day.date)}: ${ANSWERS[answer].toLowerCase()}. Сохранено.`);
+      setData(current => current && ({ ...current, days: [...current.days.filter(item => item.date !== saved.date), saved] }));
+      setNotice(`${delegated ? `${participant?.name || 'Участник'} — ` : ''}${dateLabel(day.date)}: ${ANSWERS[answer].toLowerCase()}. Сохранено.`);
     } catch (err) {
       setNotice(err.response?.status === 409
         ? 'Ответ уже изменился в другом месте. Обновили данные — проверьте ответ и повторите выбор.'
@@ -69,13 +95,34 @@ export default function MyAvailabilityView({ active = true, dataVersion = 0, ini
   const offset = visibleMonth ? (new Date(year, monthNumber - 1, 1).getDay() + 6) % 7 : 0;
   const daysInMonth = visibleMonth ? new Date(year, monthNumber, 0).getDate() : 0;
   const answersByDate = Object.fromEntries((data?.days || []).map(day => [day.date, day]));
-  const selected = answersByDate[selectedDate];
+  const selected = answersByDate[selectedDate] || (delegated && data?.can_create && selectedDate ? {
+    date: selectedDate, answer: null, revision: 0, editable: selectedDate >= data.today,
+  } : null);
 
   return <div className="my-availability">
     <div className="my-availability__title">
       <h1>Мои даты</h1>
-      <button className="btn btn-secondary" disabled={!!saving || loading} onClick={() => setRefresh(value => value + 1)}>Обновить</button>
+      <button className="btn btn-secondary" disabled={!!saving || loading || participantsLoading} onClick={() => {
+        setRefresh(value => value + 1); setRosterRefresh(value => value + 1);
+      }}>Обновить</button>
     </div>
+    {isSuperAdmin && <div className="my-availability__participant">
+      <label htmlFor="attendance-participant">Чьи даты</label>
+      <select id="attendance-participant" value={targetId} disabled={!!saving || participantsLoading}
+        onChange={event => {
+          setMonth(visibleMonth); setTargetId(event.target.value); setSelectedDate(''); setData(null); setNotice('');
+        }}>
+        <option value="">Мои даты</option>
+        {targetId && !participant && <option value={targetId}>Участник {targetId} — недоступен</option>}
+        {participants.map(person => <option key={person.telegram_user_id} value={person.telegram_user_id}>
+          {person.name} ({person.username ? `@${person.username}` : `ID ${person.telegram_user_id}`})
+        </option>)}
+      </select>
+      {participantsLoading && <p role="status">Загрузка участников…</p>}
+      {participantsError && <p role="alert">{participantsError}</p>}
+      <p className="my-availability__hint">Нет человека в списке? Попросите его открыть мини-приложение через бота, затем обновите список.</p>
+    </div>}
+    {delegated && <p className="my-availability__acting" role="status">Вы отвечаете за: <strong>{participant?.name || `Участник ${targetId}`}</strong></p>}
     <p className="my-availability__intro">Нажмите на дату, чтобы изменить ответ на этот день.</p>
     <div className="my-availability__toolbar">
       <button className="btn btn-secondary" aria-label="Предыдущий месяц" onClick={() => moveMonth(-1)} disabled={!!saving || (!month && !data)}>←</button>
@@ -85,8 +132,8 @@ export default function MyAvailabilityView({ active = true, dataVersion = 0, ini
     </div>
     {error && <p role="alert">{error}</p>}
     {loading && <p role="status" className="my-availability__loading">Загрузка ответов…</p>}
-    {!error && data && <>
-      <div className="my-availability__calendar" role="group" aria-label="Мои даты" aria-busy={loading}>
+    {!error && data && data.endpoint === endpoint && <>
+      <div className="my-availability__calendar" role="group" aria-label={delegated ? `Даты: ${participant?.name || targetId}` : 'Мои даты'} aria-busy={loading}>
         {WEEKDAYS.map(day => <span className="my-availability__weekday" key={day}>{day}</span>)}
         {Array.from({ length: offset }, (_, i) => <span key={`empty-${i}`} aria-hidden="true" />)}
         {Array.from({ length: daysInMonth }, (_, i) => {
@@ -116,9 +163,9 @@ export default function MyAvailabilityView({ active = true, dataVersion = 0, ini
             className={`my-availability--${answer}`} type="button" aria-pressed={selected.answer === answer}
             disabled={!!saving || loading || selected.answer === answer}
             onClick={() => save(selected, answer)}>{label}</button>)}
-        </div> : <p>{selected ? 'Дата прошла — ответ сохранён в истории.' : 'На эту дату вы ещё не отвечали в опросах бота. Здесь можно менять уже отправленные ответы.'}</p>}
+        </div> : <p>{selected ? 'Дата прошла — изменение недоступно.' : 'На эту дату вы ещё не отвечали в опросах бота. Здесь можно менять уже отправленные ответы.'}</p>}
         {saving && <small role="status">Сохраняем…</small>}
-      </section> : <p className="my-availability__hint">{data.days.length ? 'Выберите день в календаре.' : 'На этот месяц у вас пока нет ответов из опросов.'}</p>}
+      </section> : <p className="my-availability__hint">{delegated ? 'Выберите день — можно внести ответ и без опроса бота.' : data.days.length ? 'Выберите день в календаре.' : 'На этот месяц у вас пока нет ответов из опросов.'}</p>}
       {notice && <p role="status" className="my-availability__notice">{notice}</p>}
       <p className="my-availability__hint">Ответ общий для всех спектаклей на эту дату. Отметка в старом Telegram-опросе не меняется.</p>
     </>}

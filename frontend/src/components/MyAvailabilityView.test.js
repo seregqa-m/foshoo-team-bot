@@ -129,3 +129,94 @@ test('leap February includes all 29 dates', async () => {
   expect(container.querySelectorAll('[data-date]')).toHaveLength(29);
   expect(cell('2028-02-29')).not.toBeNull();
 });
+
+const chooseParticipant = value => act(async () => {
+  const selector = container.querySelector('select');
+  selector.value = value;
+  selector.dispatchEvent(new Event('change', { bubbles: true }));
+});
+const people = [{ telegram_user_id: 99, name: 'Катя', username: 'katya' },
+  { telegram_user_id: 100, name: 'Маша', username: '' }];
+const mockParticipants = () => {
+  client.get.mockImplementation(url => Promise.resolve({ data: url === '/api/attendance/participants'
+    ? { participants: people, incomplete: false }
+    : url === '/api/attendance/me' ? data
+      : { month: '2026-12', today: '2026-11-23', can_create: true, days: [] } }));
+};
+
+test('ordinary users have no participant selection or roster request', async () => {
+  await act(async () => root.render(<MyAvailabilityView />));
+  expect(container.querySelector('select')).toBeNull();
+  expect(client.get).toHaveBeenCalledTimes(1);
+});
+
+test('superadmin selects a named participant and creates an answer without a poll', async () => {
+  mockParticipants();
+  client.put.mockResolvedValue({ data: { date: '2026-12-01', answer: 'no', revision: 1, editable: true } });
+  await act(async () => root.render(<MyAvailabilityView isSuperAdmin />));
+  expect(container.querySelector('select').textContent).toContain('Катя (@katya)');
+  await chooseParticipant('99');
+  expect(container.textContent).toContain('Вы отвечаете за: Катя');
+  expect(client.get).toHaveBeenLastCalledWith('/api/attendance/participants/99', { params: { month: '2026-12' } });
+  await select('2026-12-01');
+  await act(async () => choice('Не могу').click());
+  expect(client.put).toHaveBeenCalledWith('/api/attendance/participants/99', {
+    date: '2026-12-01', answer: 'no', expected_revision: 0,
+  });
+  expect(container.textContent).toContain('Катя —');
+});
+
+test('switching people clears answers and ignores a late response for the previous person', async () => {
+  mockParticipants();
+  await act(async () => root.render(<MyAvailabilityView isSuperAdmin />));
+  let resolveOld;
+  client.get.mockImplementationOnce(() => new Promise(resolve => { resolveOld = resolve; }));
+  await chooseParticipant('99');
+  expect(cell('2026-12-19')).toBeNull();
+  await chooseParticipant('100');
+  await act(async () => resolveOld({ data }));
+  expect(cell('2026-12-19').className).toContain('--unanswered');
+  expect(container.textContent).toContain('Вы отвечаете за: Маша');
+  await chooseParticipant('');
+  expect(cell('2026-12-19').className).toContain('--no');
+  expect(container.textContent).not.toContain('Вы отвечаете за:');
+});
+
+test('participant selection is blocked during save and conflicts reload target answers', async () => {
+  mockParticipants();
+  let rejectSave;
+  client.put.mockImplementationOnce(() => new Promise((resolve, reject) => { rejectSave = reject; }));
+  await act(async () => root.render(<MyAvailabilityView isSuperAdmin />));
+  await chooseParticipant('99');
+  await select('2026-12-01');
+  await act(async () => choice('Не могу').click());
+  expect(container.querySelector('select').disabled).toBe(true);
+  client.get.mockResolvedValueOnce({ data: { ...data, today: '2026-11-23', can_create: true,
+    days: [{ date: '2026-12-01', answer: 'yes', revision: 1, editable: true }] } });
+  await act(async () => rejectSave({ response: { status: 409 } }));
+  expect(cell('2026-12-01').className).toContain('--yes');
+  expect(container.textContent).toContain('Ответ уже изменился');
+  expect(container.querySelector('select').disabled).toBe(false);
+});
+
+test('unrecorded past dates stay read-only for superadmins', async () => {
+  mockParticipants();
+  await act(async () => root.render(<MyAvailabilityView isSuperAdmin />));
+  client.get.mockResolvedValueOnce({ data: { month: '2026-11', today: '2026-11-23', can_create: true, days: [] } });
+  await chooseParticipant('99');
+  // Selection preserves the month already viewed; explicitly move to November.
+  client.get.mockResolvedValueOnce({ data: { month: '2026-11', today: '2026-11-23', can_create: true, days: [] } });
+  await act(async () => container.querySelector('[aria-label="Предыдущий месяц"]').click());
+  await select('2026-11-22');
+  expect(choice('Могу')).toBeUndefined();
+  await select('2026-11-23');
+  expect(choice('Могу').disabled).toBe(false);
+});
+
+test('failed roster load leaves personal answers available with a retry message', async () => {
+  mockParticipants();
+  client.get.mockImplementationOnce(() => Promise.reject(new Error('offline')));
+  await act(async () => root.render(<MyAvailabilityView isSuperAdmin />));
+  expect(container.textContent).toContain('Не удалось загрузить участников');
+  expect(cell('2026-12-19')).not.toBeNull();
+});

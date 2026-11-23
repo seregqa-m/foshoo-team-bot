@@ -3,6 +3,10 @@
 .my-availability__title { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
 .my-availability__title button { font-size: 12px; padding: 8px 10px; min-height: 40px; }
 .my-availability__intro { color: #666; }
+.my-availability__participant { margin: 16px 0; }
+.my-availability__participant label { display: block; margin-bottom: 6px; font-weight: 600; }
+.my-availability__participant select { width: 100%; min-height: 44px; padding: 8px; border: 1px solid var(--border); border-radius: 10px; background: #fff; color: var(--text); font: inherit; }
+.my-availability__acting { padding: 12px; background: #fff0c4; border-radius: 10px; }
 .my-availability__toolbar { display: flex; align-items: center; gap: 10px; margin: 20px 0 16px; }
 .my-availability__toolbar input { flex: 1; min-width: 0; width: 100%; min-height: 44px; padding: 8px; border: 1px solid var(--border); border-radius: 10px; background: #fff; color: var(--text); font: inherit; font-weight: 600; text-align: center; }
 .my-availability__toolbar button { min-height: 44px; min-width: 44px; padding: 8px; }
@@ -28,7 +32,7 @@
 .my-availability__answers button { flex: 1; min-width: 0; min-height: 46px; padding: 8px 3px; border: 2px solid transparent; border-radius: 8px; background: var(--answer-bg); color: var(--answer-ink); font: inherit; font-size: 12px; cursor: pointer; }
 .my-availability__answers button[aria-pressed="true"] { border-color: #28252a; font-weight: 600; }
 .my-availability__answers button:disabled { cursor: default; }
-.my-availability button:focus-visible, .my-availability input:focus-visible { outline: 2px solid #651d32; outline-offset: 2px; }
+.my-availability button:focus-visible, .my-availability input:focus-visible, .my-availability select:focus-visible { outline: 2px solid #651d32; outline-offset: 2px; }
 .my-availability__notice { background: #f1f2f5; padding: 10px 12px; border-radius: 8px; margin: 10px 0; }
 .my-availability__hint, .my-availability__loading { color: #666; margin: 12px 0; }
 .availability-planning-link { width: 100%; margin-bottom: 16px; min-height: 48px; text-align: left; }

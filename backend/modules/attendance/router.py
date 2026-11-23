@@ -28,11 +28,14 @@ def _day_data(row, today):
 
 @router.get('/me')
 def my_answers(request: Request, month: str | None = None, db: Session = Depends(get_db)):
+    return month_answers(db, request.state.telegram_user.id, month)
+
+
+def month_answers(db, user_id, month):
     today = local_now().date()
-    user = request.state.telegram_user
     if month is None:
         upcoming = db.query(DayAnswer).filter(
-            DayAnswer.user_id == user.id, DayAnswer.day >= today,
+            DayAnswer.user_id == user_id, DayAnswer.day >= today,
         ).order_by(DayAnswer.day).first()
         month = (upcoming.day if upcoming else today).strftime('%Y-%m')
     try:
@@ -43,7 +46,7 @@ def my_answers(request: Request, month: str | None = None, db: Session = Depends
         raise HTTPException(422, 'Месяц должен быть в формате ГГГГ-ММ') from exc
     last = first.replace(day=monthrange(first.year, first.month)[1])
     rows = db.query(DayAnswer).filter(
-        DayAnswer.user_id == user.id, DayAnswer.day >= first, DayAnswer.day <= last,
+        DayAnswer.user_id == user_id, DayAnswer.day >= first, DayAnswer.day <= last,
     ).order_by(DayAnswer.day).all()
     return {'month': month, 'days': [_day_data(row, today) for row in rows]}
 
