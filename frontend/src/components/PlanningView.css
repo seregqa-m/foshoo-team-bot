@@ -1,4 +1,8 @@
 .planning-view h1 { font-size: 23px; margin: 18px 0 8px; }
+.planning-polls { margin: 16px 0; }
+.planning-polls > summary { padding: 12px; border-radius: 10px; background: #f0f0f0; font-size: 14px; font-weight: 600; line-height: 1.5; cursor: pointer; }
+.planning-polls > summary:focus-visible { outline: 2px solid #651d32; outline-offset: 2px; }
+.planning-polls[open] > summary { margin-bottom: 12px; }
 .planning-note { color: #666; font-size: 13px; line-height: 1.5; margin: 10px 0; }
 .planning-toolbar, .planning-filters { display: flex; align-items: center; gap: 8px; margin: 16px 0; }
 .planning-toolbar input { min-width: 0; flex: 1; width: 100%; }

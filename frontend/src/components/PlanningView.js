@@ -151,6 +151,10 @@ export default function PlanningView({ onClose, closeLabel = '← К распи�
   return (
     <div className="planning-view">
       <button className="btn btn-secondary" onClick={onClose}>{closeLabel}</button>
+      {isAdmin && <details className="planning-polls">
+        <summary>Отправленные опросы и пинг неответивших</summary>
+        <AvailabilitySection showNames={showNames} />
+      </details>}
       <h1>Планирование составов</h1>
       <p className="planning-note">Сравните даты и спектакли. Нажмите на ячейку, чтобы посмотреть роли и доступность исполнителей.{isAdmin && ' Администратор может выбрать состав и назначить спектакль.'}</p>
       <div className="planning-toolbar">
@@ -195,7 +199,6 @@ export default function PlanningView({ onClose, closeLabel = '← К распи�
           </div>}
         <p className="planning-note">Ответы из всех чатов и обоих типов опросов общие на дату. Последнее изменение ответа учитывается для всех спектаклей. Один человек занимает одну роль. Назначение на другую дату не меняет остальные ответы.</p>
       </>}
-      {isAdmin && <AvailabilitySection showNames={showNames} />}
       {selectedSlot && selectedCell && <CastDialog key={`${selectedSlot.column}:${selectedCell.show}`} slot={selectedSlot} cell={selectedCell}
         month={data.month} fingerprint={data.fingerprint} timezone={data.timezone} onClose={() => setSelected(null)} onSaved={saved} isAdmin={isAdmin} />}
     </div>

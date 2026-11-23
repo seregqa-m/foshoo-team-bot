@@ -55,7 +55,7 @@ test('opens a planning deep link in the availability tab after authorization', a
   window.Telegram.WebApp.initDataUnsafe = { start_param: 'planning_2026-12' };
   await act(async () => root.render(<App />));
   expect(container.querySelector('[data-planning-month]').dataset.planningMonth).toBe('2026-12');
-  expect(container.querySelector('nav button.active').textContent).toContain('Свободные даты');
+  expect(container.querySelector('nav button.active').textContent).toContain('Мои даты');
 });
 
 test('a planning link cannot bypass application access checks', async () => {
@@ -68,7 +68,7 @@ test('a planning link cannot bypass application access checks', async () => {
 test('personal availability link selects its tab without a planning destination', async () => {
   window.Telegram.WebApp.initDataUnsafe = { start_param: 'availability' };
   await act(async () => root.render(<App />));
-  expect(container.querySelector('nav button.active').textContent).toContain('Свободные даты');
+  expect(container.querySelector('nav button.active').textContent).toContain('Мои даты');
   expect(container.querySelector('[data-planning-month]').dataset.planningMonth).toBe('');
 });
 
@@ -176,7 +176,7 @@ test('slow Telegram SDK displays its stage and does not send unsigned auth reque
 test('availability is a separate tab for an ordinary member without financial access', async () => {
   client.get.mockResolvedValue({ data: { allowed: true, is_admin: false, can_finance: false, user_id: 42 } });
   await act(async () => root.render(<App />));
-  const tab = [...container.querySelectorAll('nav button')].find(b => b.textContent.includes('Свободные даты'));
+  const tab = [...container.querySelectorAll('nav button')].find(b => b.textContent.includes('Мои даты'));
   await act(async () => tab.click());
   expect(tab.className).toBe('active');
   expect(container.querySelector('[data-planning-month]').dataset.admin).toBe('false');

@@ -124,8 +124,6 @@ export default function AvailabilitySection({ showNames }) {
 
   return (
     <>
-      <div className="section-label" style={{ marginTop: 16 }}>Опросы</div>
-
       {campaigns === undefined ? (
         <div className="card-white" style={{ padding: '12px 16px', color: '#888', fontSize: 13 }}>
           {!campaignsError && 'Загрузка...'}
