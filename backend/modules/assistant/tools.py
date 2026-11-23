@@ -740,8 +740,11 @@ async def _ping_non_voters_handler(db: Session, args: dict, ctx: dict) -> dict:
     from modules.availability.router import ping_non_voters as ping_ep
     campaign_id = args.get('campaign_id')
     if type(campaign_id) is not int or campaign_id <= 0:
-        raise HTTPException(400, 'Выберите конкретный блок опросов для пинга')
-    return await ping_ep(db=db, campaign_id=campaign_id)
+        raise HTTPException(400, 'Выберите опрос для пинга')
+    chat_id = args.get('chat_id')
+    if type(chat_id) is not int or chat_id >= 0:
+        raise HTTPException(400, 'Выберите чат для пинга')
+    return await ping_ep(db=db, campaign_id=campaign_id, chat_id=chat_id)
 
 
 PING_NON_VOTERS = Tool(
@@ -749,24 +752,25 @@ PING_NON_VOTERS = Tool(
     description=(
         "Опубликовать в чатах выбранных спектаклей теги тех, кто ещё не ответил на даты кампании. "
         "Ответы из других опросов и чатов тоже учитываются. "
-        "campaign_id выбирает сохранённый блок из CONTEXT.availability_campaign.recent_blocks."
+        "campaign_id выбирает опрос из CONTEXT.availability_campaign.recent_blocks, chat_id — один его чат."
     ),
     schema={
         "type": "function",
         "function": {
             "name": "ping_non_voters",
-            "description": "Пинг по выбранному блоку из CONTEXT.availability_campaign.recent_blocks. Передавай его id в campaign_id. Требует подтверждения.",
+            "description": "Пинг одного чата выбранного опроса из CONTEXT.availability_campaign.recent_blocks. Требует подтверждения.",
             "parameters": {"type": "object", "properties": {
-                "campaign_id": {"type": "integer", "minimum": 1, "description": "ID выбранного сохранённого блока опросов"},
-            }, "required": ["campaign_id"]},
+                "campaign_id": {"type": "integer", "minimum": 1, "description": "ID выбранного опроса"},
+                "chat_id": {"type": "integer", "description": "ID одного чата из chats выбранного опроса"},
+            }, "required": ["campaign_id", "chat_id"]},
         },
     },
     handler=_ping_non_voters_handler,
     safety_level="confirm",
     preview_builder=lambda args: {
         "title": "Напомнить неответившим в чатах спектаклей",
-        "lines": [f"Блок опросов №{args['campaign_id']}" if args.get('campaign_id') is not None else "Блок опросов не выбран"],
-        "warnings": ["Упоминания только в чатах соответствующих спектаклей"],
+        "lines": [f"Опрос №{args.get('campaign_id', '—')}", f"Чат: {args.get('chat_id', '—')}"],
+        "warnings": ["Напоминание уйдёт только в выбранный чат"],
     },
 )
 

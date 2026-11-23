@@ -448,6 +448,35 @@ class SharedAttendanceTests(unittest.IsolatedAsyncioTestCase):
                              {f'2026-10-{n:02d}' for n in range(1, 11)})
             self.assertEqual(get_current(reopened, first['campaign_id'])['campaign'], blocks[1])
 
+    async def test_chat_ping_checks_and_mentions_only_selected_chat_with_one_first_link(self):
+        self.seed_members()
+        with patch('bot.bot.send_poll', self.send), patch('modules.availability.router._ensure_campaign_columns'):
+            campaign = await create_campaign(CreateCampaignRequest(show_names=['Калий', 'Урод'],
+                dates=[date(2026, 10, n) for n in range(1, 11)]), self.db)
+        with patch('modules.availability.router._load_campaign_roster', return_value=(None, None)), \
+             patch('modules.attendance.registration.sync_voter_registrations', AsyncMock()) as sync, \
+             patch('bot.bot.send_message', AsyncMock()) as send:
+            result = await ping_non_voters(self.db, campaign['campaign_id'], chat_id=-100111)
+        sync.assert_awaited_once_with(main.bot, chat_ids=[-100111], force=True, strict=True)
+        self.assertEqual(result['count'], 2)
+        send.assert_awaited_once()
+        self.assertEqual(send.call_args.kwargs['chat_id'], -100111)
+        self.assertIn('tg://user?id=43', send.call_args.kwargs['text'])
+        self.assertNotIn('tg://user?id=44', send.call_args.kwargs['text'])
+        self.assertEqual(send.call_args.kwargs['text'].count('https://t.me/'), 1)
+        self.assertIn('https://t.me/c/111/1', send.call_args.kwargs['text'])
+
+    async def test_chat_ping_rejects_unpublished_or_unrelated_chat_without_sending(self):
+        self.seed_members()
+        with patch('bot.bot.send_poll', self.send), patch('modules.availability.router._ensure_campaign_columns'):
+            campaign = await create_campaign(CreateCampaignRequest(show_names=['Калий'], dates=[self.day]), self.db)
+        with patch('bot.bot.send_message', AsyncMock()) as send:
+            for chat in (-100222, -999):
+                with self.assertRaises(HTTPException) as error:
+                    await ping_non_voters(self.db, campaign['campaign_id'], chat_id=chat)
+                self.assertEqual(error.exception.status_code, 409)
+            send.assert_not_awaited()
+
     async def test_auto_polls_and_reminders_respect_shared_answers_and_destination(self):
         self.seed_members()
         self.regular(); self.db.add(NotificationSetting(user_id=1, poll_reminders_enabled=True, reminder_time='00:00', reminder_days_before=3))

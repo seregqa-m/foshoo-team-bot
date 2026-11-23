@@ -277,12 +277,12 @@ class AvailabilityRosterTests(unittest.IsolatedAsyncioTestCase):
         context = _collect_availability_campaign(self.db, {})
         self.assertEqual([block['id'] for block in context['recent_blocks']], [newer.id, self.campaign.id])
         self.assertEqual(context['recent_blocks'][1]['dates'], ['2026-12-23'])
-        args = {'campaign_id': self.campaign.id}
+        args = {'campaign_id': self.campaign.id, 'chat_id': -1001}
         self.assertIn(str(self.campaign.id), PING_NON_VOTERS.preview_builder(args)['lines'][0])
         self.assertEqual(PING_NON_VOTERS.safety_level, 'confirm')
         with patch('modules.availability.router.ping_non_voters', AsyncMock(return_value={'count': 0})) as endpoint:
             await PING_NON_VOTERS.handler(self.db, args, {})
-            endpoint.assert_awaited_once_with(db=self.db, campaign_id=self.campaign.id)
+            endpoint.assert_awaited_once_with(db=self.db, campaign_id=self.campaign.id, chat_id=-1001)
             from fastapi import HTTPException
             endpoint.reset_mock()
             with self.assertRaises(HTTPException):

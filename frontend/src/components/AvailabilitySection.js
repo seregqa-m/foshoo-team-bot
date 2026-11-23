@@ -25,7 +25,7 @@ export default function AvailabilitySection({ showNames }) {
       const { data } = await client.get('/api/availability/campaigns');
       setCampaigns(data.campaigns);
     } catch (e) {
-      setCampaignsError('Не удалось загрузить блоки опросов');
+      setCampaignsError('Не удалось загрузить опросы');
     }
   };
 
@@ -124,9 +124,8 @@ export default function AvailabilitySection({ showNames }) {
 
   return (
     <>
-      <div className="section-label" style={{ marginTop: 16 }}>Блоки опросов занятости</div>
+      <div className="section-label" style={{ marginTop: 16 }}>Опросы занятости</div>
 
-      <p style={{ fontSize: 13, color: '#666' }}>Каждая отправка сохраняется отдельным блоком. Части опроса и копии в разных группах объединены внутри него. Пинг относится только к датам выбранного блока.</p>
       {campaigns === undefined ? (
         <div className="card-white" style={{ padding: '12px 16px', color: '#888', fontSize: 13 }}>
           {!campaignsError && 'Загрузка...'}
@@ -141,7 +140,7 @@ export default function AvailabilitySection({ showNames }) {
       )}
 
       {campaignsError && <div className="alert alert-error" role="alert">
-        {campaignsError}. <button className="btn btn-secondary" onClick={loadCampaigns}>Повторить загрузку блоков</button>
+        {campaignsError}. <button className="btn btn-secondary" onClick={loadCampaigns}>Повторить загрузку опросов</button>
       </div>}
 
       {!showForm && formError && <div className="alert alert-error">{formError}</div>}

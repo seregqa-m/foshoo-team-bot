@@ -258,6 +258,8 @@ def _collect_availability_campaign(db: Session, actor_mapping: dict) -> Optional
     from sqlalchemy.orm import selectinload
     from modules.availability.models import AvailabilityPoll
     from modules.attendance.services import option_day
+    from modules.availability.router import _chat_titles
+    chat_titles = _chat_titles(db)
     recent = db.query(AvailabilityCampaign).options(
         selectinload(AvailabilityCampaign.polls).selectinload(AvailabilityPoll.options),
     ).order_by(AvailabilityCampaign.id.desc()).limit(21).all()
@@ -293,6 +295,8 @@ def _collect_availability_campaign(db: Session, actor_mapping: dict) -> Optional
             "dates": sorted({day.isoformat() for poll in block.polls for option in poll.options
                              if (day := option_day(option, db)) is not None}),
             "created_at": block.created_at.isoformat(),
+            "chats": [{"chat_id": chat, "title": chat_titles.get(chat)} for chat in sorted({
+                poll.telegram_chat_id for poll in block.polls if poll.telegram_chat_id and poll.telegram_message_id})],
         } for block in recent[:20]],
         "has_older_blocks": len(recent) > 20,
         "response_scope": (

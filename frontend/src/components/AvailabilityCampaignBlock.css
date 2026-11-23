@@ -1,0 +1,13 @@
+.poll-summary { padding: 14px 16px; margin-bottom: 12px; }
+.poll-summary__title { margin: 0 0 12px; font-size: 14px; font-weight: 600; line-height: 1.4; }
+.poll-summary-calendar { display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px; width: 196px; max-width: 100%; margin: 0 0 14px; font-size: 11px; text-align: center; }
+.poll-summary-calendar__weekday { color: #666; padding-bottom: 3px; }
+.poll-summary-calendar__day { display: flex; align-items: center; justify-content: center; height: 24px; border-radius: 5px; color: #777; }
+.poll-summary-calendar__day--selected { background: #e2e2e2; color: #333; font-weight: 600; }
+.poll-summary-chat + .poll-summary-chat { margin-top: 8px; }
+.poll-summary-chat__row { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 13px; }
+.poll-summary-chat__row a, .poll-summary-chat__row > span { min-width: 0; overflow-wrap: anywhere; }
+.poll-summary-chat__row button { flex-shrink: 0; min-height: 40px; padding: 7px 10px; font-size: 12px; }
+.poll-summary-chat__result, .poll-summary-chat__error { margin-top: 4px; font-size: 12px; }
+.poll-summary-chat__result { color: #555; }
+.poll-summary-chat__error { color: #a40000; }

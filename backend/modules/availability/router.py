@@ -94,10 +94,15 @@ def get_current(db: Session = Depends(get_db), campaign_id: int | None = None):
     campaign = _find_campaign(db, campaign_id)
     if not campaign:
         return {"campaign": None}
-    return {"campaign": _campaign_data(campaign)}
+    return {"campaign": _campaign_data(campaign, _chat_titles(db))}
 
 
-def _campaign_data(campaign):
+def _chat_titles(db):
+    from modules.theater.models import TheaterChat
+    return {chat.telegram_chat_id: chat.title for chat in db.query(TheaterChat)}
+
+
+def _campaign_data(campaign, chat_titles):
     polls_data = []
     for poll in sorted(campaign.polls, key=lambda p: p.id):
         voters = {v.user_id for v in poll.votes}
@@ -106,6 +111,7 @@ def _campaign_data(campaign):
             "telegram_poll_id": poll.telegram_poll_id,
             "telegram_message_id": poll.telegram_message_id,
             "telegram_chat_id": poll.telegram_chat_id,
+            "chat_title": chat_titles.get(poll.telegram_chat_id),
             "show_names": json.loads(poll.show_names or campaign.show_names),
             "delivery_state": poll.delivery_state,
             "tg_link": poll_link(poll.telegram_chat_id, poll.telegram_message_id),
@@ -134,7 +140,8 @@ def list_campaigns(db: Session = Depends(get_db)):
         selectinload(AvailabilityCampaign.polls).selectinload(AvailabilityPoll.options),
         selectinload(AvailabilityCampaign.polls).selectinload(AvailabilityPoll.votes),
     ).order_by(AvailabilityCampaign.id.desc()).all()
-    return {'campaigns': [_campaign_data(campaign) for campaign in campaigns]}
+    titles = _chat_titles(db)
+    return {'campaigns': [_campaign_data(campaign, titles) for campaign in campaigns]}
 
 
 def _find_campaign(db, campaign_id=None):
@@ -146,11 +153,12 @@ def _find_campaign(db, campaign_id=None):
     return db.query(AvailabilityCampaign).order_by(AvailabilityCampaign.id.desc()).first()
 
 
-def _campaign_non_voters(db, campaign):
+def _campaign_non_voters(db, campaign, chat_ids=None):
     from modules.attendance.roster import missing_members
     destinations = campaign_destinations(db, json.loads(campaign.show_names))
     return {chat: missing_members(db, chat, {option_day(o, db) for p in campaign.polls
-              if p.telegram_chat_id == chat for o in p.options} - {None}) for chat in destinations}
+              if p.telegram_chat_id == chat for o in p.options} - {None}) for chat in destinations
+            if chat_ids is None or chat in chat_ids}
 
 
 def _load_campaign_roster(db, campaign):
@@ -200,18 +208,23 @@ async def get_non_voters(db: Session = Depends(get_db), campaign_id: int | None 
 
 
 @router.post('/ping-non-voters')
-async def ping_non_voters(db: Session = Depends(get_db), campaign_id: int | None = None):
+async def ping_non_voters(db: Session = Depends(get_db), campaign_id: int | None = None,
+                         chat_id: int | None = None):
     from bot import bot
     campaign = _find_campaign(db, campaign_id)
     if not campaign:
         raise HTTPException(404, 'Нет активного опроса')
     from modules.attendance.registration import sync_voter_registrations
     from modules.attendance.roster import mention_messages
-    await asyncio.to_thread(_load_campaign_roster, db, campaign)
     chats = list(campaign_destinations(db, json.loads(campaign.show_names)))
+    if chat_id is not None:
+        if chat_id not in chats or not any(p.telegram_chat_id == chat_id and p.telegram_message_id for p in campaign.polls):
+            raise HTTPException(409, 'Опрос не опубликован в этом чате или его привязка изменилась')
+        chats = [chat_id]
+    await asyncio.to_thread(_load_campaign_roster, db, campaign)
     await sync_voter_registrations(bot, chat_ids=chats, force=True, strict=True)
     db.expire_all()
-    groups = await asyncio.to_thread(_campaign_non_voters, db, campaign)
+    groups = await asyncio.to_thread(_campaign_non_voters, db, campaign, chats)
     sent, errors = set(), []
     for chat, users in groups.items():
         if not users:
@@ -220,7 +233,9 @@ async def ping_non_voters(db: Session = Depends(get_db), campaign_id: int | None
         if not publications:
             errors.append({'chat_id': chat, 'error': 'В этом чате ещё нет опроса. Запустите его для выбранных дат.'})
             continue
-        links = [link for p in publications if (link := poll_link(chat, p.telegram_message_id))]
+        first = min(publications, key=lambda p: p.id)
+        link = poll_link(chat, first.telegram_message_id)
+        links = [link] if link else []
         try:
             for message in mention_messages(f'Отметьте занятость на {campaign.month}!', users, links):
                 await bot.send_message(chat_id=chat, text=message, parse_mode='HTML')

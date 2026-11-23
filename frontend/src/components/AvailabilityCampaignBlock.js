@@ -1,138 +1,77 @@
 import React, { useState } from 'react';
 import client from '../api/client';
+import './AvailabilityCampaignBlock.css';
 
-const formatDates = dates => dates.map(day => day.split('-').reverse().join('.')).join(', ');
-const dateCount = count => {
-  const lastTwo = count % 100;
-  const word = lastTwo >= 11 && lastTwo <= 14 ? 'дат'
-    : count % 10 === 1 ? 'дата' : count % 10 >= 2 && count % 10 <= 4 ? 'даты' : 'дат';
-  return `${count} ${word}`;
-};
-const rosterExplanation = reason => ({
-  ambiguous_identity: 'Не удалось однозначно определить Telegram-аккаунт. Проверьте Telegram ID и username в таблице «Труппа».',
-  not_registered: 'Бот ещё не связал участника с Telegram-аккаунтом. Попросите его ответить в опросе бота в любой подключённой группе; если он уже голосовал — проверьте Telegram ID и username в таблице «Труппа».',
-  membership_unverified: 'Бот знает участника, но пока не подтвердил членство в группе этого спектакля. Проверка выполняется автоматически; повторное голосование для регистрации не нужно.',
-  not_member: 'По последней проверке Telegram участник не состоит в группе этого спектакля. Ответы из других групп учитываются; пинг в эту группу не отправляется.',
-}[reason] || 'Не удалось проверить участника. Обновите список.');
+const WEEKDAYS = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
+const MONTHS = ['январь', 'февраль', 'март', 'апрель', 'май', 'июнь', 'июль', 'август', 'сентябрь', 'октябрь', 'ноябрь', 'декабрь'];
+
+function PollCalendar({ month, dates }) {
+  const [year, number] = month.split('-').map(Number);
+  const offset = (new Date(year, number - 1, 1).getDay() + 6) % 7;
+  const count = new Date(year, number, 0).getDate();
+  return <div className="poll-summary-calendar" role="group" aria-label="Даты опроса">
+    {WEEKDAYS.map(day => <span className="poll-summary-calendar__weekday" key={day}>{day}</span>)}
+    {Array.from({ length: offset }, (_, i) => <span key={`empty-${i}`} aria-hidden="true" />)}
+    {Array.from({ length: count }, (_, i) => {
+      const date = `${month}-${String(i + 1).padStart(2, '0')}`;
+      const selected = dates.has(date);
+      return <span key={date} className={`poll-summary-calendar__day${selected ? ' poll-summary-calendar__day--selected' : ''}`}
+        aria-label={`${i + 1} ${MONTHS[number - 1]} ${year}${selected ? ', дата опроса' : ''}`}>{i + 1}</span>;
+    })}
+  </div>;
+}
+
+function ChatPoll({ campaignId, group }) {
+  const [sending, setSending] = useState(false);
+  const [result, setResult] = useState(null);
+  const [error, setError] = useState(null);
+  const first = group.polls[0];
+  const label = first.chat_title || [...group.names].join(', ') || 'Чат';
+  const ping = async () => {
+    if (sending) return;
+    setSending(true);
+    setResult(null);
+    setError(null);
+    try {
+      const { data } = await client.post('/api/availability/ping-non-voters', null,
+        { params: { campaign_id: campaignId, chat_id: group.chat } });
+      if (data.errors?.length) setError(data.errors.map(item => item.error).join(' '));
+      else setResult(data.count > 0 ? 'Напоминание отправлено' : 'Нет неответивших');
+    } catch (e) {
+      const detail = e.response?.data?.detail;
+      setError(typeof detail === 'string' ? detail : 'Не удалось отправить напоминание');
+    } finally { setSending(false); }
+  };
+  return <div className="poll-summary-chat">
+    <div className="poll-summary-chat__row">
+      {first.tg_link ? <a href={first.tg_link} target="_blank" rel="noreferrer">{label}</a> : <span>{label}</span>}
+      <button className="btn btn-secondary" onClick={ping} disabled={sending || !group.chat}
+        aria-label={`Пинг неответивших: ${label}`}>{sending ? 'Отправка…' : 'Пинг неответивших'}</button>
+    </div>
+    {error && <div className="poll-summary-chat__error" role="alert">{error}</div>}
+    {result && <div className="poll-summary-chat__result" role="status">{result}</div>}
+  </div>;
+}
 
 export default function AvailabilityCampaignBlock({ campaign }) {
-  const [nonVoters, setNonVoters] = useState(null);
-  const [unregistered, setUnregistered] = useState([]);
-  const [rosterWarning, setRosterWarning] = useState(null);
-  const [pinging, setPinging] = useState(false);
-  const [loadingNonVoters, setLoadingNonVoters] = useState(false);
-  const [formError, setFormError] = useState(null);
-
-  const loadNonVoters = async () => {
-    setLoadingNonVoters(true);
-    setFormError(null);
-    try {
-      const r = await client.get('/api/availability/non-voters', { params: { campaign_id: campaign.id } });
-      setNonVoters(r.data.participants || (r.data.non_voters || []).map(username => ({ user_id: username, username })));
-      setUnregistered(r.data.unregistered_participants || []);
-      setRosterWarning(r.data.roster_warning || null);
-    } catch (e) { setFormError(e.response?.data?.detail || 'Не удалось загрузить неответивших'); }
-    finally { setLoadingNonVoters(false); }
-  };
-
-  const handlePing = async () => {
-    setPinging(true);
-    try {
-      const { data } = await client.post('/api/availability/ping-non-voters', null, { params: { campaign_id: campaign.id } });
-      await loadNonVoters();
-      if (data.errors?.length) setFormError(data.errors.map(e => `Чат ${e.chat_id}: ${e.error}`).join(' '));
-    } catch (e) {
-      setFormError(e.response?.data?.detail || 'Не удалось отправить напоминание');
-    } finally {
-      setPinging(false);
-    }
-  };
-
-  const monthLabel = (m) => {
-    if (!m) return '';
-    const [y, mo] = m.split('-');
-    const months = ['','янв','фев','мар','апр','май','июн','июл','авг','сен','окт','ноя','дек'];
-    return `${months[parseInt(mo)]} ${y}`;
-  };
-
-  const polls = campaign.polls || [];
-  const dates = [...new Set(polls.flatMap(p => (p.options || []).map(o => o.date).filter(Boolean)))].sort();
-  const groups = Object.values(polls.reduce((result, poll) => {
+  const polls = [...(campaign.polls || [])].sort((a, b) => a.id - b.id);
+  const dates = new Set(polls.flatMap(p => (p.options || []).map(o => o.date).filter(Boolean)));
+  const groups = Object.values(polls.filter(p => p.telegram_message_id).reduce((result, poll) => {
     const key = poll.telegram_chat_id ?? 'legacy';
-    if (!result[key]) result[key] = { chat: key, names: new Set(), polls: [] };
+    if (!result[key]) result[key] = { chat: poll.telegram_chat_id, names: new Set(), polls: [] };
     (poll.show_names || campaign.show_names || []).forEach(name => result[key].names.add(name));
     result[key].polls.push(poll);
     return result;
   }, {}));
-  const sent = polls.filter(p => p.telegram_message_id).length;
-  const createdAt = campaign.created_at && new Date(/Z$|[+-]\d\d:\d\d$/.test(campaign.created_at)
-    ? campaign.created_at : `${campaign.created_at}Z`).toLocaleString('ru-RU', {
-    day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit',
-  });
-
-  return (
-    <article aria-label={`Блок опроса №${campaign.id}`} style={{ marginBottom: 10 }}>
-        <div className="card-white" style={{ padding: '14px 16px' }}>
-          <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>
-            {monthLabel(campaign.month)} · Блок №{campaign.id}
-          </div>
-          {createdAt && <div style={{ fontSize: 12, color: '#666', marginBottom: 6 }}>Создан {createdAt}</div>}
-          <div style={{ fontSize: 13, color: '#666', marginBottom: 8 }}>
-            {campaign.show_names?.join(', ')}
-          </div>
-          <div style={{ fontSize: 13, marginBottom: 8 }}>
-            {dates.length > 0 ? <>Даты ({dates.length}): {formatDates(dates)}</> : 'Даты указаны в исходных опросах'}
-          </div>
-          <details style={{ fontSize: 12, marginBottom: 12 }}>
-            <summary style={{ cursor: 'pointer' }}>Опросы в группах ({groups.length}) · отправлено {sent} из {polls.length}</summary>
-            {groups.map(group => <div key={group.chat} style={{ marginTop: 10 }}>
-              <strong>{[...group.names].join(', ') || 'Группа'}</strong>
-              {group.polls.map((poll, index) => <div key={poll.id} style={{ marginTop: 5 }}>
-                Часть {index + 1} из {group.polls.length} · {poll.telegram_message_id
-                  ? (poll.tg_link ? <a href={poll.tg_link} target="_blank" rel="noreferrer">Открыть опрос</a> : 'Отправлен')
-                  : ['sending', 'uncertain'].includes(poll.delivery_state) ? 'Отправка не подтверждена' : 'Не отправлен'}
-                <div style={{ color: '#666' }}>{(poll.options || []).map(o => o.date_label || o.date).filter(Boolean).join(', ')}</div>
-              </div>)}
-            </div>)}
-          </details>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            <button className="btn btn-secondary" style={{ fontSize: 13 }} onClick={loadNonVoters} disabled={loadingNonVoters || pinging}>
-              {loadingNonVoters ? 'Проверяем участников…' : 'Посмотреть неответивших'}
-            </button>
-          </div>
-          {nonVoters !== null && (
-            <div style={{ marginTop: 10 }}>
-              {rosterWarning && <div className="alert alert-error" role="alert">{rosterWarning}</div>}
-              {nonVoters.length === 0
-                ? <span style={{ fontSize: 13, color: '#22c55e' }}>Среди зарегистрированных участников нет ожидающих ответа</span>
-                : <>
-                    <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Не ответили: {nonVoters.length}</div>
-                    <div style={{ fontSize: 13, marginBottom: 8 }}>
-                      {nonVoters.map(u => <div key={u.user_id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 12, padding: '5px 0' }}>
-                        <span style={{ overflowWrap: 'anywhere' }}>{u.username ? `@${u.username}` : u.name}</span>
-                        {u.missing_dates?.length > 0 && <span style={{ color: '#666', whiteSpace: 'nowrap' }}>{dateCount(u.missing_dates.length)}</span>}
-                      </div>)}
-                    </div>
-                    <button className="btn btn-primary" style={{ fontSize: 13 }} onClick={handlePing} disabled={pinging || loadingNonVoters}>
-                      {pinging ? 'Отправка...' : 'Пингануть'}
-                    </button>
-                  </>
-              }
-              {unregistered.length > 0 && <div style={{ marginTop: 12, fontSize: 13 }}>
-                <strong>Участники составов, которым нельзя отправить пинг</strong>
-                <ul style={{ paddingLeft: 20, margin: '8px 0' }}>{unregistered.map(u => <li key={`${u.name}:${u.username}:${u.chat_id}`}>
-                  {u.name}{u.username ? ` (@${u.username})` : ''} — {u.show_names.join(', ')}.
-                  {' '}{rosterExplanation(u.reason)}
-                  <div>{u.missing_dates != null
-                    ? <>Ответы есть на {u.answered_count} из {u.total_dates} дат. Нет ответа на: {formatDates(u.missing_dates)}.</>
-                    : 'Наличие ответов пока нельзя проверить: Telegram-аккаунт не определён.'}</div>
-                </li>)}</ul>
-                <p>Эти участники не включены в пинг. Для пинга нужны известный Telegram-аккаунт, подтверждённое членство в группе и хотя бы одна дата без ответа.</p>
-              </div>}
-            </div>
-          )}
-        </div>
-      {formError && <div className="alert alert-error" role="alert">{formError}</div>}
-    </article>
-  );
+  const [year, number] = campaign.month.split('-').map(Number);
+  const created = campaign.created_at && new Date(/Z$|[+-]\d\d:\d\d$/.test(campaign.created_at)
+    ? campaign.created_at : `${campaign.created_at}Z`).toLocaleDateString('ru-RU', {
+    day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Europe/Moscow',
+  }).replace(/ г\.$/, '');
+  const title = `Опрос на ${MONTHS[number - 1]} ${year}${created ? ` от ${created}` : ''}`;
+  return <article className="card-white poll-summary" aria-label={title}>
+    <h3 className="poll-summary__title">{title}</h3>
+    <PollCalendar month={campaign.month} dates={dates} />
+    {groups.map(group => <ChatPoll key={group.chat ?? 'legacy'} campaignId={campaign.id} group={group} />)}
+  </article>;
 }
