@@ -15,8 +15,8 @@ beforeEach(() => {
     show: 'Урод', status: 'ready', covered: 2, total: 2, incomplete: false,
     roles: [{ name: 'Летте', actors }, { name: 'Фанни', actors: [actors[0]] }], suggested_cast: { Летте: 'Борис', Фанни: 'Анна' },
   }] }] };
-  client.get.mockImplementation(url => Promise.resolve({ data: url === '/api/availability/current'
-    ? { campaign: null } : url === '/api/sheets/shows' ? { shows: ['Урод'] } : plan }));
+  client.get.mockImplementation(url => Promise.resolve({ data: url === '/api/availability/campaigns'
+    ? { campaigns: [] } : url === '/api/sheets/shows' ? { shows: ['Урод'] } : plan }));
   client.post.mockResolvedValue({ data: {} });
 });
 afterEach(() => { act(() => root.unmount()); container.remove(); jest.clearAllMocks(); });
@@ -118,7 +118,7 @@ test.each([false, true])('members can inspect roles and answers but cannot assig
   if (pending) plan.slots[0].operation = { status: 'calendar_created', show_name: 'Урод', cast: { Летте: 'Борис', Фанни: 'Анна' }, start_time: '2028-10-01T18:00:00+03:00', end_time: '2028-10-01T20:00:00+03:00', location: 'Зал' };
   await act(async () => root.render(<PlanningView onClose={() => {}} initialMonth="2028-10" />));
   expect(container.textContent).not.toContain('Опрос занятости');
-  expect(client.get).not.toHaveBeenCalledWith('/api/availability/current', undefined);
+  expect(client.get).not.toHaveBeenCalledWith('/api/availability/campaigns');
   await act(async () => container.querySelector('.planning-cell').click());
   const dialog = container.querySelector('[role="dialog"]');
   expect(dialog.textContent).toContain('Летте');

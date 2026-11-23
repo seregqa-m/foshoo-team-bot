@@ -1,9 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import client from '../api/client';
 import AvailabilityCalendar from './AvailabilityCalendar';
+import AvailabilityCampaignBlock from './AvailabilityCampaignBlock';
 
 export default function AvailabilitySection({ showNames }) {
-  const [campaign, setCampaign] = useState(undefined); // undefined=loading, null=none
+  const [campaigns, setCampaigns] = useState(undefined);
+  const [campaignsError, setCampaignsError] = useState(null);
   const [showForm, setShowForm] = useState(false);
   const [month, setMonth] = useState(null);
   const [requestedMonth, setRequestedMonth] = useState(null);
@@ -13,21 +15,21 @@ export default function AvailabilitySection({ showNames }) {
   const [selectedShows, setSelectedShows] = useState([]);
   const [selectedDates, setSelectedDates] = useState([]);
   const [missingDates, setMissingDates] = useState([]);
-  const [nonVoters, setNonVoters] = useState(null);
-  const [unregistered, setUnregistered] = useState([]);
-  const [rosterWarning, setRosterWarning] = useState(null);
-  const [pinging, setPinging] = useState(false);
   const [sending, setSending] = useState(false);
   const [formError, setFormError] = useState(null);
   const [unconfirmed, setUnconfirmed] = useState(false);
 
-  const loadCampaign = campaignId => {
-    client.get('/api/availability/current', campaignId ? { params: { campaign_id: campaignId } } : undefined)
-      .then(r => setCampaign(r.data.campaign || null))
-      .catch(() => { setCampaign(null); setFormError('Не удалось загрузить опрос занятости'); });
+  const loadCampaigns = async () => {
+    setCampaignsError(null);
+    try {
+      const { data } = await client.get('/api/availability/campaigns');
+      setCampaigns(data.campaigns);
+    } catch (e) {
+      setCampaignsError('Не удалось загрузить блоки опросов');
+    }
   };
 
-  useEffect(() => { loadCampaign(); }, []);
+  useEffect(() => { loadCampaigns(); }, []);
 
   const openForm = () => {
     setFormError(null);
@@ -112,10 +114,7 @@ export default function AvailabilitySection({ showNames }) {
         setUnconfirmed(false);
         setShowForm(false);
       }
-      setNonVoters(null);
-      setUnregistered([]);
-      setRosterWarning(null);
-      loadCampaign(data.campaign_id);
+      await loadCampaigns();
     } catch (e) {
       setFormError(e.response?.data?.detail || 'Ошибка отправки');
     } finally {
@@ -123,94 +122,27 @@ export default function AvailabilitySection({ showNames }) {
     }
   };
 
-  const loadNonVoters = async () => {
-    try {
-      const r = await client.get('/api/availability/non-voters', { params: { campaign_id: campaign.id } });
-      setNonVoters(r.data.participants || (r.data.non_voters || []).map(username => ({ user_id: username, username })));
-      setUnregistered(r.data.unregistered_participants || []);
-      setRosterWarning(r.data.roster_warning || null);
-    } catch (e) { setFormError(e.response?.data?.detail || 'Не удалось загрузить неответивших'); }
-  };
-
-  const handlePing = async () => {
-    setPinging(true);
-    try {
-      const { data } = await client.post('/api/availability/ping-non-voters', null, { params: { campaign_id: campaign.id } });
-      setFormError(data.errors?.length ? data.errors.map(e => `Чат ${e.chat_id}: ${e.error}`).join(' ') : null);
-    } catch (e) {
-      setFormError(e.response?.data?.detail || 'Не удалось отправить напоминание');
-    } finally {
-      setPinging(false);
-    }
-  };
-
-  const monthLabel = (m) => {
-    if (!m) return '';
-    const [y, mo] = m.split('-');
-    const months = ['','янв','фев','мар','апр','май','июн','июл','авг','сен','окт','ноя','дек'];
-    return `${months[parseInt(mo)]} ${y}`;
-  };
-
   return (
     <>
-      <div className="section-label" style={{ marginTop: 16 }}>Опрос занятости</div>
+      <div className="section-label" style={{ marginTop: 16 }}>Блоки опросов занятости</div>
 
-      {campaign === undefined ? (
-        <div className="card-white" style={{ padding: '12px 16px', color: '#888', fontSize: 13 }}>Загрузка...</div>
-      ) : campaign ? (
-        <div className="card-white" style={{ padding: '14px 16px' }}>
-          <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>
-            Опрос на {monthLabel(campaign.month)}
-          </div>
-          <div style={{ fontSize: 13, color: '#666', marginBottom: 8 }}>
-            {campaign.show_names?.join(', ')}
-          </div>
-          {campaign.polls.map(p => <div key={p.id} style={{ fontSize: 12, marginBottom: 6 }}>
-            {p.show_names?.join(', ')} · {p.telegram_message_id ? (p.tg_link ? <a href={p.tg_link} target="_blank" rel="noreferrer">Открыть опрос</a> : 'Отправлен') : 'Не отправлен'}
-          </div>)}
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            <button className="btn btn-secondary" style={{ fontSize: 13 }} onClick={loadNonVoters}>
-              Посмотреть неответивших
-            </button>
-            <button className="btn btn-secondary" style={{ fontSize: 13 }} onClick={openForm}>
-              Новый опрос
-            </button>
-          </div>
-          {nonVoters !== null && (
-            <div style={{ marginTop: 10 }}>
-              {rosterWarning && <div className="alert alert-error" role="alert">{rosterWarning}</div>}
-              {nonVoters.length === 0
-                ? <span style={{ fontSize: 13, color: '#22c55e' }}>Среди зарегистрированных участников нет ожидающих ответа</span>
-                : <>
-                    <div style={{ fontSize: 13, marginBottom: 8 }}>
-                      {nonVoters.map(u => <span key={u.user_id} style={{ marginRight: 6 }}>{u.username ? `@${u.username}` : u.name}</span>)}
-                    </div>
-                    <button className="btn btn-primary" style={{ fontSize: 13 }} onClick={handlePing} disabled={pinging}>
-                      {pinging ? 'Отправка...' : 'Пингануть'}
-                    </button>
-                  </>
-              }
-              {unregistered.length > 0 && <div style={{ marginTop: 12, fontSize: 13 }}>
-                <strong>Участники составов без подтверждённой регистрации</strong>
-                <ul style={{ paddingLeft: 20, margin: '8px 0' }}>{unregistered.map(u => <li key={`${u.name}:${u.username}`}>
-                  {u.name}{u.username ? ` (@${u.username})` : ''} — {u.show_names.join(', ')}.
-                  {' '}{u.reason === 'ambiguous_identity' ? 'Нужно проверить привязку в таблице.'
-                    : u.reason === 'membership_unverified' ? 'Членство в группе не подтверждено.' : 'Бот ещё не зарегистрировал участника.'}
-                </li>)}</ul>
-                <p>Эти участники не включены в пинг: их ответы пока нельзя надёжно сопоставить.
-                  {' '}Попросите их проголосовать в опросе — бот получит Telegram ID и проверит членство в группе.</p>
-              </div>}
-            </div>
-          )}
+      <p style={{ fontSize: 13, color: '#666' }}>Каждая отправка сохраняется отдельным блоком. Части опроса и копии в разных группах объединены внутри него. Пинг относится только к датам выбранного блока.</p>
+      {campaigns === undefined ? (
+        <div className="card-white" style={{ padding: '12px 16px', color: '#888', fontSize: 13 }}>
+          {!campaignsError && 'Загрузка...'}
         </div>
       ) : (
-        <div className="card-white" style={{ padding: '14px 16px' }}>
-          <div style={{ fontSize: 13, color: '#666', marginBottom: 10 }}>Опрос ещё не запускался</div>
-          <button className="btn btn-primary" style={{ fontSize: 13 }} onClick={openForm}>
-            Запустить опрос занятости
+        <>
+          <button className="btn btn-secondary" style={{ fontSize: 13, marginBottom: 10 }} onClick={openForm} disabled={sending}>
+            {campaigns.length ? 'Новый опрос' : 'Запустить опрос занятости'}
           </button>
-        </div>
+          {campaigns.length === 0 && <p style={{ fontSize: 13, color: '#666' }}>Опрос ещё не запускался</p>}
+        </>
       )}
+
+      {campaignsError && <div className="alert alert-error" role="alert">
+        {campaignsError}. <button className="btn btn-secondary" onClick={loadCampaigns}>Повторить загрузку блоков</button>
+      </div>}
 
       {!showForm && formError && <div className="alert alert-error">{formError}</div>}
       {showForm && (
@@ -270,6 +202,7 @@ export default function AvailabilitySection({ showNames }) {
           </div>
         </div>
       )}
+      {campaigns?.map(campaign => <AvailabilityCampaignBlock key={campaign.id} campaign={campaign} />)}
     </>
   );
 }

@@ -8,7 +8,7 @@ from calendar import monthrange
 from datetime import date, datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 from core.database import get_db
 from config import GOOGLE_CALENDAR_JSON, GOOGLE_SHEETS_ID, ADMIN_ID
 from modules.theater.routing import campaign_destinations, poll_link
@@ -94,9 +94,12 @@ def get_current(db: Session = Depends(get_db), campaign_id: int | None = None):
     campaign = _find_campaign(db, campaign_id)
     if not campaign:
         return {"campaign": None}
+    return {"campaign": _campaign_data(campaign)}
 
+
+def _campaign_data(campaign):
     polls_data = []
-    for poll in campaign.polls:
+    for poll in sorted(campaign.polls, key=lambda p: p.id):
         voters = {v.user_id for v in poll.votes}
         polls_data.append({
             "id": poll.id,
@@ -116,14 +119,22 @@ def get_current(db: Session = Depends(get_db), campaign_id: int | None = None):
         })
 
     return {
-        "campaign": {
-            "id": campaign.id,
-            "month": campaign.month,
-            "show_names": json.loads(campaign.show_names),
-            "created_at": campaign.created_at.isoformat(),
-            "polls": polls_data,
-        }
+        "id": campaign.id,
+        "month": campaign.month,
+        "show_names": json.loads(campaign.show_names),
+        "created_at": campaign.created_at.isoformat(),
+        "polls": polls_data,
     }
+
+
+@router.get('/campaigns')
+def list_campaigns(db: Session = Depends(get_db)):
+    """One retained block per send, regardless of chat copies or nine-date parts."""
+    campaigns = db.query(AvailabilityCampaign).options(
+        selectinload(AvailabilityCampaign.polls).selectinload(AvailabilityPoll.options),
+        selectinload(AvailabilityCampaign.polls).selectinload(AvailabilityPoll.votes),
+    ).order_by(AvailabilityCampaign.id.desc()).all()
+    return {'campaigns': [_campaign_data(campaign) for campaign in campaigns]}
 
 
 def _find_campaign(db, campaign_id=None):
@@ -142,27 +153,50 @@ def _campaign_non_voters(db, campaign):
               if p.telegram_chat_id == chat for o in p.options} - {None}) for chat in destinations}
 
 
-@router.get('/non-voters')
-def get_non_voters(db: Session = Depends(get_db), campaign_id: int | None = None):
-    campaign = _find_campaign(db, campaign_id)
+def _load_campaign_roster(db, campaign):
+    try:
+        if not GOOGLE_SHEETS_ID or not os.path.exists(GOOGLE_CALENDAR_JSON):
+            raise ValueError('Sheets not configured')
+        from sheets_client import SheetsClient
+        from .roster import queue_cast_memberships
+        source = SheetsClient(GOOGLE_CALENDAR_JSON, GOOGLE_SHEETS_ID, timeout=8).get_attendance_roster()
+        queue_cast_memberships(db, campaign, source)
+        return source, None
+    except Exception:
+        db.rollback()
+        logger.warning('Cannot check cast members', exc_info=True)
+        return None, 'Не удалось сверить составы. Показаны только участники, зарегистрированные у бота.'
+
+
+def _non_voters_response(db, campaign, source, roster_warning):
+    from .roster import unregistered_cast_members
+    db.expire_all()
     groups = _campaign_non_voters(db, campaign) if campaign and campaign.polls else {}
-    participants = {p['user_id']: p for people in groups.values() for p in people}
-    unregistered, roster_warning = [], None
-    if campaign and campaign.polls:
-        try:
-            if not GOOGLE_SHEETS_ID or not os.path.exists(GOOGLE_CALENDAR_JSON):
-                raise ValueError('Sheets not configured')
-            from sheets_client import SheetsClient
-            from .roster import unregistered_cast_members
-            source = SheetsClient(GOOGLE_CALENDAR_JSON, GOOGLE_SHEETS_ID, timeout=8).get_attendance_roster()
-            unregistered = unregistered_cast_members(db, campaign, source)
-        except Exception:
-            logger.warning('Cannot check unregistered cast members', exc_info=True)
-            roster_warning = 'Не удалось сверить составы. Показаны только участники, зарегистрированные у бота.'
+    participants = {}
+    for people in groups.values():
+        for person in people:
+            existing = participants.setdefault(person['user_id'], {**person, 'missing_dates': []})
+            existing['missing_dates'] = sorted(set(existing['missing_dates']) | set(person['missing_dates']))
+    unregistered = unregistered_cast_members(db, campaign, source) if source is not None else []
     return {'non_voters': [p['username'] or p['name'] for p in participants.values()],
             'participants': list(participants.values()),
             'unregistered_participants': unregistered, 'roster_warning': roster_warning,
             'chats': [{'chat_id': chat, 'non_voters': users} for chat, users in groups.items()]}
+
+
+@router.get('/non-voters')
+async def get_non_voters(db: Session = Depends(get_db), campaign_id: int | None = None):
+    from bot import bot
+    from modules.attendance.registration import sync_voter_registrations
+    campaign = _find_campaign(db, campaign_id)
+    source, warning = None, None
+    if campaign and campaign.polls:
+        source, warning = await asyncio.to_thread(_load_campaign_roster, db, campaign)
+        chats = list(campaign_destinations(db, json.loads(campaign.show_names)))
+        verified = await sync_voter_registrations(bot, chat_ids=chats)
+        if verified is False:
+            warning = ' '.join(filter(None, [warning, 'Не удалось обновить членство некоторых участников. Показаны последние известные данные; перед пингом членство проверяется заново.']))
+    return await asyncio.to_thread(_non_voters_response, db, campaign, source, warning)
 
 
 @router.post('/ping-non-voters')
@@ -173,6 +207,7 @@ async def ping_non_voters(db: Session = Depends(get_db), campaign_id: int | None
         raise HTTPException(404, 'Нет активного опроса')
     from modules.attendance.registration import sync_voter_registrations
     from modules.attendance.roster import mention_messages
+    await asyncio.to_thread(_load_campaign_roster, db, campaign)
     chats = list(campaign_destinations(db, json.loads(campaign.show_names)))
     await sync_voter_registrations(bot, chat_ids=chats, force=True, strict=True)
     db.expire_all()

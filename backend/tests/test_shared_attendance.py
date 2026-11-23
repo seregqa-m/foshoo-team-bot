@@ -13,7 +13,7 @@ with patch.dict(os.environ, {'BOT_TOKEN': '123456:offline-test-token', 'DATABASE
     from modules.attendance.models import DayAnswer
     from modules.attendance.services import record_answers, answered_usernames, export_pending
     from modules.availability.models import AvailabilityCampaign, AvailabilityPoll, AvailabilityPollOption
-    from modules.availability.router import create_campaign, CreateCampaignRequest, ping_non_voters, get_non_voters, get_current
+    from modules.availability.router import create_campaign, CreateCampaignRequest, ping_non_voters, get_non_voters, get_current, list_campaigns
     from modules.polling.models import Poll
     from modules.polling.services import PollingService
     from modules.polling.delivery import publish_event
@@ -423,12 +423,30 @@ class SharedAttendanceTests(unittest.IsolatedAsyncioTestCase):
             await create_campaign(CreateCampaignRequest(show_names=['Калий', 'Урод'], dates=[self.day]), self.db)
         self.vote(self.regular()[1], 'unknown')
         with patch('modules.availability.router.GOOGLE_SHEETS_ID', 'test'), patch('os.path.exists', return_value=True), patch('sheets_client.SheetsClient', return_value=self.sheets), patch('bot.bot.send_message', AsyncMock()) as send:
-            self.assertEqual(get_non_voters(self.db)['non_voters'], ['onlya', 'onlyb'])
+            self.assertEqual((await get_non_voters(self.db))['non_voters'], ['onlya', 'onlyb'])
             await ping_non_voters(self.db)
         messages = {c.kwargs['chat_id']: c.kwargs['text'] for c in send.call_args_list}
         self.assertIn('tg://user?id=43', messages[-100111]); self.assertNotIn('tg://user?id=44', messages[-100111])
         self.assertIn('tg://user?id=44', messages[-100222]); self.assertNotIn('tg://user?id=42', messages[-100222])
         self.assertIn('t.me/c/111/', messages[-100111]); self.assertIn('t.me/c/222/', messages[-100222])
+
+    async def test_history_retains_send_blocks_with_all_chats_and_parts_after_retry_and_reload(self):
+        first_request = CreateCampaignRequest(show_names=['Калий', 'Урод'], dates=[date(2026, 10, n) for n in range(1, 11)])
+        with patch('bot.bot.send_poll', self.send), patch('modules.availability.router._ensure_campaign_columns'):
+            first = await create_campaign(first_request, self.db)
+            extra = await create_campaign(CreateCampaignRequest(show_names=['Урод'], dates=[date(2026, 10, 20)]), self.db)
+            retry = await create_campaign(first_request, self.db)
+        self.assertEqual(retry['campaign_id'], first['campaign_id'])
+        self.assertEqual(self.send.await_count, 5)
+        with self.Session() as reopened:
+            blocks = list_campaigns(reopened)['campaigns']
+            self.assertEqual([b['id'] for b in blocks], [extra['campaign_id'], first['campaign_id']])
+            self.assertEqual(len(blocks[0]['polls']), 1)
+            self.assertEqual(len(blocks[1]['polls']), 4)
+            self.assertEqual({p['telegram_chat_id'] for p in blocks[1]['polls']}, {-100111, -100222})
+            self.assertEqual({o['date'] for p in blocks[1]['polls'] for o in p['options']},
+                             {f'2026-10-{n:02d}' for n in range(1, 11)})
+            self.assertEqual(get_current(reopened, first['campaign_id'])['campaign'], blocks[1])
 
     async def test_auto_polls_and_reminders_respect_shared_answers_and_destination(self):
         self.seed_members()

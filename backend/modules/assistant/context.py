@@ -255,7 +255,13 @@ def _collect_availability_campaign(db: Session, actor_mapping: dict) -> Optional
     except Exception:
         return None
     import json as _json
-    campaign = db.query(AvailabilityCampaign).order_by(AvailabilityCampaign.id.desc()).first()
+    from sqlalchemy.orm import selectinload
+    from modules.availability.models import AvailabilityPoll
+    from modules.attendance.services import option_day
+    recent = db.query(AvailabilityCampaign).options(
+        selectinload(AvailabilityCampaign.polls).selectinload(AvailabilityPoll.options),
+    ).order_by(AvailabilityCampaign.id.desc()).limit(21).all()
+    campaign = recent[0] if recent else None
     if not campaign:
         return None
     show_names = []
@@ -269,7 +275,8 @@ def _collect_availability_campaign(db: Session, actor_mapping: dict) -> Optional
     try:
         from modules.availability.router import _campaign_non_voters
         groups = _campaign_non_voters(db, campaign)
-        non_voters = sorted({u for users in groups.values() for u in users})
+        people = {person['user_id']: person for users in groups.values() for person in users}
+        non_voters = sorted(person['username'] or person['name'] for person in people.values())
     except Exception as exc:
         logger.warning('Cannot calculate shared non-voters in context: %s', exc)
 
@@ -280,7 +287,19 @@ def _collect_availability_campaign(db: Session, actor_mapping: dict) -> Optional
         "polls_count": len(campaign.polls),
         "voters_count": total_voters,
         "non_voters": non_voters,
-        "response_scope": "Ответы общие на дату; non_voters учитывает также другие опросы и чаты",
+        "recent_blocks": [{
+            "id": block.id, "month": block.month,
+            "shows": _json.loads(block.show_names or '[]'),
+            "dates": sorted({day.isoformat() for poll in block.polls for option in poll.options
+                             if (day := option_day(option, db)) is not None}),
+            "created_at": block.created_at.isoformat(),
+        } for block in recent[:20]],
+        "has_older_blocks": len(recent) > 20,
+        "response_scope": (
+            "Ответы общие на дату; учитываются другие опросы, чаты и приложение. "
+            "non_voters содержит известных участников групп с датами без ответа по последней проверке. "
+            "Перед пингом составы сверяются с таблицей и членство проверяется заново; список может измениться."
+        ),
         "publications": [{"chat_id": p.telegram_chat_id, "state": p.delivery_state,
                           "message_id": p.telegram_message_id} for p in campaign.polls],
     }

@@ -16,7 +16,8 @@ def members(db, chat_id, *, active_only=True):
             for link, person in query.order_by(VoterRegistration.user_id).all()]
 
 
-def missing_members(db, chat_id, days):
+def answered_dates(db, days):
+    """Shared answers, including legacy votes only when no common row exists."""
     days = set(days)
     rows = db.query(DayAnswer).filter(DayAnswer.day.in_(days)).all()
     known = {(row.user_id, row.day) for row in rows}
@@ -27,8 +28,18 @@ def missing_members(db, chat_id, days):
         pair = (vote.user_id, poll.selected_date)
         if pair not in known and vote.answer != 'retracted':
             answered.add(pair)
-    return [person for person in members(db, chat_id)
-            if any((person['user_id'], day) not in answered for day in days)]
+    return answered
+
+
+def missing_members(db, chat_id, days):
+    days = set(days)
+    answered = answered_dates(db, days)
+    result = []
+    for person in members(db, chat_id):
+        missing = sorted(day.isoformat() for day in days if (person['user_id'], day) not in answered)
+        if missing:
+            result.append({**person, 'missing_dates': missing})
+    return result
 
 
 def attendance_totals(db, chat_id, day):

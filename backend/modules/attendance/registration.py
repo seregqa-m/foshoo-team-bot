@@ -105,6 +105,7 @@ async def sync_voter_registrations(bot, *, chat_ids=None, force=False, strict=Fa
     if strict and failures:
         from fastapi import HTTPException
         raise HTTPException(503, 'Не удалось проверить состав группы. Повторите напоминание позже.')
+    return not failures
 
 
 def is_present(member):

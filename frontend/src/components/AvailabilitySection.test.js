@@ -20,7 +20,7 @@ beforeEach(() => {
     { id: 3, start_time: '2026-10-10T19:00:00+03:00' },
   ];
   client.get.mockImplementation(url => Promise.resolve({ data: {
-    '/api/availability/current': { campaign: null },
+    '/api/availability/campaigns': { campaigns: [] },
     '/api/availability/next-month-events': { month: '2026-10', events },
     '/api/availability/check-dates': { missing: [] },
   }[url] }));
@@ -29,8 +29,8 @@ beforeEach(() => {
 afterEach(() => { act(() => root.unmount()); container.remove(); jest.clearAllMocks(); });
 
 test('shows unregistered cast members even when registered participants all answered, without offering to ping them', async () => {
-  client.get.mockImplementation(url => Promise.resolve({ data: url.endsWith('/current')
-    ? { campaign: { id: 2, month: '2026-12', show_names: ['Урод'], polls: [] } }
+  client.get.mockImplementation(url => Promise.resolve({ data: url.endsWith('/campaigns')
+    ? { campaigns: [{ id: 2, month: '2026-12', show_names: ['Урод'], polls: [] }] }
     : { participants: [], unregistered_participants: [{ name: 'Никита Мягков', username: 'q_poo', show_names: ['Урод', 'Любовь Громова'], reason: 'not_registered', can_ping: false }] } }));
   await act(async () => root.render(<AvailabilitySection showNames={['Урод']} />));
   await act(async () => button('Посмотреть неответивших').click());
@@ -42,12 +42,138 @@ test('shows unregistered cast members even when registered participants all answ
 });
 
 test('shows a roster warning when cast verification is unavailable', async () => {
-  client.get.mockImplementation(url => Promise.resolve({ data: url.endsWith('/current')
-    ? { campaign: { id: 2, month: '2026-12', polls: [] } }
+  client.get.mockImplementation(url => Promise.resolve({ data: url.endsWith('/campaigns')
+    ? { campaigns: [{ id: 2, month: '2026-12', polls: [] }] }
     : { participants: [], roster_warning: 'Не удалось сверить составы.' } }));
   await act(async () => root.render(<AvailabilitySection showNames={['Урод']} />));
   await act(async () => button('Посмотреть неответивших').click());
   expect(container.querySelector('[role="alert"]').textContent).toContain('Не удалось сверить составы');
+});
+
+test('separates known identity, missing membership and missing dates without asking to vote again', async () => {
+  client.get.mockImplementation(url => Promise.resolve({ data: url.endsWith('/campaigns')
+    ? { campaigns: [{ id: 2, month: '2026-12', polls: [] }] }
+    : { participants: [], unregistered_participants: [{ name: 'Дарья', username: 'darya',
+      show_names: ['Любовь Громова'], chat_id: -1001, reason: 'membership_unverified',
+      missing_dates: ['2026-12-24'], answered_count: 2, total_dates: 3 }] } }));
+  await act(async () => root.render(<AvailabilitySection showNames={['Урод']} />));
+  await act(async () => button('Посмотреть неответивших').click());
+  expect(container.textContent).toContain('Бот знает участника');
+  expect(container.textContent).toContain('Ответы есть на 2 из 3 дат');
+  expect(container.textContent).toContain('Нет ответа на: 24.12.2026');
+  expect(container.textContent).toContain('учитываются ответы из всех групп и из приложения');
+  expect(container.textContent).not.toContain('Попросите его ответить');
+  expect(container.textContent).not.toContain('их ответы пока нельзя надёжно сопоставить');
+  expect(button('Пингануть')).toBeUndefined();
+});
+
+test('shows confirmed absence separately from an ambiguous account', async () => {
+  client.get.mockImplementation(url => Promise.resolve({ data: url.endsWith('/campaigns')
+    ? { campaigns: [{ id: 2, month: '2026-12', polls: [] }] }
+    : { participants: [], unregistered_participants: [
+      { name: 'Дарья', show_names: ['Любовь Громова'], reason: 'not_member',
+        missing_dates: ['2026-12-24'], answered_count: 0, total_dates: 1 },
+      { name: 'Анна', show_names: ['Урод'], reason: 'ambiguous_identity', missing_dates: null },
+    ] } }));
+  await act(async () => root.render(<AvailabilitySection showNames={['Урод']} />));
+  await act(async () => button('Посмотреть неответивших').click());
+  expect(container.textContent).toContain('не состоит в группе этого спектакля');
+  expect(container.textContent).toContain('Проверьте Telegram ID и username');
+  expect(container.textContent).toContain('Наличие ответов пока нельзя проверить');
+});
+
+test('lists missing dates for ping recipients and refreshes after pinging', async () => {
+  client.get.mockImplementation(url => Promise.resolve({ data: url.endsWith('/campaigns')
+    ? { campaigns: [{ id: 2, month: '2026-12', polls: [] }] }
+    : { participants: [{ user_id: 42, name: 'Дарья', missing_dates: ['2026-12-24'] }] } }));
+  await act(async () => root.render(<AvailabilitySection showNames={['Урод']} />));
+  await act(async () => button('Посмотреть неответивших').click());
+  expect(container.textContent).toContain('Дарья — нет ответа на: 24.12.2026');
+  await act(async () => button('Пингануть').click());
+  expect(client.post).toHaveBeenCalledWith('/api/availability/ping-non-voters', null, { params: { campaign_id: 2 } });
+  expect(client.get.mock.calls.filter(([url]) => url.endsWith('/non-voters'))).toHaveLength(2);
+});
+
+const savedBlock = (id, dates = ['2026-12-23']) => ({
+  id, month: '2026-12', created_at: '2026-11-23T12:00:00', show_names: ['Урод', 'Любовь Громова'],
+  polls: [-1001, -1002].flatMap((chat, group) => [0, 1].map(part => ({
+    id: id * 10 + group * 2 + part, telegram_chat_id: chat, telegram_message_id: part + 1,
+    show_names: [group ? 'Любовь Громова' : 'Урод'], tg_link: `https://t.me/c/${-chat}/${part + 1}`,
+    options: dates.map(date => ({ date, date_label: date })),
+  }))),
+});
+const blockNode = id => container.querySelector(`[aria-label="Блок опроса №${id}"]`);
+const blockButton = (id, text) => [...blockNode(id).querySelectorAll('button')].find(b => b.textContent === text);
+
+test('renders saved sends as blocks with collapsed chat copies and independent ping targets', async () => {
+  client.get.mockImplementation((url, config) => Promise.resolve({ data: url.endsWith('/campaigns')
+    ? { campaigns: [savedBlock(2, ['2026-12-24']), savedBlock(1)] }
+    : { participants: [{ user_id: 42, name: `Участник блока ${config.params.campaign_id}`, missing_dates: ['2026-12-23'] }] } }));
+  await act(async () => root.render(<AvailabilitySection showNames={['Урод']} />));
+  expect(container.querySelectorAll('article')).toHaveLength(2);
+  expect(blockNode(1).textContent).toContain('Даты (1): 23.12.2026');
+  expect(blockNode(1).querySelector('details').open).toBe(false);
+  expect(blockNode(1).querySelectorAll('a')).toHaveLength(4);
+  expect(blockNode(1).textContent).toContain('Часть 2 из 2');
+  await act(async () => blockButton(1, 'Посмотреть неответивших').click());
+  expect(blockNode(1).textContent).toContain('Участник блока 1');
+  expect(blockNode(2).textContent).not.toContain('Участник блока 1');
+  await act(async () => blockButton(1, 'Пингануть').click());
+  expect(client.post).toHaveBeenLastCalledWith('/api/availability/ping-non-voters', null, { params: { campaign_id: 1 } });
+});
+
+test('new sends append a block and retain older blocks after reloading the screen', async () => {
+  const original = client.get.getMockImplementation();
+  let saved = [savedBlock(1)];
+  client.get.mockImplementation((url, config) => url.endsWith('/campaigns')
+    ? Promise.resolve({ data: { campaigns: saved } }) : original(url, config));
+  client.post.mockImplementation(() => {
+    saved = [savedBlock(2, ['2026-12-24']), ...saved];
+    return Promise.resolve({ data: { campaign_id: 2 } });
+  });
+  await act(async () => root.render(<AvailabilitySection showNames={['Урод']} />));
+  await act(async () => button('Новый опрос').click());
+  await act(async () => button('Урод').click());
+  await act(async () => button('Отправить в чаты').click());
+  expect(container.querySelectorAll('article')).toHaveLength(2);
+  expect(blockNode(1)).toBeTruthy();
+  await act(async () => root.render(null));
+  await act(async () => root.render(<AvailabilitySection showNames={['Урод']} />));
+  expect(container.querySelectorAll('article')).toHaveLength(2);
+});
+
+test('concurrent block lookups keep late answers in their own block', async () => {
+  const pending = {};
+  client.get.mockImplementation((url, config) => url.endsWith('/campaigns')
+    ? Promise.resolve({ data: { campaigns: [savedBlock(2), savedBlock(1)] } })
+    : new Promise(resolve => { pending[config.params.campaign_id] = resolve; }));
+  await act(async () => root.render(<AvailabilitySection showNames={['Урод']} />));
+  await act(async () => blockButton(1, 'Посмотреть неответивших').click());
+  await act(async () => blockButton(2, 'Посмотреть неответивших').click());
+  await act(async () => pending[2]({ data: { participants: [{ user_id: 42, name: 'Второй' }] } }));
+  await act(async () => pending[1]({ data: { participants: [{ user_id: 43, name: 'Первый' }] } }));
+  expect(blockNode(1).textContent).toContain('Первый');
+  expect(blockNode(1).textContent).not.toContain('Второй');
+  expect(blockNode(2).textContent).toContain('Второй');
+});
+
+test('legacy blocks show original Telegram links and can ping without being sent again', async () => {
+  const legacy = { id: 1, month: '2026-09', created_at: '2026-08-25T12:00:00', show_names: ['Урод'], polls: [{
+    id: 10, telegram_chat_id: -100123456, telegram_message_id: 89,
+    tg_link: 'https://t.me/c/123456/89', delivery_state: null, show_names: null,
+    options: [{ date: '2026-09-03', date_label: '3 сентября' }],
+  }] };
+  client.get.mockImplementation(url => Promise.resolve({ data: url.endsWith('/campaigns')
+    ? { campaigns: [savedBlock(2), legacy] }
+    : { participants: [{ user_id: 42, name: 'Анна', missing_dates: ['2026-09-03'] }] } }));
+  await act(async () => root.render(<AvailabilitySection showNames={['Урод']} />));
+  expect(blockNode(1).querySelector('a').href).toBe('https://t.me/c/123456/89');
+  expect(blockNode(1).textContent).toContain('сен 2026');
+  expect(blockNode(1).textContent).toContain('отправлено 1 из 1');
+  await act(async () => blockButton(1, 'Посмотреть неответивших').click());
+  await act(async () => blockButton(1, 'Пингануть').click());
+  expect(client.post).toHaveBeenCalledTimes(1);
+  expect(client.post).toHaveBeenCalledWith('/api/availability/ping-non-voters', null, { params: { campaign_id: 1 } });
 });
 
 test('preselects unique calendar dates and sends only the final selected dates', async () => {

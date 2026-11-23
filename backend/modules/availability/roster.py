@@ -2,13 +2,15 @@
 import json
 from collections import Counter, defaultdict
 
-from modules.attendance.models import ChatParticipant, DayAnswer, VoterRegistration
+from modules.attendance.models import ChatParticipant, VoterRegistration
+from modules.attendance.roster import answered_dates
 from modules.attendance.services import option_day
 from modules.theater.routing import campaign_destinations, sheet_show_names
 from modules.theater.services import normalize_name
 
 
-def unregistered_cast_members(db, campaign, source):
+def cast_identities(db, campaign, source):
+    """Resolve Sheets casts to known IDs without inferring identity from names."""
     destinations = campaign_destinations(db, json.loads(campaign.show_names))
     show_keys = {}
     for chat, shows in destinations.items():
@@ -40,12 +42,6 @@ def unregistered_cast_members(db, campaign, source):
     for voter in voters:
         if voter.username:
             by_username[voter.username.lower().lstrip('@')].append(voter)
-    members = {(r.chat_id, r.user_id) for r in db.query(ChatParticipant).filter_by(status='member')}
-    days = {option_day(o, db) for p in campaign.polls for o in p.options} - {None}
-    answered = defaultdict(set)
-    for answer in db.query(DayAnswer).filter(DayAnswer.day.in_(days), DayAnswer.answer != 'retracted'):
-        answered[answer.user_id].add(answer.day)
-
     result = []
     for key, actor in sorted(expected.items()):
         rows = by_name[key]
@@ -63,12 +59,52 @@ def unregistered_cast_members(db, campaign, source):
                 matches = by_username[handle]
                 ambiguous = username_counts[handle] != 1 or len(matches) > 1
                 if not ambiguous and matches:
-                    voter = matches[0]
+                    ambiguous = id_counts[str(matches[0].user_id)] > 0
+                    if not ambiguous:
+                        voter = matches[0]
         # Names only join the two Sheets tabs; never use a name to bind Telegram identity.
-        if voter and (any((chat, voter.user_id) in members for chat in actor['chats'])
-                      or (days and days <= answered[voter.user_id])):
-            continue
-        result.append({'name': actor['name'], 'username': handle,
-                       'show_names': sorted(actor['shows']), 'can_ping': False,
-                       'reason': 'ambiguous_identity' if ambiguous else 'membership_unverified' if voter else 'not_registered'})
+        result.append({**actor, 'username': handle, 'user_id': voter.user_id if voter else None,
+                       'ambiguous': ambiguous})
+    return result
+
+
+def queue_cast_memberships(db, campaign, source):
+    """Discover missing chat links; only Telegram verification can make them members."""
+    from modules.attendance.services import answer_lock
+    with answer_lock:
+        for actor in cast_identities(db, campaign, source):
+            if actor['user_id'] is None:
+                continue
+            for chat in actor['chats']:
+                if db.get(ChatParticipant, (chat, actor['user_id'])) is None:
+                    db.add(ChatParticipant(chat_id=chat, user_id=actor['user_id'], status='pending'))
+        db.commit()
+
+
+def unregistered_cast_members(db, campaign, source):
+    days_by_chat = defaultdict(set)
+    for poll in campaign.polls:
+        days_by_chat[poll.telegram_chat_id].update(option_day(o, db) for o in poll.options)
+    for days in days_by_chat.values():
+        days.discard(None)
+    answered = answered_dates(db, set().union(*days_by_chat.values()))
+    links = {(r.chat_id, r.user_id): r.status for r in db.query(ChatParticipant)}
+    destinations = campaign_destinations(db, json.loads(campaign.show_names))
+    result = []
+    for actor in cast_identities(db, campaign, source):
+        uid = actor['user_id']
+        # Report each affected group separately: membership in one does not verify another.
+        for chat in sorted(actor['chats']):
+            days = days_by_chat[chat]
+            missing = sorted(d.isoformat() for d in days if (uid, d) not in answered)
+            if not days or (uid is not None and (not missing or links.get((chat, uid)) == 'member')):
+                continue
+            reason = ('ambiguous_identity' if actor['ambiguous'] else 'not_registered' if uid is None
+                      else 'not_member' if links.get((chat, uid)) == 'left' else 'membership_unverified')
+            result.append({'name': actor['name'], 'username': actor['username'],
+                           'show_names': sorted(actor['shows'].intersection(destinations[chat])),
+                           'chat_id': chat, 'can_ping': False, 'reason': reason,
+                           'missing_dates': missing if uid is not None else None,
+                           'answered_count': len(days) - len(missing) if uid is not None else None,
+                           'total_dates': len(days)})
     return result
