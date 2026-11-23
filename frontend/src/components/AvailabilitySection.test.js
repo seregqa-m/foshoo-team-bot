@@ -61,7 +61,7 @@ test('separates known identity, missing membership and missing dates without ask
   expect(container.textContent).toContain('Бот знает участника');
   expect(container.textContent).toContain('Ответы есть на 2 из 3 дат');
   expect(container.textContent).toContain('Нет ответа на: 24.12.2026');
-  expect(container.textContent).toContain('учитываются ответы из всех групп и из приложения');
+  expect(container.textContent).not.toContain('Занятость общая на каждую дату');
   expect(container.textContent).not.toContain('Попросите его ответить');
   expect(container.textContent).not.toContain('их ответы пока нельзя надёжно сопоставить');
   expect(button('Пингануть')).toBeUndefined();
@@ -82,13 +82,17 @@ test('shows confirmed absence separately from an ambiguous account', async () =>
   expect(container.textContent).toContain('Наличие ответов пока нельзя проверить');
 });
 
-test('lists missing dates for ping recipients and refreshes after pinging', async () => {
+test('shows only missing date counts for ping recipients and refreshes after pinging', async () => {
   client.get.mockImplementation(url => Promise.resolve({ data: url.endsWith('/campaigns')
     ? { campaigns: [{ id: 2, month: '2026-12', polls: [] }] }
     : { participants: [{ user_id: 42, name: 'Дарья', missing_dates: ['2026-12-24'] }] } }));
   await act(async () => root.render(<AvailabilitySection showNames={['Урод']} />));
   await act(async () => button('Посмотреть неответивших').click());
-  expect(container.textContent).toContain('Дарья — нет ответа на: 24.12.2026');
+  expect(container.textContent).toContain('Не ответили: 1');
+  expect(container.textContent).toContain('Дарья1 дата');
+  expect(container.textContent).not.toContain('24.12.2026');
+  expect(container.textContent).not.toContain('нет ответа на:');
+  expect(container.querySelectorAll('details')).toHaveLength(1); // Only the existing poll links.
   await act(async () => button('Пингануть').click());
   expect(client.post).toHaveBeenCalledWith('/api/availability/ping-non-voters', null, { params: { campaign_id: 2 } });
   expect(client.get.mock.calls.filter(([url]) => url.endsWith('/non-voters'))).toHaveLength(2);

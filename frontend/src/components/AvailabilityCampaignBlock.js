@@ -2,6 +2,12 @@ import React, { useState } from 'react';
 import client from '../api/client';
 
 const formatDates = dates => dates.map(day => day.split('-').reverse().join('.')).join(', ');
+const dateCount = count => {
+  const lastTwo = count % 100;
+  const word = lastTwo >= 11 && lastTwo <= 14 ? 'дат'
+    : count % 10 === 1 ? 'дата' : count % 10 >= 2 && count % 10 <= 4 ? 'даты' : 'дат';
+  return `${count} ${word}`;
+};
 const rosterExplanation = reason => ({
   ambiguous_identity: 'Не удалось однозначно определить Telegram-аккаунт. Проверьте Telegram ID и username в таблице «Труппа».',
   not_registered: 'Бот ещё не связал участника с Telegram-аккаунтом. Попросите его ответить в опросе бота в любой подключённой группе; если он уже голосовал — проверьте Telegram ID и username в таблице «Труппа».',
@@ -96,14 +102,15 @@ export default function AvailabilityCampaignBlock({ campaign }) {
           </div>
           {nonVoters !== null && (
             <div style={{ marginTop: 10 }}>
-              <p style={{ fontSize: 13 }}>Занятость общая на каждую дату: учитываются ответы из всех групп и из приложения. Повторно отвечать на ту же дату не нужно.</p>
               {rosterWarning && <div className="alert alert-error" role="alert">{rosterWarning}</div>}
               {nonVoters.length === 0
                 ? <span style={{ fontSize: 13, color: '#22c55e' }}>Среди зарегистрированных участников нет ожидающих ответа</span>
                 : <>
+                    <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Не ответили: {nonVoters.length}</div>
                     <div style={{ fontSize: 13, marginBottom: 8 }}>
-                      {nonVoters.map(u => <div key={u.user_id}>{u.username ? `@${u.username}` : u.name}
-                        {u.missing_dates?.length > 0 && <> — нет ответа на: {formatDates(u.missing_dates)}</>}
+                      {nonVoters.map(u => <div key={u.user_id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 12, padding: '5px 0' }}>
+                        <span style={{ overflowWrap: 'anywhere' }}>{u.username ? `@${u.username}` : u.name}</span>
+                        {u.missing_dates?.length > 0 && <span style={{ color: '#666', whiteSpace: 'nowrap' }}>{dateCount(u.missing_dates.length)}</span>}
                       </div>)}
                     </div>
                     <button className="btn btn-primary" style={{ fontSize: 13 }} onClick={handlePing} disabled={pinging || loadingNonVoters}>
