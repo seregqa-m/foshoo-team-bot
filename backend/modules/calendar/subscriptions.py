@@ -157,6 +157,9 @@ def build_feed(db, row):
     aliases = show_aliases(db)
     now = local_now()
     events = db.query(CalendarEvent).filter(
+        # This URL is a complete schedule snapshot, not cancellation messages.
+        # Publishing old tombstones can make clients display deleted repeats.
+        CalendarEvent.is_cancelled == False,
         CalendarEvent.end_time >= now - timedelta(days=30),
         CalendarEvent.start_time <= now + timedelta(days=90),
     ).order_by(CalendarEvent.start_time, CalendarEvent.id).all()

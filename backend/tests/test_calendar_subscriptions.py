@@ -131,8 +131,8 @@ class CalendarSubscriptionsTests(unittest.IsolatedAsyncioTestCase):
         self.event('Урод и Калий [Реп]')
         self.event('Калий [Реп]', is_cancelled=True)
         body = sub.build_feed(self.db, row)
-        self.assertEqual(body.count('BEGIN:VEVENT'), 3)
-        self.assertIn('STATUS:CANCELLED', body)
+        self.assertEqual(body.count('BEGIN:VEVENT'), 2)
+        self.assertNotIn('STATUS:CANCELLED', body)
         self.assertNotIn('PRIVATE ROLE DATA', body)
         self.assertNotIn('Урод', body)
         event.start_time += timedelta(days=1)
@@ -141,7 +141,31 @@ class CalendarSubscriptionsTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn(f'UID:calendar-event-{event.id}@foshoo', sub.build_feed(self.db, row))
         self.source['casts'] = self.source['casts'][:1]  # Feed never depends on live Sheets/participant access.
         with patch.object(sub, 'read_roster', side_effect=AssertionError('feed must not read Sheets')):
-            self.assertEqual(sub.build_feed(self.db, row).count('BEGIN:VEVENT'), 3)
+            self.assertEqual(sub.build_feed(self.db, row).count('BEGIN:VEVENT'), 2)
+
+    def test_deleted_repeat_disappears_from_existing_url_and_restoration_keeps_uid(self):
+        from modules.calendar.services import CalendarService
+        self.rebuild()
+        row = self.db.query(CalendarSubscription).filter_by(show_ids=[2]).one()
+        event = self.event('Цианистый Калий [Реп]', google_event_id='series_tuesday')
+        uid = f'UID:calendar-event-{event.id}@foshoo'
+        token = row.token
+        self.assertIn(uid, sub.build_feed(self.db, row))
+        now = local_now()
+        # A shortened recurring series no longer returns its future instances.
+        client = SimpleNamespace(sync_window=(now, now + timedelta(days=90)))
+        CalendarService(self.db, client).sync_from_google([])
+        self.assertTrue(event.is_cancelled)
+        self.assertNotIn(uid, sub.build_feed(self.db, row))
+        self.assertEqual(row.token, token)
+        CalendarService(self.db, client).sync_from_google([{
+            'id': event.google_event_id, 'summary': event.title,
+            'start': {'dateTime': event.start_time.isoformat()},
+            'end': {'dateTime': event.end_time.isoformat()},
+        }])
+        self.assertFalse(event.is_cancelled)
+        self.assertIn(uid, sub.build_feed(self.db, row))
+        self.assertEqual(row.token, token)
 
     def test_rfc_folding_escaping_all_day_and_utc(self):
         event = self.event('Я' * 100 + ',;\\\nEND:VEVENT', is_all_day=True, location='A, B; C')
