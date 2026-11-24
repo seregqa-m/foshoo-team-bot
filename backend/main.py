@@ -14,6 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from core.database import init_db, SessionLocal, engine
 from config import LOG_LEVEL, API_HOST, API_PORT, GOOGLE_CALENDAR_JSON, GOOGLE_CALENDAR_ID, SYNC_INTERVAL_MINUTES, RECOVERY_MODE, POLL_AUTOMATION_ENABLED
 from modules.calendar.router import router as calendar_router
+from modules.calendar.subscriptions import public_router as calendar_feed_router
 from modules.calendar.services import CalendarService
 from modules.calendar.google_client import GoogleCalendarClient
 from modules.calendar.classification import classify_event, is_rehearsal
@@ -90,6 +91,9 @@ def run_migrations():
             "ALTER TABLE availability_votes ADD COLUMN option_ids TEXT",
             "ALTER TABLE calendar_events ADD COLUMN poll_show_id INTEGER",
             "ALTER TABLE calendar_events ADD COLUMN poll_show_title TEXT",
+            "ALTER TABLE calendar_events ADD COLUMN is_all_day BOOLEAN DEFAULT 0",
+            "ALTER TABLE calendar_events ADD COLUMN google_html_link TEXT",
+            "ALTER TABLE calendar_events ADD COLUMN recurring_event_id TEXT",
             "ALTER TABLE attendance_voters ADD COLUMN legacy_access BOOLEAN",
             "ALTER TABLE moderation_comments ADD COLUMN sender_chat_id BIGINT",
         ]:
@@ -209,7 +213,16 @@ async def _sync_loop(job, initial_delay):
 
 
 async def sync_calendar_background():
-    await _sync_loop(sync_calendar_once, 10)
+    from modules.calendar.watcher import check_calendar_names
+    await asyncio.sleep(10)
+    while True:
+        try:
+            await asyncio.to_thread(sync_calendar_once)
+            with SessionLocal() as db:
+                await check_calendar_names(db, bot)
+        except Exception:
+            logger.exception('Calendar sync / name watcher failed')
+        await asyncio.sleep(max(1, SYNC_INTERVAL_MINUTES) * 60)
 
 
 async def sync_finance_background():
@@ -431,6 +444,9 @@ app.include_router(theater_router, dependencies=[Depends(authorize_api)])
 app.include_router(sheets_router, dependencies=[Depends(authorize_api)])
 app.include_router(finance_router, dependencies=[Depends(authorize_api)])
 app.include_router(calendar_router, dependencies=[Depends(authorize_api)])
+# Calendar clients cannot supply Telegram initData. Only an unguessable,
+# revocable subscription token grants read access to this one endpoint.
+app.include_router(calendar_feed_router)
 app.include_router(polling_router, dependencies=[Depends(authorize_api)])
 app.include_router(notifications_router, dependencies=[Depends(authorize_api)])
 app.include_router(availability_router, dependencies=[Depends(authorize_api)])

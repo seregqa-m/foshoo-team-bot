@@ -147,7 +147,7 @@ def assign_show(req: AssignRequest, db: Session = Depends(get_db)):
             db.add(op)
             db.commit()
         event_data = {
-            'summary': req.show_name, 'location': req.location.strip(),
+            'summary': f'{req.show_name} [Спект]', 'location': req.location.strip(),
             'description': 'Состав:\n' + '\n'.join(f'{role}: {actor}' for role, actor in req.cast.items()),
             'start': {'dateTime': start.isoformat(), 'timeZone': TIMEZONE},
             'end': {'dateTime': end.isoformat(), 'timeZone': TIMEZONE},

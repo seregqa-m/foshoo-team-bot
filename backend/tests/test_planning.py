@@ -119,6 +119,7 @@ class PlanningSaveTests(unittest.TestCase):
     def test_assign_and_replay_does_not_repeat_calendar_or_sheet_write(self):
         assign_show(self.req, self.db); assign_show(self.req, self.db)
         self.google.ensure_planned_event.assert_called_once()
+        self.assertEqual(self.google.ensure_planned_event.call_args.args[2]['summary'], 'Урод [Спект]')
         self.client.api.values.return_value.batchUpdate.assert_called_once()
         self.assertEqual(self.db.query(CalendarEvent).count(), 1)
         self.assertEqual(self.db.query(PlanningAssignment).one().status, 'complete')

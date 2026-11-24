@@ -4,6 +4,7 @@
 import logging
 from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 from .models import CalendarEvent
 from .google_client import GoogleCalendarClient
 from config import TIMEZONE
@@ -82,19 +83,32 @@ class CalendarService:
             ).first()
 
             if existing:
+                tracked = ('title', 'description', 'location', 'start_time', 'end_time', 'is_cancelled', 'is_all_day')
+                before = tuple(getattr(existing, key) for key in tracked)
+                previous_updated_at = existing.updated_at
                 existing.is_cancelled = False  # восстановить если было отменено
                 existing.title = event_data.get("summary", "")
                 existing.description = event_data.get("description", "")
                 existing.location = event_data.get("location", "")
+                existing.is_all_day = 'date' in event_data.get('start', {})
+                existing.google_html_link = event_data.get('htmlLink')
+                existing.recurring_event_id = event_data.get('recurringEventId')
                 existing.start_time = start_time
                 existing.end_time = end_time
                 existing.last_synced = datetime.utcnow()
+                # A heartbeat is not an event revision in an external calendar.
+                after = tuple(getattr(existing, key) for key in tracked)
+                existing.updated_at = previous_updated_at if before == after else datetime.utcnow()
+                flag_modified(existing, 'updated_at')
             else:
                 self.db.add(CalendarEvent(
                     google_event_id=google_event_id,
                     title=event_data.get("summary", ""),
                     description=event_data.get("description", ""),
                     location=event_data.get("location", ""),
+                    is_all_day='date' in event_data.get('start', {}),
+                    google_html_link=event_data.get('htmlLink'),
+                    recurring_event_id=event_data.get('recurringEventId'),
                     start_time=start_time,
                     end_time=end_time,
                     last_synced=datetime.utcnow()
@@ -149,6 +163,7 @@ class CalendarService:
 
         db_event = CalendarEvent(
             google_event_id=google_event["id"],
+            google_html_link=google_event.get('htmlLink'),
             title=title,
             description=description,
             location=location,

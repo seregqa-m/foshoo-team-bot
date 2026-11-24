@@ -42,6 +42,8 @@ class Tool:
     handler: ToolHandler
     safety_level: str = "confirm"  # "read" | "confirm"
     preview_builder: Optional[Callable[[dict], dict]] = None  # обязателен для confirm
+    # Optional read-only preparation of concrete arguments before confirmation.
+    prepare: Optional[Callable[[Session, dict, dict], dict]] = None
 
 
 # ----------------------- FINANCE ----------------------- #
@@ -857,12 +859,47 @@ UPLOAD_AFISHA = Tool(
 )
 
 
+def _prepare_calendar_links(db, args, ctx):
+    from modules.calendar.subscriptions import prepare_links
+    return prepare_links(db, args.get('show_names'))
+
+
+def _rebuild_calendar_links(db, args, ctx):
+    from modules.calendar.subscriptions import rebuild_links
+    if not args.get('fingerprint'):
+        raise HTTPException(409, 'Запросите пересборку ссылок заново, чтобы проверить текущие составы.')
+    return rebuild_links(db, args['fingerprint'], show_names=args.get('show_names'))
+
+
+REBUILD_CALENDAR_LINKS = Tool(
+    name='rebuild_calendar_links',
+    description='Создать общую подписку на заданный пользователем набор спектаклей или пересобрать все реальные комбинации из составов Google Sheets.',
+    schema={'type': 'function', 'function': {
+        'name': 'rebuild_calendar_links',
+        'description': 'Сформировать общую ссылку на заданные спектакли. Без show_names — пересобрать ссылки на все реальные комбинации составов из таблицы. Требует подтверждения администратора; участникам вход не нужен.',
+        'parameters': {'type': 'object', 'properties': {
+            'show_names': {'type': 'array', 'items': {'type': 'string'}, 'minItems': 1, 'maxItems': 100,
+                           'description': 'Только названия спектаклей, явно выбранных пользователем. Для всех реальных комбинаций из таблицы опусти параметр.'},
+        }, 'required': [], 'additionalProperties': False},
+    }},
+    handler=_rebuild_calendar_links,
+    prepare=_prepare_calendar_links,
+    safety_level='confirm',
+    preview_builder=lambda args: {
+        'title': 'Создать общую календарную ссылку' if args.get('show_names') else 'Пересобрать общие календарные ссылки',
+        'lines': [' + '.join(group['shows']) for group in args['groups']],
+        'warnings': ['Любой обладатель ссылки увидит расписание выбранных спектаклей без входа.',
+                     'Ссылки для прежних наборов сохранятся. Новые наборы получат новые ссылки. В чаты ничего не отправится.'],
+    },
+)
+
+
 TOOLS: dict[str, Tool] = {
     t.name: t for t in [
         # write, требуют confirm
         ADD_EXPENSE, ADD_INCOME, CREATE_EVENT, UPDATE_EVENT,
         CREATE_ATTENDANCE_POLL, STOP_POLL, CREATE_AVAILABILITY_CAMPAIGN,
-        PING_NON_VOTERS, UPDATE_SETTINGS, UPLOAD_AFISHA,
+        PING_NON_VOTERS, UPDATE_SETTINGS, UPLOAD_AFISHA, REBUILD_CALENDAR_LINKS,
         # read, исполняются сразу
         SEARCH_EXPENSES, SEARCH_INCOME, GET_EVENTS_IN_RANGE, GET_SHOW_CAST,
     ]

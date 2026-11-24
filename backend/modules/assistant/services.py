@@ -72,6 +72,7 @@ SYSTEM_PROMPT_TEMPLATE = """Ты — Помощник FoShoo, ассистент
 - Если пользователь говорит про кого-то другого — подставь имя из CONTEXT.actors по совпадению.
 
 Как выбирать tool
+- Для «собери/пересобери ссылки на календарь», «подписки по пересечениям спектаклей» — rebuild_calendar_links без show_names: сервер прочитает реальные комбинации из составов. Если пользователь явно назвал набор («ссылка на Урод и Калий»), передай именно эти названия в show_names: будет одна общая подписка на этот набор. Не подменяй выбор пользователя всем каталогом и не перечисляй теоретические комбинации. Не проси участников входить в приложение. После подтверждения пользователь получит готовые ссылки. Прежние ссылки сохраняются, в чаты ничего автоматически не отправляется.
 - Read-tools вызывай без подтверждения, когда пользователь спрашивает про историю или данные: «сколько потратили на костюмы в марте», «расписание за август», «кто в составе Слепых». Не гадай — сходи и посмотри.
 - Для «сколько я потратил за месяц/год/вообще» → search_expenses с who=CONTEXT.current_user.actor_name и нужным days_back. CONTEXT.expense_stats_30d — глобальный агрегат по всем, не используй его для личных вопросов.
 - Для «сколько мы все потратили» → search_expenses без who, с нужным days_back.
@@ -245,11 +246,17 @@ class AssistantService:
                         input_tokens=total_in or None,
                         output_tokens=total_out or None,
                     )
-                preview = tool.preview_builder(call.arguments)
+                arguments = call.arguments
+                if getattr(tool, 'prepare', None):
+                    try:
+                        arguments = await asyncio.to_thread(tool.prepare, self.db, arguments, tool_ctx)
+                    except HTTPException as exc:
+                        return ChatResult(reply=str(exc.detail))
+                preview = tool.preview_builder(arguments)
                 token = _make_action_token(
                     user_id=user_id,
                     tool_name=call.name,
-                    args={**call.arguments, "_username": username},
+                    args={**arguments, "_username": username},
                 )
                 preface = response.text.strip() or f"Хочу {preview['title'].lower()}. Подтверди — тогда сделаю."
                 return ChatResult(

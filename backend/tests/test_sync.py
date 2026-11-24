@@ -151,7 +151,10 @@ class AppLifecycleTests(unittest.IsolatedAsyncioTestCase):
             method = next(iter(route.methods))
             with self.subTest(path=path, method=method):
                 response = client.request(method, path)
-                self.assertEqual(response.status_code, 401)
+                # External calendar clients use an unguessable revocable token.
+                # No other API route may bypass signed Telegram identity.
+                expected = 404 if route.path == '/api/calendar/feeds/{token}.ics' else 401
+                self.assertEqual(response.status_code, expected)
 
     async def test_partial_campaign_keeps_sent_poll_mapping(self):
         from modules.availability.router import create_campaign, CreateCampaignRequest

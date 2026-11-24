@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import CalendarLinksResult from './CalendarLinksResult';
 import { assistantApi, uploadAfisha } from '../api/client';
 
 const AFISHA_SITE_URL = 'https://foshoo-theatre.ru/afisha';
@@ -237,7 +238,8 @@ export default function AssistantView({ userId, username, renderSettings, active
       });
       const okText = res.success ? 'Готово ✅' : `Не получилось: ${res.message || ''}`;
       setMessages(m => m.map((x, i) => (i === idx ? { ...x, actionState: res.success ? 'done' : 'failed' } : x)));
-      setMessages(m => [...m, { role: 'assistant', content: okText }]);
+      setMessages(m => [...m, { role: 'assistant', content: okText,
+        calendarLinks: res.success ? res.result?.calendar_links : null }]);
 
       if (res.success) {
         // Автоматически продолжаем диалог — LLM предложит следующую операцию если она была.
@@ -355,6 +357,7 @@ export default function AssistantView({ userId, username, renderSettings, active
                     {m.content}
                   </div>
                 )}
+                {m.calendarLinks && <CalendarLinksResult links={m.calendarLinks} />}
                 {m.pendingAction && (
                   <ActionPreviewCard
                     preview={m.pendingAction.preview}
