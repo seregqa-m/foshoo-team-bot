@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, patch
 with patch.dict(os.environ, {'BOT_TOKEN': '123456:offline-test-token', 'DATABASE_URL': 'sqlite://'}, clear=True), patch('dotenv.load_dotenv'):
     from core.database import Base
     from core.time import local_now
-    from modules.calendar.models import CalendarEvent, CalendarWatchDelivery
+    from modules.calendar.models import CalendarEvent, CalendarWatchDelivery, CalendarWatchState
     from modules.calendar.watcher import naming_problem, check_calendar_names
     from modules.calendar.services import CalendarService
     from modules.admin.models import SuperAdmin
@@ -41,13 +41,13 @@ class CalendarWatcherTests(unittest.IsolatedAsyncioTestCase):
     def test_rules_follow_existing_names_and_leave_ordinary_events_alone(self):
         aliases = show_aliases(self.db)
         for title in ('Урод [Реп]', 'Репетиция [Урод]', 'Калий (Спект)', 'Внешний [Спект]',
-                      'Аренда', 'Уборка', 'Мастерская Петра', 'Урод [реп.]'):
+                      'Аренда', 'Уборка', 'Мастерская Петра', 'Урод [реп.]', 'УРОД', 'Калий'):
             with self.subTest(title=title): self.assertIsNone(naming_problem(title, aliases))
-        for title in ('', 'Урод', 'Неизвестный [Реп]', 'Урод и Калий [Реп]', 'Урод [Реп] [Спект]'):
+        for title in ('', 'Неизвестный [Реп]', 'Урод и Калий [Реп]', 'Урод [Реп] [Спект]'):
             with self.subTest(title=title): self.assertIsNotNone(naming_problem(title, aliases))
 
     async def test_baseline_new_and_renamed_events_dedupe_survives_sessions(self):
-        old_id = self.event('Урод').id
+        old_id = self.event('Старая неизвестная [Реп]').id
         self.assertEqual(await check_calendar_names(self.db, self.bot), 0)
         self.event('Неизвестный [Реп]', google_html_link='https://calendar.google.com/calendar/event?eid=abc')
         self.assertEqual(await check_calendar_names(self.db, self.bot), 2)
@@ -57,7 +57,7 @@ class CalendarWatcherTests(unittest.IsolatedAsyncioTestCase):
         self.db = Session(self.engine)
         self.addCleanup(self.db.close)
         self.assertEqual(await check_calendar_names(self.db, self.bot), 0)
-        self.db.get(CalendarEvent, old_id).title = 'Калий'
+        self.db.get(CalendarEvent, old_id).title = 'Другая неизвестная [Реп]'
         self.db.commit()
         self.assertEqual(await check_calendar_names(self.db, self.bot), 2)
 
@@ -72,7 +72,7 @@ class CalendarWatcherTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_failed_recipient_does_not_block_others_or_repeat_success(self):
         await check_calendar_names(self.db, self.bot)
-        self.event('Урод')
+        self.event('Неизвестная [Реп]')
         async def send(uid, *args, **kwargs):
             if uid == 1: raise RuntimeError('bot blocked')
         self.bot.send_message.side_effect = send
@@ -87,10 +87,10 @@ class CalendarWatcherTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_correction_cancellation_and_revocation_stop_pending_delivery(self):
         await check_calendar_names(self.db, self.bot)
-        event = self.event('Урод')
+        event = self.event('Неизвестная [Реп]')
         self.bot.send_message.side_effect = RuntimeError('offline')
         await check_calendar_names(self.db, self.bot)
-        event.title = 'Урод [Спект]'
+        event.title = 'УРОД'
         self.db.commit()
         self.bot.send_message.side_effect = None
         self.assertEqual(await check_calendar_names(self.db, self.bot), 0)
@@ -100,6 +100,18 @@ class CalendarWatcherTests(unittest.IsolatedAsyncioTestCase):
         self.event('Новое [Реп]')
         self.assertEqual(await check_calendar_names(self.db, self.bot), 1)
         self.assertEqual(self.bot.send_message.call_args.args[0], 1)
+
+    async def test_new_unmarked_performance_and_legacy_false_alarm_never_notify(self):
+        await check_calendar_names(self.db, self.bot)
+        event = self.event('УРОД')
+        self.assertEqual(await check_calendar_names(self.db, self.bot), 0)
+        # Pending false alarms from the stricter previous version must clear too.
+        state = self.db.get(CalendarWatchState, event.id)
+        state.issue_key = 'legacy-missing-type-warning'
+        self.db.commit()
+        self.assertEqual(await check_calendar_names(self.db, self.bot), 0)
+        self.assertIsNone(state.issue_key)
+        self.bot.send_message.assert_not_awaited()
 
     def test_google_sync_preserves_all_day_link_series_and_stable_revision(self):
         source = [{'id': 'day', 'summary': 'Урод [Реп]', 'start': {'date': '2027-01-01'},

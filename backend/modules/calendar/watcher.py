@@ -30,9 +30,8 @@ def naming_problem(title, aliases):
         return 'В названии одновременно указаны репетиция и спектакль. Оставьте один тип: «Название [Реп]» или «Название [Спект]».'
     show = match_show(title, aliases)
     kind = classify_event(title, aliases)['event_type']
-    if not explicit and kind:
-        name = show.name if show else 'Название'
-        return f'Не указан явный тип. Для показа: «{name} [Спект]», для репетиции: «{name} [Реп]». Допустимы также слова «Спектакль» и «Репетиция».'
+    # A known show without a type marker is a valid performance, just as in
+    # the calendar classifier. Only rehearsals require a rehearsal marker.
     if kind == 'rehearsal' and not show:
         return 'Не удалось однозначно определить спектакль. Укажите ровно одно название из «Спектакли и чаты»: «Название [Реп]». Проверьте опечатки или добавьте название/псевдоним в каталог.'
     return None
