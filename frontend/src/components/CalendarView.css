@@ -32,6 +32,10 @@
   margin: 0;
 }
 
+.calendar-naming-guide p + p {
+  margin-top: 8px;
+}
+
 .calendar-filters {
   display: flex;
   flex-wrap: wrap;

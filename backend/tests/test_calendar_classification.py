@@ -4,6 +4,19 @@ from modules.calendar.classification import classify_event, is_rehearsal
 
 
 class CalendarClassificationTests(unittest.TestCase):
+    def test_names_and_all_type_markers_ignore_case(self):
+        for transform in (str.lower, str.upper, str.swapcase):
+            for marker, expected in [('Реп', 'rehearsal'), ('Репетиция', 'rehearsal'),
+                                     ('Спект', 'performance'), ('Спектакль', 'performance')]:
+                for template in ('Урод [{marker}]', '{marker} [Урод]'):
+                    title = transform(template.format(marker=marker))
+                    with self.subTest(title=title):
+                        self.assertEqual(classify_event(title, ['Урод']),
+                                         {'event_type': expected, 'show_name': 'Урод'})
+                if expected == 'performance':
+                    self.assertEqual(classify_event(transform(f'Внешний [{marker}]'))['event_type'], expected)
+            self.assertEqual(classify_event(transform('Урод'), ['Урод'])['event_type'], 'performance')
+
     def test_type_and_show_are_resolved_independently(self):
         for title, event_type, show_name in [
             ('ЛГ[Спект]', 'performance', 'Любовь Громова'),

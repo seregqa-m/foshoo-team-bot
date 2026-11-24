@@ -40,9 +40,11 @@ class CalendarWatcherTests(unittest.IsolatedAsyncioTestCase):
 
     def test_rules_follow_existing_names_and_leave_ordinary_events_alone(self):
         aliases = show_aliases(self.db)
-        for title in ('Урод [Реп]', 'Репетиция [Урод]', 'Калий (Спект)', 'Внешний [Спект]',
+        for title in ('Урод [Реп]', 'Репетиция [Урод]', 'Калий (Спект)', 'Внешний [Спект]', 'Внешний [Спектакль]',
                       'Аренда', 'Уборка', 'Мастерская Петра', 'Урод [реп.]', 'УРОД', 'Калий'):
-            with self.subTest(title=title): self.assertIsNone(naming_problem(title, aliases))
+            for transform in (str.lower, str.upper, str.swapcase):
+                with self.subTest(title=transform(title)):
+                    self.assertIsNone(naming_problem(transform(title), aliases))
         for title in ('', 'Неизвестный [Реп]', 'Урод и Калий [Реп]', 'Урод [Реп] [Спект]'):
             with self.subTest(title=title): self.assertIsNotNone(naming_problem(title, aliases))
 
