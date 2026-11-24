@@ -1,3 +1,37 @@
+.calendar-naming-guide {
+  margin-bottom: 16px;
+  padding: 12px;
+  border: 1px solid #ddd;
+  border-radius: 10px;
+  background: #fff;
+  color: #444;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.calendar-naming-guide summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.calendar-naming-guide summary:focus-visible {
+  outline: 2px solid #5a0000;
+  outline-offset: 3px;
+}
+
+.calendar-naming-guide ul {
+  padding-left: 20px;
+  margin: 12px 0;
+}
+
+.calendar-naming-guide li + li {
+  margin-top: 8px;
+}
+
+.calendar-naming-guide p {
+  margin: 0;
+}
+
 .calendar-filters {
   display: flex;
   flex-wrap: wrap;
