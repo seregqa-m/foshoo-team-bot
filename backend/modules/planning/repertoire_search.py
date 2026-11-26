@@ -61,7 +61,7 @@ _lock = RLock()
 
 
 def search_page(problem, page=0, selected=None):
-    key = digest([problem.snapshot['fingerprint'], problem.rules.model_dump(mode='json'), problem.today])
+    key = search_key(problem)
     with _lock:
         job = _jobs.get(key)
         if job is None:
@@ -71,3 +71,16 @@ def search_page(problem, page=0, selected=None):
             _jobs.popitem(last=False)[1].close()
         job.advance()
         return {'search_id': key, **job.page(page, selected=selected)}
+
+
+def search_key(problem):
+    return digest([problem.snapshot['fingerprint'], problem.rules.model_dump(mode='json'), problem.today])
+
+
+def cached_variant(search_id, variant_id):
+    with _lock:
+        job = _jobs.get(search_id)
+        if job is None:
+            return None
+        row = job.db.execute('SELECT payload FROM variants WHERE id=?', (variant_id,)).fetchone()
+        return json.loads(row[0]) if row else None

@@ -150,3 +150,7 @@ def prepare_assignment(req: PrepareAssignment, db: Session = Depends(get_db)):
         name = next(s['name'] for s in data['shows'] if s['key'] == req.key)
         return {'plan': plan, 'column': slot['column'], 'show': name,
                 'repertoire': {'key': req.key, 'fingerprint': refreshed['fingerprint'], 'revision': revision}}
+
+
+from .repertoire_sharing import router as sharing_router
+router.include_router(sharing_router)

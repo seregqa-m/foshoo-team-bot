@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import Column, String, Text, DateTime, Integer
+from sqlalchemy import Column, String, Text, DateTime, Integer, BigInteger
 from core.database import Base
 
 
@@ -20,3 +20,19 @@ class RepertoireSettings(Base):
     month = Column(String, primary_key=True)
     revision = Column(Integer, nullable=False, default=0)
     payload = Column(Text, nullable=False)
+
+
+class RepertoireShare(Base):
+    """Reviewed chat message and durable delivery claim; never blindly resend."""
+    __tablename__ = 'planning_repertoire_shares'
+    id = Column(String, primary_key=True)
+    actor_id = Column(BigInteger, nullable=False)
+    chat_id = Column(BigInteger, nullable=False)
+    month = Column(String, nullable=False)
+    payload = Column(Text, nullable=False)
+    status = Column(String, nullable=False, default='preview')
+    message_id = Column(BigInteger, nullable=True)
+    error = Column(Text, nullable=True)
+    retry_after = Column(DateTime, nullable=True)
+    expires_at = Column(DateTime, nullable=False)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)

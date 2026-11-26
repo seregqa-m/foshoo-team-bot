@@ -25,6 +25,29 @@ const open = async () => {
   await act(async () => container.querySelector('.planning-cell').click());
 };
 
+test('default-month sharing preview survives the refresh triggered by a successful POST', async () => {
+  const repertoire = { month: plan.month, search_id: 'search', fingerprint: 'fresh', revision: 0, defaults_revision: 0,
+    maximum: 1, target: 1, total_variants: 1, complete: true, page: 0, page_size: 20, diagnostics: [], warnings: [], pin_errors: [],
+    shows: [{ key: '1', name: 'Урод' }], rules: { shows: [{ key: '1', count: 1 }], pins: [] },
+    timezone: 'Europe/Moscow', checked_at: '2028-09-01T00:00:00Z', variants: [{ id: 'one', count: 1, missing: [],
+      load_warnings: [], spread_warnings: [], spread_score: 0,
+      entries: [{ key: '1', name: 'Урод', date: '2028-10-01', cast: { Летте: 'Анна' }, fixed: false }] }] };
+  const baseGet = client.get.getMockImplementation();
+  client.get.mockImplementation((url, ...args) => url === '/api/planning/repertoire'
+    ? Promise.resolve({ data: repertoire }) : url.endsWith('/repertoire/chats')
+      ? Promise.resolve({ data: { chats: [{ id: -100123, title: 'Театр' }] } }) : baseGet(url, ...args));
+  await act(async () => root.render(<PlanningView isAdmin dataVersion={0} />));
+  await act(async () => button('Отправить в чат').click());
+  act(() => Simulate.change(container.querySelector('[aria-label="Чат для согласования"]'), { target: { value: '-100123' } }));
+  client.post.mockResolvedValue({ data: { id: 'preview', status: 'preview', text: 'План на согласование', chat_title: 'Театр' } });
+  await act(async () => button('Предпросмотр сообщения').click());
+  const currentGet = client.get.getMockImplementation();
+  client.get.mockImplementation((url, ...args) => url === '/api/planning' ? new Promise(() => {}) : currentGet(url, ...args));
+  await act(async () => root.render(<PlanningView isAdmin dataVersion={1} />));
+  expect(container.querySelector('pre').textContent).toBe('План на согласование');
+  expect(button('Отправить на согласование')).toBeDefined();
+});
+
 test('loads the linked month immediately and lets the user change it', async () => {
   plan.month = '2026-12';
   await act(async () => root.render(<PlanningView onClose={() => {}} initialMonth="2026-12" />));

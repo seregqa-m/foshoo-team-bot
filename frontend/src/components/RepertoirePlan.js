@@ -1,6 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import client from '../api/client';
 import './RepertoirePlan.css';
+import RepertoireCalendar from './RepertoireCalendar';
+import RepertoireShare from './RepertoireShare';
 
 const DAYS = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
 const prettyDate = day => new Intl.DateTimeFormat('ru', { day: 'numeric', month: 'short', weekday: 'short', timeZone: 'UTC' }).format(new Date(`${day}T12:00:00Z`));
@@ -78,6 +80,7 @@ export default function RepertoirePlan({ month, dataVersion, onPrepared }) {
   const [page, setPage] = useState(0);
   const [selected, setSelected] = useState(null);
   const [refresh, setRefresh] = useState(0);
+  const [share, setShare] = useState(null);
   const selectedId = useRef(null);
   const refreshNow = () => setRefresh(n => n + 1);
   useEffect(() => {
@@ -160,7 +163,7 @@ export default function RepertoirePlan({ month, dataVersion, onPrepared }) {
         {selected.spread_warnings.map((w, i) => <p className="planning-warning" key={`gap-${i}`}>{w.name}: {w.dates.map(prettyDate).join(' → ')} · {w.gap} дн. между показами, желательно {w.desired}.{w.same_part && ' Одна часть месяца.'}</p>)}
         {selected.load_warnings.map((w, i) => <p className="planning-warning" key={`load-${i}`}>{w.actor}: {w.dates.length} игровых дня подряд · {w.dates.map(prettyDate).join(' → ')}</p>)}
         {!selected.spread_score && !selected.load_warnings.length && <p className="repertoire-good">✓ Пожелания по разносу и нагрузке соблюдены для известных составов</p>}
-        <div className="repertoire-dates">{selected.entries.map(entry => {
+        <RepertoireCalendar key={`${month}:${selected.id}`} month={month} entries={selected.entries} pins={data.rules.pins} renderEntry={entry => {
           const pinned = data.rules.pins.some(p => p.day === entry.date && p.key === entry.key);
           return <div className="repertoire-date" key={`${entry.date}:${entry.key}`}><div className="repertoire-row"><div><span className="repertoire-date-label">{prettyDate(entry.date)}</span><strong>{entry.name}</strong><small>{entry.fixed ? 'Уже в расписании' : pinned ? 'Закреплено в плане' : 'Состав собран'}</small>{entry.rehearsals?.length > 0 && <small>Репетиционный слот</small>}</div>
             {!entry.fixed && <button className="btn btn-secondary" aria-label={`${pinned ? 'Открепить' : 'Закрепить'} ${entry.name}, ${entry.date}`} aria-pressed={pinned} disabled={stale} onClick={() => pin(entry)}>{pinned ? 'Закреплено' : 'Закрепить'}</button>}
@@ -169,12 +172,14 @@ export default function RepertoirePlan({ month, dataVersion, onPrepared }) {
             {entry.rehearsals?.length > 0 && <p className="repertoire-note">В календаре: {entry.rehearsals.map(r => r.title).join('; ')}. Назначение создаст отдельный показ. Репетиция автоматически не меняется — её замену нужно согласовать в календаре.</p>}
             {!entry.fixed && <><p className="repertoire-note">Откроется форма времени, места и состава. При необходимости добавится пустая дата в график; событие создаётся после подтверждения формы.</p><button className="btn btn-primary" disabled={stale} onClick={() => prepare(entry)}>Перейти к назначению</button></>}
           </details></div>;
-        })}</div>
+        }} />
+        <button type="button" className="btn btn-primary repertoire-share-button" disabled={stale || !selected.entries.length} onClick={() => setShare({ data: copy(data), variant: copy(selected) })}>Отправить в чат</button>
       </>}
       {(data.maximum === null || data.maximum < data.target) && <Diagnostics data={data} variant={selected} />}
       {data.complete && !data.total_variants && !data.pin_errors.length && <p className="planning-warning">Нет допустимого варианта с закреплёнными датами и текущими ограничениями нагрузки. Проверьте параметры.</p>}
       <p className="repertoire-note">Один показ в день. Репетиционная дата подходит для любого спектакля с полным составом. Показы и прочие события занимают дату. Свободная дата не подтверждает бронь зала.</p>
       <p className="repertoire-note">Черновик · обновлено {new Intl.DateTimeFormat('ru', { hour: '2-digit', minute: '2-digit', timeZone: data.timezone }).format(new Date(data.checked_at))}. Ответы проверяются каждые 30 секунд, пока экран открыт.</p>
     </>}
+    {share && <RepertoireShare key={`${share.data.search_id}:${share.variant.id}`} data={share.data} variant={share.variant} onClose={() => setShare(null)} />}
   </section>;
 }

@@ -106,6 +106,7 @@ export default function PlanningView({ onClose, closeLabel = '← К распи�
     return () => { active = false; };
   }, [isAdmin]);
   const [month, setMonth] = useState(initialMonth);
+  const [resolvedMonth, setResolvedMonth] = useState(initialMonth);
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -132,7 +133,7 @@ export default function PlanningView({ onClose, closeLabel = '← К распи�
     let active = true;
     setLoading(true); setError(''); setData(null); setSelected(null);
     client.get('/api/planning', month ? { params: { month } } : undefined)
-      .then(({ data: result }) => { if (active) setData(result); })
+      .then(({ data: result }) => { if (active) { setData(result); setResolvedMonth(result.month); } })
       .catch(() => { if (active) setError('Не удалось загрузить график и составы. Нажмите «Обновить».'); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
@@ -165,7 +166,7 @@ export default function PlanningView({ onClose, closeLabel = '← К распи�
         <button className="btn btn-secondary" aria-label="Следующий месяц планирования" disabled={!(month || data?.month)} onClick={() => move(1)}>›</button>
         <button className="btn btn-secondary" onClick={() => setRevision(n => n + 1)} disabled={loading}>Обновить</button>
       </div>
-      {isAdmin && (month || data?.month) && <RepertoirePlan key={month || data.month} month={month || data.month} dataVersion={`${dataVersion}:${revision}`}
+      {isAdmin && (month || resolvedMonth) && <RepertoirePlan key={month || resolvedMonth} month={month || resolvedMonth} dataVersion={`${dataVersion}:${revision}`}
         onPrepared={(result, cast) => { setData(result.plan); setSelected({ column: result.column, show: result.show, cast, repertoire: result.repertoire }); }} />}
       {success && <div className="alert alert-success" role="status">{success}</div>}
       {error && <div className="alert alert-error" role="alert">{error}</div>}

@@ -8,7 +8,7 @@ jest.mock('../api/client', () => ({ __esModule: true, default: { get: jest.fn(),
 let container, root, response;
 const button = text => [...container.querySelectorAll('button')].find(b => b.textContent === text);
 const fixture = () => ({
-  month: '2028-10', maximum: 1, target: 2, total_variants: 2, complete: true, page: 0, page_size: 20,
+  month: '2028-10', search_id: 'search', maximum: 1, target: 2, total_variants: 2, complete: true, page: 0, page_size: 20,
   revision: 2, defaults_revision: 1, fingerprint: 'fresh', checked_at: '2028-09-01T14:32:00+03:00', timezone: 'Europe/Moscow',
   shows: [{ key: 'catalog:1', name: 'Урод' }], rules: { shows: [{ key: 'catalog:1', count: 2, weekdays: [0, 1, 2, 3, 4, 5, 6], spread: true, gap: 14, start: null }], pins: [], streak: 3, load_mode: 'prefer' },
   diagnostics: [{ key: 'catalog:1', name: 'Урод', ready_dates: ['2028-10-07'], dates: [{ date: '2028-10-08', reason: 'Нужны ответы исполнителей', roles: [{ name: 'Летте', actors: [{ name: 'Анна', reason: 'Нет ответа' }] }] }] }], warnings: [], pin_errors: [],
@@ -120,4 +120,20 @@ test('labels a rehearsal slot and explains how calendar assignment works', async
   expect(container.textContent).toContain('В календаре: Урод [Реп]');
   expect(container.textContent).toContain('Репетиция автоматически не меняется');
   expect(container.textContent).not.toContain('Даты с событиями календаря заняты');
+});
+
+test('opening another variant for sharing resets the previous preview', async () => {
+  client.get.mockImplementation(url => Promise.resolve({ data: url.endsWith('/chats') ? { chats: [{ id: -100123, title: 'Театр' }] } : response }));
+  client.post.mockResolvedValue({ data: { id: 'preview-first', text: 'Первый вариант', status: 'preview', chat_title: 'Театр' } });
+  await render();
+  await act(async () => button('Отправить в чат').click());
+  act(() => Simulate.change(container.querySelector('[aria-label="Чат для согласования"]'), { target: { value: '-100123' } }));
+  await act(async () => button('Предпросмотр сообщения').click());
+  expect(container.querySelector('pre').textContent).toBe('Первый вариант');
+  act(() => Simulate.change(container.querySelector('[aria-label="Вариант расписания"]'), { target: { value: 'second' } }));
+  await act(async () => button('Отправить в чат').click());
+  expect(container.querySelector('pre')).toBeNull();
+  act(() => Simulate.change(container.querySelector('[aria-label="Чат для согласования"]'), { target: { value: '-100123' } }));
+  await act(async () => button('Предпросмотр сообщения').click());
+  expect(client.post).toHaveBeenLastCalledWith('/api/planning/repertoire/share/preview', expect.objectContaining({ variant_id: 'second' }));
 });

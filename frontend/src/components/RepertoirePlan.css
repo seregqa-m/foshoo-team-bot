@@ -35,4 +35,19 @@
 .repertoire-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 15px; }
 .repertoire-diagnostics { margin: 14px 0; border-top: 1px solid #e9e2e6; }
 .repertoire-diagnostic-date { padding-left: 8px; }
+.repertoire-calendar { margin: 16px 0; }
+.repertoire-calendar h3 { font-size: 16px; margin-bottom: 12px; text-transform: capitalize; }
+.repertoire-calendar-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; }
+.repertoire-weekday { text-align: center; color: #6c626b; font-size: 12px; padding-bottom: 5px; }
+.repertoire-calendar-day { display: flex; flex-direction: column; align-items: center; gap: 3px; position: relative; min-width: 0; min-height: 64px !important; padding: 6px 1px; border: 1px solid #e9e2e6; border-radius: 8px; background: #f7f5f6; color: #6c626b; font: inherit; cursor: pointer; }
+.repertoire-calendar-day--show { background: #e7f4eb; color: #205939; border-color: #bcddc6; }
+.repertoire-calendar-day small { font-size: 11px; overflow-wrap: anywhere; line-height: 1.2; }
+.repertoire-calendar-day:focus-visible { outline: 2px solid #651d32; outline-offset: 2px; }
+.repertoire-calendar-mark { font-size: 10px; line-height: 1; }
+.repertoire-calendar-legend { display: flex; flex-wrap: wrap; gap: 6px 12px; font-size: 11px; color: #6c626b; margin-top: 12px; }
+.repertoire-day-detail { margin-top: 10px; }
+.repertoire-share-button { width: 100%; }
+.repertoire-share { margin-top: 18px; padding-top: 16px; border-top: 1px solid #e9e2e6; }
+.repertoire-share h3 { font-size: 17px; }
+.repertoire-message { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; font-size: 13px; line-height: 1.6; background: #f4f1f3; padding: 12px; border-radius: 8px; margin: 12px 0; }
 @media (max-width: 380px) { .repertoire-plan { padding: 12px; } .repertoire-plan .repertoire-row { gap: 8px; } }
