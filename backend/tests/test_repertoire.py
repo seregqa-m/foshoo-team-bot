@@ -14,7 +14,7 @@ with patch.dict(os.environ, {'BOT_TOKEN': '123456:offline-test-token', 'DATABASE
     from modules.planning.router import router, AssignRequest
     from modules.attendance.models import DayAnswer
     from modules.calendar.models import CalendarEvent
-    from modules.theater.models import TheaterShow
+    from modules.theater.models import TheaterShow, TheaterShowAlias
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -204,6 +204,77 @@ class RepertoireSourceTests(unittest.TestCase):
         self.answer('2028-10-07', 'yes', user=2)
         data = load_snapshot(self.db, self.client, '2028-10', fresh=True)
         self.assertNotEqual(data['slots'][6]['shows'][0]['status'], 'ready')
+
+    def test_own_rehearsal_is_a_slot_for_only_its_show_and_not_a_fixed_performance(self):
+        self.db.add(TheaterShow(id=2, name='Другой', normalized_name='другой'))
+        self.source['casts'].append(['Другой', 'Роль', 'Анна'])
+        self.answer('2028-10-07', 'yes')
+        self.db.add(CalendarEvent(title='Урод [Реп]', google_event_id='rehearsal', start_time=datetime(2028, 10, 7, 19), end_time=datetime(2028, 10, 7, 21)))
+        self.db.commit()
+        data = load_snapshot(self.db, self.client, '2028-10', fresh=True)
+        self.assertFalse(data['fixed'])
+        rules = Rules(shows=[ShowRule(key='catalog:1', count=1), ShowRule(key='catalog:2', count=1)])
+        problem, results = variants(data, rules)
+        self.assertEqual(set(problem.options['2028-10-07']), {'catalog:1'})
+        self.assertEqual(results[0]['count'], 1)
+        entry = results[0]['entries'][0]
+        self.assertEqual(entry['rehearsals'][0]['title'], 'Урод [Реп]')
+        self.assertEqual(entry['key'], 'catalog:1')
+        other = next(d for d in problem.diagnostics if d['key'] == 'catalog:2')
+        self.assertIn('другого спектакля', next(d for d in other['dates'] if d['date'] == '2028-10-07')['reason'])
+
+    def test_matching_rehearsal_never_waives_other_events_or_missing_answers(self):
+        self.db.add(TheaterShow(id=2, name='Другой', normalized_name='другой'))
+        self.db.commit()
+        for extra in ('Аренда', 'Другой [Реп]', '[Реп]', 'Урод и Другой [Реп]', 'Урод [Спект]'):
+            with self.subTest(event=extra):
+                self.db.query(CalendarEvent).delete()
+                self.answer('2028-10-07', 'yes')
+                self.db.add_all([CalendarEvent(title=title, google_event_id=str(i), start_time=datetime(2028, 10, 7, 19), end_time=datetime(2028, 10, 7, 21)) for i, title in enumerate(['Урод [Реп]', extra])])
+                self.db.commit()
+                data = load_snapshot(self.db, self.client, '2028-10', fresh=True)
+                problem = RepertoireProblem(data, Rules(shows=[ShowRule(key='catalog:1', count=2)]), date(2028, 9, 1))
+                self.assertNotIn('catalog:1', problem.options.get('2028-10-07', {}))
+        self.db.query(CalendarEvent).delete()
+        self.db.add(CalendarEvent(title='Урод [Реп]', google_event_id='r', start_time=datetime(2028, 10, 7, 19), end_time=datetime(2028, 10, 7, 21)))
+        self.answer('2028-10-07', 'unknown')
+        data = load_snapshot(self.db, self.client, '2028-10', fresh=True)
+        problem = RepertoireProblem(data, Rules(shows=[ShowRule(key='catalog:1', count=1)]), date(2028, 9, 1))
+        self.assertNotIn('2028-10-07', problem.options)
+
+    def test_rehearsal_alias_bracketed_name_cancellation_and_exclusive_midnight(self):
+        self.db.add(TheaterShowAlias(normalized_name='старое имя', show_id=1))
+        self.answer('2028-10-07', 'yes')
+        self.answer('2028-10-08', 'yes')
+        for title in ('Репетиция [Урод]', 'СТАРОЕ ИМЯ [реп]'):
+            with self.subTest(title=title):
+                self.db.query(CalendarEvent).delete()
+                self.db.add(CalendarEvent(title=title, google_event_id='r', start_time=datetime(2028, 10, 7, 19), end_time=datetime(2028, 10, 8)))
+                self.db.commit()
+                data = load_snapshot(self.db, self.client, '2028-10', fresh=True)
+                self.assertEqual(len(data['slots'][6]['shows'][0]['rehearsals']), 1)
+                self.assertFalse(data['slots'][7]['shows'][0]['rehearsals'])
+                self.db.query(CalendarEvent).one().is_cancelled = True
+                self.db.commit()
+                data = load_snapshot(self.db, self.client, '2028-10', fresh=True)
+                self.assertFalse(data['slots'][6]['shows'][0]['rehearsals'])
+                self.assertFalse(data['slots'][6]['blocked'])
+
+    def test_rehearsal_slot_passes_final_review_and_changed_show_invalidates_it(self):
+        self.answer('2028-10-07', 'yes')
+        self.db.add(CalendarEvent(title='Урод [Реп]', google_event_id='r', start_time=datetime(2028, 10, 7, 19), end_time=datetime(2028, 10, 7, 21)))
+        self.db.commit()
+        data = load_snapshot(self.db, self.client, '2028-10', fresh=True)
+        req = AssignRequest(month='2028-10', column='B', show_name='Урод', cast={'Летте': 'Анна'},
+            expected_fingerprint='sheet', start_time='2028-10-07T19:00', end_time='2028-10-07T21:00', location='Зал',
+            repertoire={'key': 'catalog:1', 'fingerprint': data['fingerprint'], 'revision': 0})
+        with patch('modules.planning.repertoire_router.local_now', return_value=datetime(2028, 9, 1)):
+            validate_review(self.db, self.client, req, date(2028, 10, 7))
+            self.db.query(CalendarEvent).one().title = 'Репетиция другого спектакля'
+            self.db.commit()
+            with self.assertRaises(HTTPException) as ctx:
+                validate_review(self.db, self.client, req, date(2028, 10, 7))
+            self.assertEqual(ctx.exception.status_code, 409)
 
     def test_cancelled_calendar_show_does_not_count_stale_sheet_assignment(self):
         self.source['schedule'] = [['Актёр', '7 окт 2028'], ['', 'Урод'], ['Анна', 'Летте']]

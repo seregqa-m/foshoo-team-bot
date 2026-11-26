@@ -6,6 +6,7 @@ from collections import defaultdict
 from datetime import date, datetime, time, timedelta
 from threading import Lock
 from time import monotonic
+from types import SimpleNamespace
 
 from core.time import as_local
 from modules.attendance.models import DayAnswer
@@ -65,6 +66,11 @@ def load_snapshot(db, client, month, fresh=False):
     plan = build_plan(source, month)
     names = plan['shows']
     show_keys = {name: f'catalog:{aliases[norm(name)].id}' if norm(name) in aliases else 'sheet:' + norm(name) for name in names}
+    # Resolve rehearsal slots conservatively, including shows only present in
+    # Sheets. Ambiguous or unnamed rehearsals cannot waive calendar occupancy.
+    slot_aliases = dict(aliases)
+    for name in names:
+        slot_aliases.setdefault(norm(name), SimpleNamespace(id=show_keys[name], name=name))
     warnings = list(plan['warnings'])
     original = defaultdict(list)
     for slot in plan['slots']:
@@ -87,6 +93,7 @@ def load_snapshot(db, client, month, fresh=False):
     daily_plan = build_plan(daily, month)
     fixed = {}
     occupied = defaultdict(list)
+    rehearsals = defaultdict(list)
     # Existing assignments, including adjacent months, retain their actual cast.
     for selected_month in sorted({before.strftime('%Y-%m'), month, after.strftime('%Y-%m')}):
         for slot in build_plan(source, selected_month)['slots']:
@@ -146,10 +153,16 @@ def load_snapshot(db, client, month, fresh=False):
             continue
         cursor = max(start.date(), before)
         end_day = (end - timedelta(microseconds=1)).date()
+        event_type = classify_event(event.title, aliases)['event_type']
+        rehearsal_show = match_show(event.title, slot_aliases) if event_type == 'rehearsal' else None
         while cursor <= min(end_day, after):
-            occupied[cursor.isoformat()].append('В календаре: ' + (event.title or 'Событие'))
+            if rehearsal_show:
+                rehearsals[cursor.isoformat()].append({'event_id': event.id, 'title': event.title,
+                    'key': show_keys[rehearsal_show.name], 'start_time': start.isoformat(), 'end_time': end.isoformat()})
+            else:
+                occupied[cursor.isoformat()].append('В календаре: ' + (event.title or 'Событие'))
             cursor += timedelta(days=1)
-        if classify_event(event.title, aliases)['event_type'] != 'performance':
+        if event_type != 'performance':
             continue
         show = match_show(event.title, aliases)
         name = show.name if show else classify_event(event.title, names)['show_name']
@@ -181,6 +194,9 @@ def load_snapshot(db, client, month, fresh=False):
             slot['blocked'] = 'Несколько столбцов одной даты в графике: сначала объедините их'
         for cell in slot['shows']:
             cell['key'] = show_keys[cell['show']]
+            cell['blocked'] = '; '.join('В календаре репетиция другого спектакля: ' + r['title']
+                                       for r in rehearsals[day] if r['key'] != cell['key'])
+            cell['rehearsals'] = [r for r in rehearsals[day] if r['key'] == cell['key']]
         slots.append(slot)
     result = {'month': month, 'shows': [{'key': show_keys[n], 'name': n} for n in names],
               'slots': slots, 'fixed': sorted(fixed.values(), key=lambda s: (s['date'], s['key'])),

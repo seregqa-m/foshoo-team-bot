@@ -147,11 +147,14 @@ class RepertoireProblem:
                     reason = 'Раньше даты готовности спектакля'
                 elif slot.get('blocked'):
                     reason = slot['blocked']
+                elif cell.get('blocked'):
+                    reason = cell['blocked']
                 elif cell['incomplete']:
                     reason = 'Не заполнены роли или исполнители спектакля'
                 elif cell['status'] != 'ready':
                     reason = 'Нужны ответы исполнителей' if cell['status'] == 'waiting' else 'Не хватает разных доступных исполнителей для всех ролей'
-                diagnostic = {'date': slot['date'], 'reason': reason, 'roles': cell['roles']}
+                diagnostic = {'date': slot['date'], 'reason': reason, 'roles': cell['roles'],
+                              'rehearsals': cell.get('rehearsals', [])}
                 self.diagnostics[key]['dates'].append(diagnostic)
                 if reason is None:
                     candidates[key] = cell
@@ -196,7 +199,8 @@ class RepertoireProblem:
             for cast in casts(cell['roles']):
                 yield None
                 if cast is not None:
-                    yield from visit(index + 1, entries + [{'date': day, 'key': key, 'name': self.names[key], 'cast': cast, 'fixed': False}])
+                    yield from visit(index + 1, entries + [{'date': day, 'key': key, 'name': self.names[key], 'cast': cast,
+                                                          'fixed': False, 'rehearsals': cell.get('rehearsals', [])}])
                     if best is not None and best[0] == 0:
                         break
         yield from visit(0, [])

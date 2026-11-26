@@ -111,3 +111,12 @@ test('existing pin can be removed even when no valid variant remains', async () 
   await act(async () => button('Снять закрепление').click());
   expect(client.put.mock.calls[0][1].rules.pins).toEqual([]);
 });
+
+test('labels a rehearsal slot and explains how calendar assignment works', async () => {
+  response.variants[0].entries[0].rehearsals = [{ event_id: 42, title: 'Урод [Реп]' }];
+  await render();
+  expect(container.textContent).toContain('Слот репетиции этого спектакля');
+  expect(container.textContent).toContain('В календаре: Урод [Реп]');
+  expect(container.textContent).toContain('Репетиция автоматически не меняется');
+  expect(container.textContent).not.toContain('Даты с событиями календаря заняты');
+});

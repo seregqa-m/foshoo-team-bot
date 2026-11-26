@@ -162,17 +162,18 @@ export default function RepertoirePlan({ month, dataVersion, onPrepared }) {
         {!selected.spread_score && !selected.load_warnings.length && <p className="repertoire-good">✓ Пожелания по разносу и нагрузке соблюдены для известных составов</p>}
         <div className="repertoire-dates">{selected.entries.map(entry => {
           const pinned = data.rules.pins.some(p => p.day === entry.date && p.key === entry.key);
-          return <div className="repertoire-date" key={`${entry.date}:${entry.key}`}><div className="repertoire-row"><div><span className="repertoire-date-label">{prettyDate(entry.date)}</span><strong>{entry.name}</strong><small>{entry.fixed ? 'Уже в расписании' : pinned ? 'Закреплено в плане' : 'Состав собран'}</small></div>
+          return <div className="repertoire-date" key={`${entry.date}:${entry.key}`}><div className="repertoire-row"><div><span className="repertoire-date-label">{prettyDate(entry.date)}</span><strong>{entry.name}</strong><small>{entry.fixed ? 'Уже в расписании' : pinned ? 'Закреплено в плане' : 'Состав собран'}</small>{entry.rehearsals?.length > 0 && <small>Слот репетиции этого спектакля</small>}</div>
             {!entry.fixed && <button className="btn btn-secondary" aria-label={`${pinned ? 'Открепить' : 'Закрепить'} ${entry.name}, ${entry.date}`} aria-pressed={pinned} disabled={stale} onClick={() => pin(entry)}>{pinned ? 'Закреплено' : 'Закрепить'}</button>}
           </div><details><summary>Состав и назначение</summary>{Object.entries(entry.cast).map(([role, actor]) => <p key={role} className="repertoire-note">{role} — {actor}</p>)}
             {!Object.keys(entry.cast).length && <p className="repertoire-note">Состав не указан; нагрузка этого показа не проверена.</p>}
+            {entry.rehearsals?.length > 0 && <p className="repertoire-note">В календаре: {entry.rehearsals.map(r => r.title).join('; ')}. Назначение создаст отдельный показ. Репетиция автоматически не меняется — её замену нужно согласовать в календаре.</p>}
             {!entry.fixed && <><p className="repertoire-note">Откроется форма времени, места и состава. При необходимости добавится пустая дата в график; событие создаётся после подтверждения формы.</p><button className="btn btn-primary" disabled={stale} onClick={() => prepare(entry)}>Перейти к назначению</button></>}
           </details></div>;
         })}</div>
       </>}
       {(data.maximum === null || data.maximum < data.target) && <Diagnostics data={data} variant={selected} />}
       {data.complete && !data.total_variants && !data.pin_errors.length && <p className="planning-warning">Нет допустимого варианта с закреплёнными датами и текущими ограничениями нагрузки. Проверьте параметры.</p>}
-      <p className="repertoire-note">Один показ в день. Даты с событиями календаря заняты. Свободная дата не подтверждает бронь зала.</p>
+      <p className="repertoire-note">Один показ в день. Репетиция того же спектакля — доступный слот для его показа. Другие события занимают дату. Свободная дата не подтверждает бронь зала.</p>
       <p className="repertoire-note">Черновик · обновлено {new Intl.DateTimeFormat('ru', { hour: '2-digit', minute: '2-digit', timeZone: data.timezone }).format(new Date(data.checked_at))}. Ответы проверяются каждые 30 секунд, пока экран открыт.</p>
     </>}
   </section>;
