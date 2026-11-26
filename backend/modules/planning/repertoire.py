@@ -12,7 +12,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
-from .services import norm
+from .services import norm, match_roles
 from .show_times import performance_window, show_format, calendar_conflicts, conflict_reason
 
 
@@ -118,6 +118,57 @@ def maximum_count(options, capacities):
     return len(owners)
 
 
+def projected_casts(roles, relevant):
+    """One feasible cast per relevant actor set, without role permutations.
+
+    Match required actors to roles first, then augment to cover the remaining
+    roles. Augmentation preserves each required actor's participation.
+    """
+    def match(required, excluded):
+        choices = [[norm(a['name']) for a in role['actors']
+                    if a['status'] in ('yes', 'assigned') and norm(a['name']) not in excluded] for role in roles]
+        owners = {}
+        def place_actor(actor, seen):
+            for i, actors in enumerate(choices):
+                if actor not in actors or i in seen:
+                    continue
+                seen.add(i)
+                if i not in owners or place_actor(owners[i], seen):
+                    owners[i] = actor
+                    return True
+            return False
+        if any(not place_actor(a, set()) for a in required):
+            return None
+        assigned = {a: i for i, a in owners.items()}
+        def place_role(i, seen):
+            for actor in choices[i]:
+                if actor in seen:
+                    continue
+                seen.add(actor)
+                if actor not in assigned or place_role(assigned[actor], seen):
+                    assigned[actor] = i
+                    return True
+            return False
+        for i in range(len(roles)):
+            if i not in owners and not place_role(i, set()):
+                return None
+        return {roles[i]['name']: next(a['name'] for a in roles[i]['actors'] if norm(a['name']) == actor)
+                for actor, i in assigned.items()}
+
+    actors = sorted(relevant)
+    def visit(index, required, excluded):
+        yield None
+        cast = match(required, excluded)
+        if cast is None:
+            return
+        if index == len(actors):
+            yield cast
+            return
+        yield from visit(index + 1, required, excluded | {actors[index]})
+        yield from visit(index + 1, required + [actors[index]], excluded)
+    yield from visit(0, [], set())
+
+
 class RepertoireProblem:
     def __init__(self, snapshot, rules, today):
         self.snapshot, self.rules = snapshot, rules
@@ -132,6 +183,7 @@ class RepertoireProblem:
         self.remaining = {r.key: max(0, r.count - self.fixed_counts[r.key]) for r in rules.shows}
         self.diagnostics = {key: {'key': key, 'name': self.names.get(key, key), 'ready_dates': [], 'dates': []} for key in self.rule}
         self.options = {}
+        self._mandatory = {}
         for slot in snapshot['slots']:
             day = date.fromisoformat(slot['date'])
             candidates = {}
@@ -187,30 +239,63 @@ class RepertoireProblem:
 
     def _best_cast(self, selected):
         best = None
+        available_by_day = defaultdict(set)
+        for entry in self.fixed:
+            available_by_day[entry['date']].update(norm(a) for a in entry.get('cast', {}).values())
+        for day, _, cell in selected:
+            available_by_day[day].update(norm(a['name']) for r in cell['roles'] for a in r['actors'] if a['status'] in ('yes', 'assigned'))
+        critical = defaultdict(set)
+        days = sorted(available_by_day)
+        if self.rules.load_mode != 'ignore':
+            for i in range(len(days) - self.rules.streak + 1):
+                window = days[i:i + self.rules.streak]
+                if (date.fromisoformat(window[-1]) - date.fromisoformat(window[0])).days == self.rules.streak - 1:
+                    actors = set.intersection(*(available_by_day[d] for d in window))
+                    for day in window:
+                        critical[day].update(actors)
+        mandatory = []
+        for day, key, cell in selected:
+            cache_key = (day, key)
+            if cache_key not in self._mandatory:
+                required = []
+                available = {norm(a['name']): a['name'] for r in cell['roles'] for a in r['actors'] if a['status'] in ('yes', 'assigned')}
+                for actor_key, name in available.items():
+                    yield None
+                    without = [{**r, 'actors': [a for a in r['actors'] if norm(a['name']) != actor_key]} for r in cell['roles']]
+                    if len(match_roles(without)) < len(cell['roles']):
+                        required.append(name)
+                self._mandatory[cache_key] = {str(i): name for i, name in enumerate(required)}
+            mandatory.append({'date': day, 'cast': self._mandatory[cache_key]})
+        baseline = {(norm(w['actor']), tuple(w['dates'])) for w in load_warnings(self.fixed, self.rules.streak)}
+
+        def assess(entries):
+            warnings = load_warnings(self.fixed + entries, self.rules.streak)
+            added = [w for w in warnings if (norm(w['actor']), tuple(w['dates'])) not in baseline]
+            score = sum(len(w['dates']) - self.rules.streak + 1 for w in added) if self.rules.load_mode != 'ignore' else 0
+            return score, warnings
+
+        # Every complete cast contains these actors, so their load is a proven
+        # lower bound. Stop once attained, even if some load is unavoidable.
+        minimum, _ = assess(mandatory)
         def visit(index, entries):
             nonlocal best
             yield None
-            if best is not None and best[0] == 0:
+            lower, _ = assess(entries + mandatory[index:])
+            if (self.rules.load_mode == 'forbid' and lower) or (best is not None and lower >= best[0]):
                 return
             if index == len(selected):
-                warnings = load_warnings(self.fixed + entries, self.rules.streak)
-                # Existing violations are visible but cannot make every new plan impossible.
-                baseline = {(w['actor'], tuple(w['dates'])) for w in load_warnings(self.fixed, self.rules.streak)}
-                added = [w for w in warnings if (w['actor'], tuple(w['dates'])) not in baseline]
-                if self.rules.load_mode == 'forbid' and added:
-                    return
-                score = sum(len(w['dates']) - self.rules.streak + 1 for w in added) if self.rules.load_mode != 'ignore' else 0
+                score, warnings = assess(entries)
                 if best is None or score < best[0]:
                     best = (score, entries.copy(), warnings)
                 return
             day, key, cell = selected[index]
-            for cast in casts(cell['roles']):
+            for cast in projected_casts(cell['roles'], critical[day]):
                 yield None
                 if cast is not None:
                     yield from visit(index + 1, entries + [{'date': day, 'key': key, 'name': self.names[key], 'cast': cast,
                                                           'fixed': False, 'rehearsals': cell.get('rehearsals', []),
                                                           'start_time': cell['start_time'], 'end_time': cell['end_time']}])
-                    if best is not None and best[0] == 0:
+                    if best is not None and best[0] == minimum:
                         break
         yield from visit(0, [])
         if best is not None:

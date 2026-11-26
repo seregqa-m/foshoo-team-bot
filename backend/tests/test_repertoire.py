@@ -1,12 +1,14 @@
 import copy
 import os
+import random
 import unittest
+from itertools import product
 from datetime import date, datetime
 from unittest.mock import MagicMock, patch
 
 with patch.dict(os.environ, {'BOT_TOKEN': '123456:offline-test-token', 'DATABASE_URL': 'sqlite://', 'GOOGLE_CALENDAR_JSON': '/missing'}, clear=True), patch('dotenv.load_dotenv'):
     from core.database import Base
-    from modules.planning.repertoire import Rules, ShowRule, Pin, RepertoireProblem, default_rule, load_warnings
+    from modules.planning.repertoire import Rules, ShowRule, Pin, RepertoireProblem, default_rule, load_warnings, casts, projected_casts
     from modules.planning.repertoire_search import SearchJob
     from modules.planning.repertoire_source import load_snapshot, get_rules
     from modules.planning.repertoire_router import SaveRules, save_repertoire, valid_month, PrepareAssignment, prepare_assignment, validate_review
@@ -46,6 +48,60 @@ def variants(snapshot, rules):
 
 
 class RepertoireSolverTests(unittest.TestCase):
+    def test_projected_casts_preserve_every_feasible_relevant_actor_set(self):
+        rng = random.Random(30)
+        names = ['А', 'Б', 'В', 'Г', 'Д']
+        for iteration in range(80):
+            roles = [{'name': f'Роль {i}', 'actors': [actor(n) for n in rng.sample(names, rng.randint(1, 5))]} for i in range(3)]
+            relevant = {n.casefold() for n in rng.sample(names, rng.randint(0, 5))}
+            key = lambda cast: frozenset(a.casefold() for a in cast.values()) & relevant
+            expected = {key(cast) for cast in casts(roles) if cast is not None}
+            actual = [cast for cast in projected_casts(roles, relevant) if cast is not None]
+            self.assertEqual({key(cast) for cast in actual}, expected, f'case {iteration}')
+            self.assertEqual(len(actual), len(expected))
+            for cast in actual:
+                self.assertEqual(len(set(cast.values())), len(roles))
+                self.assertTrue(all(any(a['name'] == cast[r['name']] for a in r['actors']) for r in roles))
+
+    def test_mandatory_actor_bound_avoids_factorial_role_permutations(self):
+        roles = [{'name': f'Роль {i}', 'actors': [actor(f'Актёр {j}') for j in range(8)]} for i in range(8)]
+        data = fixture({'2028-10-01': [0], '2028-10-02': [0], '2028-10-03': [0]}, casts={0: roles})
+        problem = RepertoireProblem(data, Rules(shows=[ShowRule(key='0', count=3)]), date(2028, 9, 1))
+        selected = [(day, '0', cells['0']) for day, cells in problem.options.items()]
+        results = []
+        for steps, result in enumerate(problem._best_cast(selected)):
+            self.assertLess(steps, 1000, 'Must not enumerate permutations after reaching a proven minimum')
+            if result is not None:
+                results.append(result)
+        self.assertEqual(results[0]['load_score'], 8)
+        self.assertEqual(len(results[0]['load_warnings']), 8)
+
+    def test_cast_pruning_matches_exhaustive_minimum_including_existing_runs(self):
+        rng = random.Random(27)
+        for iteration in range(45):
+            data = fixture({'2028-10-01': [0], '2028-10-02': [0], '2028-10-03': [0]})
+            for slot in data['slots']:
+                slot['shows'][0]['roles'] = [{'name': f'Роль {i}', 'actors': [actor(n) for n in rng.sample(['А', 'Б', 'В', 'Г'], rng.randint(2, 4))]} for i in range(2)]
+            if iteration % 2:
+                data['fixed'] = [{'date': day, 'key': 'old', 'name': 'Другой', 'cast': {'Роль': 'А'}, 'fixed': True}
+                                 for day in ('2028-09-28', '2028-09-29', '2028-09-30')]
+            mode = ['prefer', 'forbid', 'ignore'][iteration % 3]
+            rules = Rules(shows=[ShowRule(key='0', count=3)], load_mode=mode)
+            problem = RepertoireProblem(data, rules, date(2028, 9, 1))
+            selected = [(day, '0', cells['0']) for day, cells in problem.options.items()]
+            choices = [[c for c in casts(cell['roles']) if c is not None] for _, _, cell in selected]
+            baseline = {(w['actor'], tuple(w['dates'])) for w in load_warnings(data['fixed'], 3)}
+            expected = None
+            for combination in product(*choices):
+                entries = [{'date': item[0], 'cast': cast} for item, cast in zip(selected, combination)]
+                added = [w for w in load_warnings(data['fixed'] + entries, 3) if (w['actor'], tuple(w['dates'])) not in baseline]
+                if mode == 'forbid' and added:
+                    continue
+                score = 0 if mode == 'ignore' else sum(len(w['dates']) - 2 for w in added)
+                expected = score if expected is None else min(expected, score)
+            actual = [v for v in problem._best_cast(selected) if v is not None]
+            self.assertEqual(actual[0]['load_score'] if actual else None, expected, f'case {iteration}: {mode}')
+
     def test_start_times_for_every_weekday_and_both_formats(self):
         for day, small, large in [(2, '20:00', None), (3, '20:00', None), (4, '20:00', None), (5, '20:00', None),
                                    (6, '19:00', '19:00'), (7, '19:00', '18:00'), (8, '19:00', '18:00')]:
