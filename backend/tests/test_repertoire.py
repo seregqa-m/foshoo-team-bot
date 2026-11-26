@@ -205,7 +205,7 @@ class RepertoireSourceTests(unittest.TestCase):
         data = load_snapshot(self.db, self.client, '2028-10', fresh=True)
         self.assertNotEqual(data['slots'][6]['shows'][0]['status'], 'ready')
 
-    def test_own_rehearsal_is_a_slot_for_only_its_show_and_not_a_fixed_performance(self):
+    def test_rehearsal_is_a_slot_for_any_complete_cast_not_a_fixed_performance(self):
         self.db.add(TheaterShow(id=2, name='Другой', normalized_name='другой'))
         self.source['casts'].append(['Другой', 'Роль', 'Анна'])
         self.answer('2028-10-07', 'yes')
@@ -215,18 +215,18 @@ class RepertoireSourceTests(unittest.TestCase):
         self.assertFalse(data['fixed'])
         rules = Rules(shows=[ShowRule(key='catalog:1', count=1), ShowRule(key='catalog:2', count=1)])
         problem, results = variants(data, rules)
-        self.assertEqual(set(problem.options['2028-10-07']), {'catalog:1'})
-        self.assertEqual(results[0]['count'], 1)
-        entry = results[0]['entries'][0]
-        self.assertEqual(entry['rehearsals'][0]['title'], 'Урод [Реп]')
-        self.assertEqual(entry['key'], 'catalog:1')
+        self.assertEqual(set(problem.options['2028-10-07']), {'catalog:1', 'catalog:2'})
+        self.assertEqual(len(results), 2)
+        self.assertEqual({v['count'] for v in results}, {1})
+        self.assertEqual({v['entries'][0]['key'] for v in results}, {'catalog:1', 'catalog:2'})
+        self.assertTrue(all(v['entries'][0]['rehearsals'][0]['title'] == 'Урод [Реп]' for v in results))
         other = next(d for d in problem.diagnostics if d['key'] == 'catalog:2')
-        self.assertIn('другого спектакля', next(d for d in other['dates'] if d['date'] == '2028-10-07')['reason'])
+        self.assertIsNone(next(d for d in other['dates'] if d['date'] == '2028-10-07')['reason'])
 
     def test_matching_rehearsal_never_waives_other_events_or_missing_answers(self):
         self.db.add(TheaterShow(id=2, name='Другой', normalized_name='другой'))
         self.db.commit()
-        for extra in ('Аренда', 'Другой [Реп]', '[Реп]', 'Урод и Другой [Реп]', 'Урод [Спект]'):
+        for extra in ('Аренда', 'Уборка', 'Неизвестное событие', 'Урод [Спект]'):
             with self.subTest(event=extra):
                 self.db.query(CalendarEvent).delete()
                 self.answer('2028-10-07', 'yes')
@@ -246,13 +246,15 @@ class RepertoireSourceTests(unittest.TestCase):
         self.db.add(TheaterShowAlias(normalized_name='старое имя', show_id=1))
         self.answer('2028-10-07', 'yes')
         self.answer('2028-10-08', 'yes')
-        for title in ('Репетиция [Урод]', 'СТАРОЕ ИМЯ [реп]'):
+        for title in ('Репетиция [Урод]', 'СТАРОЕ ИМЯ [реп]', 'Другой [Реп]', '[Реп]', 'Урод и Другой [Реп]'):
             with self.subTest(title=title):
                 self.db.query(CalendarEvent).delete()
                 self.db.add(CalendarEvent(title=title, google_event_id='r', start_time=datetime(2028, 10, 7, 19), end_time=datetime(2028, 10, 8)))
                 self.db.commit()
                 data = load_snapshot(self.db, self.client, '2028-10', fresh=True)
                 self.assertEqual(len(data['slots'][6]['shows'][0]['rehearsals']), 1)
+                problem = RepertoireProblem(data, Rules(shows=[ShowRule(key='catalog:1', count=1)]), date(2028, 9, 1))
+                self.assertIn('catalog:1', problem.options['2028-10-07'])
                 self.assertFalse(data['slots'][7]['shows'][0]['rehearsals'])
                 self.db.query(CalendarEvent).one().is_cancelled = True
                 self.db.commit()
@@ -275,6 +277,8 @@ class RepertoireSourceTests(unittest.TestCase):
             with self.assertRaises(HTTPException) as ctx:
                 validate_review(self.db, self.client, req, date(2028, 10, 7))
             self.assertEqual(ctx.exception.status_code, 409)
+            req.repertoire.fingerprint = load_snapshot(self.db, self.client, '2028-10', fresh=True)['fingerprint']
+            validate_review(self.db, self.client, req, date(2028, 10, 7))
 
     def test_cancelled_calendar_show_does_not_count_stale_sheet_assignment(self):
         self.source['schedule'] = [['Актёр', '7 окт 2028'], ['', 'Урод'], ['Анна', 'Летте']]

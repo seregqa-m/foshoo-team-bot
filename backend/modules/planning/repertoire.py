@@ -147,8 +147,6 @@ class RepertoireProblem:
                     reason = 'Раньше даты готовности спектакля'
                 elif slot.get('blocked'):
                     reason = slot['blocked']
-                elif cell.get('blocked'):
-                    reason = cell['blocked']
                 elif cell['incomplete']:
                     reason = 'Не заполнены роли или исполнители спектакля'
                 elif cell['status'] != 'ready':
