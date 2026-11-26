@@ -82,6 +82,12 @@ def get_planning(month: str | None = None, db: Session = Depends(get_db)):
     return plan
 
 
+class RepertoireReview(BaseModel):
+    key: str
+    fingerprint: str
+    revision: int = Field(ge=0)
+
+
 class AssignRequest(BaseModel):
     month: str = Field(pattern=r'^\d{4}-\d{2}$')
     column: str = Field(pattern=r'^[A-Z]+$')
@@ -91,6 +97,7 @@ class AssignRequest(BaseModel):
     start_time: datetime
     end_time: datetime
     location: str = Field(min_length=1, max_length=500)
+    repertoire: RepertoireReview | None = None
 
 
 def _sheet_writes_applied(source, updates):
@@ -116,7 +123,7 @@ def assign_show(req: AssignRequest, db: Session = Depends(get_db)):
         raise HTTPException(422, 'Проверьте время начала, окончания и место')
     if not GOOGLE_CALENDAR_ID:
         raise HTTPException(503, 'Google Calendar не настроен')
-    request_data = {**req.model_dump(mode='json', exclude={'expected_fingerprint'}),
+    request_data = {**req.model_dump(mode='json', exclude={'expected_fingerprint', 'repertoire'}),
                     'start_time': start.isoformat(), 'end_time': end.isoformat(), 'location': req.location.strip()}
     operation_id = hashlib.sha256(f'{GOOGLE_SHEETS_ID}:{GOOGLE_CALENDAR_ID}:{req.month}:{req.column}'.encode()).hexdigest()
     with _write_lock, answer_lock:
@@ -138,6 +145,9 @@ def assign_show(req: AssignRequest, db: Session = Depends(get_db)):
         else:
             if req.expected_fingerprint != plan['fingerprint']:
                 raise HTTPException(409, 'График или ответы изменились. Обновите сводку и проверьте состав заново.')
+            if req.repertoire:
+                from .repertoire_router import validate_review
+                validate_review(db, client, req, start.date())
             try:
                 updates = assignment_updates(source, plan, req.column, req.show_name, req.cast)
             except ValueError as exc:
@@ -179,3 +189,9 @@ def assign_show(req: AssignRequest, db: Session = Depends(get_db)):
             logger.exception('Cast assignment incomplete')
             raise HTTPException(502, 'Сохранение не завершено. Обновите сводку и нажмите «Продолжить сохранение»: повтор не создаст второе событие.') from exc
     return {'status': 'assigned', 'show_name': req.show_name}
+
+
+# Draft repertoire and its settings are shared by administrators. The parent
+# router retains the application's signed initData authorization dependency.
+from .repertoire_router import router as repertoire_router
+router.include_router(repertoire_router, dependencies=[Depends(require_admin)])

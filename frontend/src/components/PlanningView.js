@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import client from '../api/client';
 import './PlanningView.css';
 import AvailabilitySection from './AvailabilitySection';
+import RepertoirePlan from './RepertoirePlan';
 
 const STATUS = { ready: 'Состав собирается', waiting: 'Ждём ответы', blocked: 'Не хватает исполнителей', occupied: 'Дата занята', ambiguous: 'Дубли даты в графике' };
 const canPlay = actor => ['yes', 'assigned'].includes(actor.status);
@@ -15,9 +16,9 @@ function AttendanceSummary({ data }) {
   </small>;
 }
 
-function CastDialog({ slot, cell, month, fingerprint, timezone, onClose, onSaved, isAdmin }) {
+function CastDialog({ slot, cell, month, fingerprint, timezone, onClose, onSaved, isAdmin, initialCast, repertoireContext }) {
   const pending = slot.operation?.show_name === cell.show && slot.operation.status !== 'complete' ? slot.operation : null;
-  const [cast, setCast] = useState(pending?.cast || cell.suggested_cast);
+  const [cast, setCast] = useState(pending?.cast || initialCast || cell.suggested_cast);
   const [start, setStart] = useState(pending?.start_time.slice(0, 16) || `${slot.date}T19:00`);
   const [end, setEnd] = useState(pending?.end_time.slice(0, 16) || `${slot.date}T21:00`);
   const [location, setLocation] = useState(pending?.location || '');
@@ -36,6 +37,7 @@ function CastDialog({ slot, cell, month, fingerprint, timezone, onClose, onSaved
         month, column: slot.column, show_name: cell.show, cast,
         expected_fingerprint: fingerprint,
         start_time: pending?.start_time || start, end_time: pending?.end_time || end, location,
+        ...(!pending && repertoireContext ? { repertoire: repertoireContext } : {}),
       });
       onSaved();
     } catch (e) { setError(errorText(e)); setMustRefresh(true); }
@@ -163,6 +165,8 @@ export default function PlanningView({ onClose, closeLabel = '← К распи�
         <button className="btn btn-secondary" aria-label="Следующий месяц планирования" disabled={!(month || data?.month)} onClick={() => move(1)}>›</button>
         <button className="btn btn-secondary" onClick={() => setRevision(n => n + 1)} disabled={loading}>Обновить</button>
       </div>
+      {isAdmin && (month || data?.month) && <RepertoirePlan key={month || data.month} month={month || data.month} dataVersion={`${dataVersion}:${revision}`}
+        onPrepared={(result, cast) => { setData(result.plan); setSelected({ column: result.column, show: result.show, cast, repertoire: result.repertoire }); }} />}
       {success && <div className="alert alert-success" role="status">{success}</div>}
       {error && <div className="alert alert-error" role="alert">{error}</div>}
       {loading && <div className="empty-state" role="status">Загружаем график и составы...</div>}
@@ -200,7 +204,7 @@ export default function PlanningView({ onClose, closeLabel = '← К распи�
         <p className="planning-note">Ответы из всех чатов и обоих типов опросов общие на дату. Последнее изменение ответа учитывается для всех спектаклей. Один человек занимает одну роль. Назначение на другую дату не меняет остальные ответы.</p>
       </>}
       {selectedSlot && selectedCell && <CastDialog key={`${selectedSlot.column}:${selectedCell.show}`} slot={selectedSlot} cell={selectedCell}
-        month={data.month} fingerprint={data.fingerprint} timezone={data.timezone} onClose={() => setSelected(null)} onSaved={saved} isAdmin={isAdmin} />}
+        month={data.month} fingerprint={data.fingerprint} timezone={data.timezone} onClose={() => setSelected(null)} onSaved={saved} isAdmin={isAdmin} initialCast={selected?.cast} repertoireContext={selected?.repertoire} />}
     </div>
   );
 }

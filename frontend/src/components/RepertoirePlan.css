@@ -1,0 +1,38 @@
+.repertoire-plan { background: #fff; border: 1px solid #e9e2e6; border-radius: 14px; padding: 16px; margin: 18px 0; color: #292329; }
+.repertoire-plan h2 { margin: 0; font-size: 21px; }
+.repertoire-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.repertoire-note { margin: 7px 0; color: #6c626b; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+.repertoire-score { display: flex; align-items: baseline; gap: 10px; margin-top: 18px; flex-wrap: wrap; }
+.repertoire-score strong { font-size: 26px; }
+.repertoire-totals { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0; }
+.repertoire-totals span { padding: 5px 8px; background: #f4f1f3; border-radius: 6px; font-size: 12px; }
+.repertoire-totals .repertoire-shortfall { background: #fff0ce; color: #755315; font-weight: 600; }
+.repertoire-plan summary { padding: 10px 0; cursor: pointer; font-size: 13px; }
+.repertoire-plan button { min-height: 44px; }
+.repertoire-plan button[aria-pressed=true] { background: #651d32; color: #fff; }
+.repertoire-variant-label { display: block; margin: 16px 0 8px; font-size: 13px; }
+.repertoire-variant-label select { display: block; margin-top: 6px; max-width: 100%; width: 100%; }
+.repertoire-pages { display: flex; gap: 10px; align-items: center; justify-content: space-between; font-size: 12px; }
+.repertoire-good { background: #edf6f0; color: #205939; padding: 10px; border-radius: 8px; font-size: 13px; }
+.repertoire-date { padding: 13px 0; border-bottom: 1px solid #e9e2e6; }
+.repertoire-date strong, .repertoire-date small { display: block; }
+.repertoire-date small { color: #205939; margin-top: 4px; }
+.repertoire-date-label { display: block; font-size: 12px; color: #6c626b; margin-bottom: 3px; }
+.repertoire-rule { padding: 14px 0; border-bottom: 1px solid #e9e2e6; }
+.repertoire-rule p { overflow-wrap: anywhere; }
+.repertoire-stepper { display: flex; align-items: center; gap: 5px; }
+.repertoire-stepper input { width: 60px; text-align: center; }
+.repertoire-stepper button { min-width: 38px; }
+.repertoire-fieldset { margin: 0; padding: 0; border: 0; min-width: 0; }
+.repertoire-field { display: flex; gap: 12px; align-items: center; justify-content: space-between; margin: 12px 0; font-size: 13px; flex-wrap: wrap; }
+.repertoire-field input { width: 155px; max-width: 100%; }
+.repertoire-field input[type=number] { width: 75px; }
+.repertoire-field select { max-width: 100%; }
+.repertoire-check { display: flex; align-items: center; gap: 8px; min-height: 44px; font-size: 13px; }
+.repertoire-check input { width: 18px; height: 18px; accent-color: #651d32; }
+.repertoire-days { display: flex; flex-wrap: wrap; gap: 4px; margin: 8px 0; }
+.repertoire-days button { padding: 8px; }
+.repertoire-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 15px; }
+.repertoire-diagnostics { margin: 14px 0; border-top: 1px solid #e9e2e6; }
+.repertoire-diagnostic-date { padding-left: 8px; }
+@media (max-width: 380px) { .repertoire-plan { padding: 12px; } .repertoire-plan .repertoire-row { gap: 8px; } }
