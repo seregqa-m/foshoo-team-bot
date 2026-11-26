@@ -69,6 +69,7 @@ class RepertoireShareTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(preview['status'], 'preview')
         self.assertIn(str(int(self.variant['entries'][0]['date'][-2:])) + ' июн', preview['text'])
         self.assertIn('Урод', preview['text'])
+        self.assertIn('в 19:00', preview['text'])
         sent = await self.send(preview)
         self.assertEqual(sent['status'], 'sent')
         self.bot.send_message.assert_awaited_once_with(chat_id=self.chat, text=preview['text'], parse_mode=None)

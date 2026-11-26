@@ -42,3 +42,10 @@ test('changing month resets selection and aligns a Sunday month start', () => {
   expect(grid.querySelectorAll('button')).toHaveLength(31);
   expect(container.querySelector('[data-date="2028-10-01"]').getAttribute('aria-pressed')).toBe('true');
 });
+
+test('shows the start time in both the cell and its accessible name', () => {
+  render({ entries: [{ ...entries[0], start_time: '2028-02-06T19:00:00+03:00' }] });
+  const day = container.querySelector('[data-date="2028-02-06"]');
+  expect(day.textContent).toContain('19:00');
+  expect(day.getAttribute('aria-label')).toContain('Урод в 19:00');
+});

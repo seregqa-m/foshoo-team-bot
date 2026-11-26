@@ -11,6 +11,7 @@ with patch.dict(os.environ, {'BOT_TOKEN': '123456:offline-test-token', 'DATABASE
     from modules.planning.repertoire_source import load_snapshot, get_rules
     from modules.planning.repertoire_router import SaveRules, save_repertoire, valid_month, PrepareAssignment, prepare_assignment, validate_review
     from modules.planning.models import RepertoireSettings
+    from modules.planning.show_times import performance_window
     from modules.planning.router import router, AssignRequest
     from modules.attendance.models import DayAnswer
     from modules.calendar.models import CalendarEvent
@@ -45,8 +46,56 @@ def variants(snapshot, rules):
 
 
 class RepertoireSolverTests(unittest.TestCase):
-    def test_defaults_spread_for_every_show_and_weekends_for_long_shows(self):
-        for name, count, days in [('Урод', 2, range(7)), ('Любовь Громова', 2, range(7)), ('Цианистый калий', 2, [5, 6]), ('Микрополь', 1, [5, 6]), ('Премьера', 0, range(7))]:
+    def test_start_times_for_every_weekday_and_both_formats(self):
+        for day, small, large in [(2, '20:00', None), (3, '20:00', None), (4, '20:00', None), (5, '20:00', None),
+                                   (6, '19:00', '19:00'), (7, '19:00', '18:00'), (8, '19:00', '18:00')]:
+            for name, expected in [('Урод', small), ('Цианистый Калий', large)]:
+                window = performance_window(date(2028, 10, day), name)
+                if expected is None:
+                    self.assertIsNone(window)
+                else:
+                    self.assertEqual(window[0].strftime('%H:%M'), expected)
+                    self.assertEqual((window[1] - window[0]).total_seconds(), 5400 if name == 'Урод' else 10800)
+
+    def test_january_30_afternoon_lab_allows_second_kaliy_with_soft_13_day_gap(self):
+        data = fixture({'2027-01-17': [0], '2027-01-30': [0]}, names=('Цианистый Калий',))
+        data['month'] = '2027-01'
+        data['slots'][1]['calendar_events'] = [{'title': 'Лаба Игошиной', 'start_time': '2027-01-30T12:00:00+03:00', 'end_time': '2027-01-30T16:00:00+03:00'}]
+        rules = Rules(shows=[ShowRule(key='0', count=2, weekdays=[4, 5, 6])])
+        problem = RepertoireProblem(data, rules, date(2026, 11, 27))
+        results = [v for v in problem.search() if v is not None]
+        self.assertEqual(results[0]['count'], 2)
+        self.assertEqual(results[0]['entries'][1]['start_time'], '2027-01-30T18:00:00+03:00')
+        self.assertEqual(results[0]['entries'][1]['end_time'], '2027-01-30T21:00:00+03:00')
+        self.assertEqual(results[0]['spread_warnings'][0]['gap'], 13)
+
+    def test_overlap_depends_on_show_window_and_exact_boundaries(self):
+        data = fixture({'2028-10-07': [0, 1]}, names=('Урод', 'Цианистый Калий'))
+        rules = Rules(shows=[ShowRule(key='0', count=1), ShowRule(key='1', count=1)])
+        event = {'title': 'Лаба', 'start_time': '2028-10-07T15:30:00Z', 'end_time': '2028-10-07T16:00:00Z'}
+        data['slots'][0]['calendar_events'] = [event]  # 18:30–19:00 Moscow
+        problem, _ = variants(data, rules)
+        self.assertEqual(set(problem.options['2028-10-07']), {'0'})
+        self.assertIn('Лаба (18:30–19:00)', problem.diagnostics[1]['dates'][0]['reason'])
+        event.update(start_time='2028-10-07T21:00:00+03:00', end_time='2028-10-08T01:00:00+03:00')
+        self.assertEqual(set(variants(data, rules)[0].options['2028-10-07']), {'0', '1'})
+        event['start_time'] = '2028-10-07T20:59:00+03:00'
+        self.assertEqual(set(variants(data, rules)[0].options['2028-10-07']), {'0'})
+        event.update(start_time='2028-10-06T23:00:00+03:00', end_time='2028-10-08T01:00:00+03:00')
+        self.assertNotIn('2028-10-07', variants(data, rules)[0].options)
+
+    def test_large_show_cannot_use_monday_even_if_saved_weekdays_allow_it(self):
+        data = fixture({'2028-10-02': [0]}, names=('Цианистый Калий',))
+        problem, results = variants(data, Rules(shows=[ShowRule(key='0', count=1)]))
+        self.assertEqual(results[0]['count'], 0)
+        self.assertIn('Большие спектакли', problem.diagnostics[0]['dates'][0]['reason'])
+        # An explicit format for a new production controls the same time policy.
+        data['shows'][0]['name'] = 'Новая премьера'
+        problem, _ = variants(data, Rules(shows=[ShowRule(key='0', count=1, format='large')]))
+        self.assertNotIn('2028-10-02', problem.options)
+
+    def test_defaults_spread_for_every_show_and_friday_weekends_for_large_shows(self):
+        for name, count, days in [('Урод', 2, range(7)), ('Любовь Громова', 2, range(7)), ('Цианистый калий', 2, [4, 5, 6]), ('Микрополь', 1, [4, 5, 6]), ('Премьера', 0, range(7))]:
             rule = default_rule(name, name)
             self.assertEqual(rule.count, count)
             self.assertEqual(rule.weekdays, list(days))
@@ -63,7 +112,7 @@ class RepertoireSolverTests(unittest.TestCase):
         self.assertEqual(len({v['id'] for v in results}), 6)
 
     def test_one_missing_urod_keeps_all_other_targets(self):
-        data = fixture({'2028-10-01': [0], '2028-10-02': [1], '2028-10-03': [1], '2028-10-04': [2], '2028-10-05': [2], '2028-10-06': [3]},
+        data = fixture({'2028-10-01': [0], '2028-10-02': [1], '2028-10-03': [1], '2028-10-06': [2], '2028-10-07': [2], '2028-10-08': [3]},
                        ('Урод', 'Любовь Громова', 'Цианистый калий', 'Микрополь'))
         _, results = variants(data, Rules(shows=[ShowRule(key=str(i), count=1 if i == 3 else 2) for i in range(4)]))
         self.assertEqual(len(results), 1)
@@ -196,7 +245,8 @@ class RepertoireSourceTests(unittest.TestCase):
         self.assertEqual(len(data['fixed']), 1)
         self.assertTrue(data['slots'][6]['blocked'])
         self.assertFalse(data['slots'][7]['blocked'])
-        self.assertIn('Аренда', data['slots'][8]['blocked'])
+        self.assertFalse(data['slots'][8]['blocked'])
+        self.assertEqual(data['slots'][8]['calendar_events'][0]['title'], 'Аренда')
         self.assertTrue(data['warnings'])
 
     def test_duplicate_actor_identity_never_grants_ready_cast(self):
@@ -268,7 +318,7 @@ class RepertoireSourceTests(unittest.TestCase):
         self.db.commit()
         data = load_snapshot(self.db, self.client, '2028-10', fresh=True)
         req = AssignRequest(month='2028-10', column='B', show_name='Урод', cast={'Летте': 'Анна'},
-            expected_fingerprint='sheet', start_time='2028-10-07T19:00', end_time='2028-10-07T21:00', location='Зал',
+            expected_fingerprint='sheet', start_time='2028-10-07T19:00', end_time='2028-10-07T20:30', location='Зал',
             repertoire={'key': 'catalog:1', 'fingerprint': data['fingerprint'], 'revision': 0})
         with patch('modules.planning.repertoire_router.local_now', return_value=datetime(2028, 9, 1)):
             validate_review(self.db, self.client, req, date(2028, 10, 7))
@@ -305,13 +355,15 @@ class RepertoireSourceTests(unittest.TestCase):
                 result = prepare_assignment(req, self.db)
             self.assertEqual(result['column'], 'B')
             self.assertEqual(result['repertoire']['key'], 'catalog:1')
+            self.assertEqual(result['repertoire']['start_time'], '2028-10-07T19:00:00+03:00')
+            self.assertEqual(result['repertoire']['end_time'], '2028-10-07T20:30:00+03:00')
             self.assertNotEqual(result['repertoire']['fingerprint'], original['fingerprint'])
 
     def test_new_calendar_conflict_invalidates_final_assignment_review(self):
         self.answer('2028-10-07', 'yes')
         snapshot = load_snapshot(self.db, self.client, '2028-10', fresh=True)
         req = AssignRequest(month='2028-10', column='B', show_name='Урод', cast={'Летте': 'Анна'},
-            expected_fingerprint='sheet', start_time='2028-10-07T19:00', end_time='2028-10-07T21:00', location='Зал',
+            expected_fingerprint='sheet', start_time='2028-10-07T19:00', end_time='2028-10-07T20:30', location='Зал',
             repertoire={'key': 'catalog:1', 'fingerprint': snapshot['fingerprint'], 'revision': 0})
         with patch('modules.planning.repertoire_router.local_now', return_value=datetime(2028, 9, 1)):
             validate_review(self.db, self.client, req, date(2028, 10, 7))
@@ -320,6 +372,34 @@ class RepertoireSourceTests(unittest.TestCase):
             with self.assertRaises(HTTPException) as ctx:
                 validate_review(self.db, self.client, req, date(2028, 10, 7))
             self.assertEqual(ctx.exception.status_code, 409)
+
+    def test_final_review_rejects_a_time_different_from_the_proposal(self):
+        self.answer('2028-10-07', 'yes')
+        snapshot = load_snapshot(self.db, self.client, '2028-10', fresh=True)
+        req = AssignRequest(month='2028-10', column='B', show_name='Урод', cast={'Летте': 'Анна'},
+            expected_fingerprint='sheet', start_time='2028-10-07T18:00', end_time='2028-10-07T19:30', location='Зал',
+            repertoire={'key': 'catalog:1', 'fingerprint': snapshot['fingerprint'], 'revision': 0})
+        with patch('modules.planning.repertoire_router.local_now', return_value=datetime(2028, 9, 1)):
+            with self.assertRaises(HTTPException) as ctx:
+                validate_review(self.db, self.client, req, date(2028, 10, 7))
+            self.assertEqual(ctx.exception.status_code, 409)
+            self.assertIn('Время отличается', ctx.exception.detail)
+
+    def test_all_day_and_cancelled_events_respect_window(self):
+        self.answer('2028-10-07', 'yes')
+        self.db.add(CalendarEvent(title='Аренда', google_event_id='day', is_all_day=True,
+            start_time=datetime(2028, 10, 7), end_time=datetime(2028, 10, 8)))
+        self.db.commit()
+        rules = Rules(shows=[ShowRule(key='catalog:1', count=1)])
+        data = load_snapshot(self.db, self.client, '2028-10', fresh=True)
+        problem, _ = variants(data, rules)
+        self.assertNotIn('2028-10-07', problem.options)
+        reason = next(d['reason'] for d in problem.diagnostics[0]['dates'] if d['date'] == '2028-10-07')
+        self.assertIn('весь день', reason)
+        self.db.query(CalendarEvent).one().is_cancelled = True
+        self.db.commit()
+        data = load_snapshot(self.db, self.client, '2028-10', fresh=True)
+        self.assertIn('2028-10-07', variants(data, rules)[0].options)
 
     def test_month_rules_defaults_revision_conflicts_and_horizon(self):
         shows = [{'key': 'catalog:1', 'name': 'Урод'}]

@@ -137,3 +137,16 @@ test('opening another variant for sharing resets the previous preview', async ()
   await act(async () => button('Предпросмотр сообщения').click());
   expect(client.post).toHaveBeenLastCalledWith('/api/planning/repertoire/share/preview', expect.objectContaining({ variant_id: 'second' }));
 });
+
+test('large format keeps Friday available, disallows Monday–Thursday and has no duration control', async () => {
+  await render();
+  act(() => button('Параметры').click());
+  act(() => Simulate.change(container.querySelector('[aria-label="Формат: Урод"]'), { target: { value: 'large' } }));
+  const days = [...container.querySelector('[aria-label="Дни: Урод"]').querySelectorAll('button')];
+  expect(days.slice(0, 4).every(b => b.disabled)).toBe(true);
+  expect(days[4].disabled).toBe(false);
+  expect(container.textContent).toContain('пт — 19:00, сб–вс — 18:00');
+  expect(container.textContent.toLowerCase()).not.toContain('длительность');
+  await act(async () => Simulate.submit(container.querySelector('form')));
+  expect(client.put.mock.calls[0][1].rules.shows[0]).toEqual(expect.objectContaining({ format: 'large', weekdays: [4, 5, 6] }));
+});

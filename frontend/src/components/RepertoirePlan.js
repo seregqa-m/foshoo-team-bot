@@ -28,8 +28,15 @@ function RulesEditor({ data, busy, conflict, onSave, onCancel }) {
         </div>
         <p className="repertoire-note">{rule.weekdays.length === 7 ? 'Любые дни' : rule.weekdays.map(d => DAYS[d]).join(', ')} · {rule.spread ? `Разнос от ${rule.gap} дней` : 'Без разноса'}</p>
         <details><summary>Настроить правила</summary>
+          <label className="repertoire-field">Формат<select className="select-input" aria-label={`Формат: ${names[rule.key]}`} value={rule.format || 'small'} onChange={e => {
+            const format = e.target.value;
+            const days = format === 'large' ? rule.weekdays.filter(d => d >= 4) : rule.weekdays;
+            update(rule.key, { format, weekdays: days.length ? days : [4, 5, 6] });
+          }}><option value="small">Маленький</option><option value="large">Большой</option></select></label>
           <div className="repertoire-days" aria-label={`Дни: ${names[rule.key]}`}>{DAYS.map((day, index) => <button type="button" className="btn btn-secondary" key={day} aria-pressed={rule.weekdays.includes(index)}
+            disabled={rule.format === 'large' && index < 4}
             onClick={() => { const days = rule.weekdays.includes(index) ? rule.weekdays.filter(d => d !== index) : [...rule.weekdays, index].sort(); if (days.length) update(rule.key, { weekdays: days }); }}>{day}</button>)}</div>
+          <p className="repertoire-note">{rule.format === 'large' ? 'Начало: пт — 19:00, сб–вс — 18:00.' : 'Начало: пн–чт — 20:00, пт–вс — 19:00.'}</p>
           <label className="repertoire-check"><input type="checkbox" checked={rule.spread} onChange={e => update(rule.key, { spread: e.target.checked })} />Разносить показы по месяцу</label>
           <label className="repertoire-field">Желаемый интервал, дней<input className="form-input" type="number" min="1" max="31" required disabled={!rule.spread} value={rule.gap} onChange={e => update(rule.key, { gap: e.target.value === '' ? '' : Number(e.target.value) })} /></label>
           <label className="repertoire-field">Планировать начиная с<input className="form-input" type="date" value={rule.start || ''} onChange={e => update(rule.key, { start: e.target.value || null })} /></label>
@@ -62,7 +69,7 @@ function Diagnostics({ data, variant }) {
         {show.ready_dates.filter(day => allocated[day] && allocated[day].key !== show.key).map(day => <p className="repertoire-note" key={day}>{prettyDate(day)}: в этом варианте стоит {allocated[day].name}.</p>)}
         {Object.entries(counts).map(([reason, count]) => <p className="repertoire-note" key={reason}>{reason}: {count} дн.</p>)}
         {!show.dates.length && <p className="repertoire-note">Нет доступных данных о ролях или датах этого спектакля.</p>}
-        <details><summary>Проверка по датам и ролям</summary>{show.dates.map(day => <details key={day.date} className="repertoire-diagnostic-date"><summary>{prettyDate(day.date)} · {day.reason || 'Состав собирается'}</summary>
+        <details><summary>Проверка по датам и ролям</summary>{show.dates.map(day => <details key={day.date} className="repertoire-diagnostic-date"><summary>{prettyDate(day.date)}{day.start_time && `, ${day.start_time.slice(11, 16)}`} · {day.reason || 'Состав собирается'}</summary>
           {day.roles.map(role => <p className="repertoire-note" key={role.name}><strong>{role.name}: </strong>{role.actors.map(a => `${a.name} — ${a.reason}`).join('; ') || 'Нет исполнителей'}</p>)}
         </details>)}</details>
       </div>;
@@ -165,7 +172,7 @@ export default function RepertoirePlan({ month, dataVersion, onPrepared }) {
         {!selected.spread_score && !selected.load_warnings.length && <p className="repertoire-good">✓ Пожелания по разносу и нагрузке соблюдены для известных составов</p>}
         <RepertoireCalendar key={`${month}:${selected.id}`} month={month} entries={selected.entries} pins={data.rules.pins} renderEntry={entry => {
           const pinned = data.rules.pins.some(p => p.day === entry.date && p.key === entry.key);
-          return <div className="repertoire-date" key={`${entry.date}:${entry.key}`}><div className="repertoire-row"><div><span className="repertoire-date-label">{prettyDate(entry.date)}</span><strong>{entry.name}</strong><small>{entry.fixed ? 'Уже в расписании' : pinned ? 'Закреплено в плане' : 'Состав собран'}</small>{entry.rehearsals?.length > 0 && <small>Репетиционный слот</small>}</div>
+          return <div className="repertoire-date" key={`${entry.date}:${entry.key}`}><div className="repertoire-row"><div><span className="repertoire-date-label">{prettyDate(entry.date)}{entry.start_time && ` · ${entry.start_time.slice(11, 16)}`}</span><strong>{entry.name}</strong><small>{entry.fixed ? 'Уже в расписании' : pinned ? 'Закреплено в плане' : 'Состав собран'}</small>{entry.rehearsals?.length > 0 && <small>Репетиционный слот</small>}</div>
             {!entry.fixed && <button className="btn btn-secondary" aria-label={`${pinned ? 'Открепить' : 'Закрепить'} ${entry.name}, ${entry.date}`} aria-pressed={pinned} disabled={stale} onClick={() => pin(entry)}>{pinned ? 'Закреплено' : 'Закрепить'}</button>}
           </div><details><summary>Состав и назначение</summary>{Object.entries(entry.cast).map(([role, actor]) => <p key={role} className="repertoire-note">{role} — {actor}</p>)}
             {!Object.keys(entry.cast).length && <p className="repertoire-note">Состав не указан; нагрузка этого показа не проверена.</p>}
@@ -177,7 +184,7 @@ export default function RepertoirePlan({ month, dataVersion, onPrepared }) {
       </>}
       {(data.maximum === null || data.maximum < data.target) && <Diagnostics data={data} variant={selected} />}
       {data.complete && !data.total_variants && !data.pin_errors.length && <p className="planning-warning">Нет допустимого варианта с закреплёнными датами и текущими ограничениями нагрузки. Проверьте параметры.</p>}
-      <p className="repertoire-note">Один показ в день. Репетиционная дата подходит для любого спектакля с полным составом. Показы и прочие события занимают дату. Свободная дата не подтверждает бронь зала.</p>
+      <p className="repertoire-note">Один показ в день. Репетиционная дата подходит для любого спектакля с полным составом. Прочие события мешают только при пересечении по времени. Свободное время не подтверждает бронь зала.</p>
       <p className="repertoire-note">Черновик · обновлено {new Intl.DateTimeFormat('ru', { hour: '2-digit', minute: '2-digit', timeZone: data.timezone }).format(new Date(data.checked_at))}. Ответы проверяются каждые 30 секунд, пока экран открыт.</p>
     </>}
     {share && <RepertoireShare key={`${share.data.search_id}:${share.variant.id}`} data={share.data} variant={share.variant} onClose={() => setShare(null)} />}

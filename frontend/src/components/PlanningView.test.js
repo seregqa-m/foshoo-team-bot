@@ -25,13 +25,15 @@ const open = async () => {
   await act(async () => container.querySelector('.planning-cell').click());
 };
 
-test('default-month sharing preview survives the refresh triggered by a successful POST', async () => {
-  const repertoire = { month: plan.month, search_id: 'search', fingerprint: 'fresh', revision: 0, defaults_revision: 0,
+const repertoireFixture = () => ({ month: plan.month, search_id: 'search', fingerprint: 'fresh', revision: 0, defaults_revision: 0,
     maximum: 1, target: 1, total_variants: 1, complete: true, page: 0, page_size: 20, diagnostics: [], warnings: [], pin_errors: [],
     shows: [{ key: '1', name: 'Урод' }], rules: { shows: [{ key: '1', count: 1 }], pins: [] },
     timezone: 'Europe/Moscow', checked_at: '2028-09-01T00:00:00Z', variants: [{ id: 'one', count: 1, missing: [],
       load_warnings: [], spread_warnings: [], spread_score: 0,
-      entries: [{ key: '1', name: 'Урод', date: '2028-10-01', cast: { Летте: 'Анна' }, fixed: false }] }] };
+      entries: [{ key: '1', name: 'Урод', date: '2028-10-01', cast: { Летте: 'Анна' }, fixed: false }] }] });
+
+test('default-month sharing preview survives the refresh triggered by a successful POST', async () => {
+  const repertoire = repertoireFixture();
   const baseGet = client.get.getMockImplementation();
   client.get.mockImplementation((url, ...args) => url === '/api/planning/repertoire'
     ? Promise.resolve({ data: repertoire }) : url.endsWith('/repertoire/chats')
@@ -56,6 +58,28 @@ test('loads the linked month immediately and lets the user change it', async () 
   expect(container.querySelector('input[type="month"]').value).toBe('2026-12');
   await act(async () => container.querySelector('[aria-label="Следующий месяц планирования"]').click());
   expect(client.get).toHaveBeenLastCalledWith('/api/planning', { params: { month: '2027-01' } });
+});
+
+test('assignment from repertoire retains the reviewed times rather than generic form defaults', async () => {
+  const baseGet = client.get.getMockImplementation();
+  const repertoire = repertoireFixture();
+  const cast = { Летте: 'Борис', Фанни: 'Анна' };
+  repertoire.variants[0].entries[0].cast = cast;
+  client.get.mockImplementation((url, ...args) => url === '/api/planning/repertoire'
+    ? Promise.resolve({ data: repertoire }) : baseGet(url, ...args));
+  const context = { key: '1', fingerprint: 'fresh', revision: 0, start_time: '2028-10-01T19:00:00+03:00', end_time: '2028-10-01T20:30:00+03:00' };
+  client.post.mockResolvedValueOnce({ data: { plan, column: 'B', show: 'Урод', repertoire: context } });
+  await act(async () => root.render(<PlanningView isAdmin />));
+  await act(async () => button('Перейти к назначению').click());
+  const [start, end] = [...container.querySelectorAll('input[type="datetime-local"]')];
+  expect(start.value).toBe('2028-10-01T19:00');
+  expect(end.value).toBe('2028-10-01T20:30');
+  expect(start.disabled && end.disabled).toBe(true);
+  act(() => Simulate.change(container.querySelector('input[placeholder="Зал или адрес"]'), { target: { value: 'Зал' } }));
+  await act(async () => Simulate.submit(container.querySelector('form')));
+  expect(client.post).toHaveBeenLastCalledWith('/api/planning/assign', expect.objectContaining({
+    start_time: '2028-10-01T19:00', end_time: '2028-10-01T20:30', repertoire: context, cast,
+  }));
 });
 
 test('uses the server default month and marks today in the planning timezone at the UTC month boundary', async () => {

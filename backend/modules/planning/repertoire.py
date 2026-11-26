@@ -13,6 +13,7 @@ from typing import Literal
 from pydantic import BaseModel, Field, model_validator
 
 from .services import norm
+from .show_times import performance_window, show_format, calendar_conflicts, conflict_reason
 
 
 class ShowRule(BaseModel):
@@ -22,6 +23,7 @@ class ShowRule(BaseModel):
     spread: bool = True
     gap: int = Field(default=14, ge=1, le=31, strict=True)
     start: date | None = None
+    format: Literal['small', 'large'] | None = None
 
     @model_validator(mode='after')
     def valid_days(self):
@@ -53,7 +55,7 @@ class Rules(BaseModel):
 def default_rule(key, name):
     name = norm(name)
     return ShowRule(key=key, count={'урод': 2, 'любовь громова': 2, 'цианистый калий': 2, 'микрополь': 1}.get(name, 0),
-                    weekdays=[5, 6] if name in ('цианистый калий', 'микрополь') else list(range(7)))
+                    weekdays=[4, 5, 6] if show_format(name) == 'large' else list(range(7)), format=show_format(name))
 
 
 def digest(value):
@@ -138,24 +140,32 @@ class RepertoireProblem:
                 if key not in self.rule or not self.remaining[key]:
                     continue
                 r = self.rule[key]
+                window = performance_window(day, self.names[key], r.format)
+                conflicts = calendar_conflicts(slot.get('calendar_events', []), *window) if window else []
                 reason = None
                 if day < today:
                     reason = 'Дата уже прошла'
                 elif day.weekday() not in r.weekdays:
                     reason = 'День недели запрещён параметрами'
+                elif window is None:
+                    reason = 'Большие спектакли разрешены только в пятницу, субботу и воскресенье'
                 elif r.start and day < r.start:
                     reason = 'Раньше даты готовности спектакля'
                 elif slot.get('blocked'):
                     reason = slot['blocked']
+                elif conflicts:
+                    reason = conflict_reason(conflicts)
                 elif cell['incomplete']:
                     reason = 'Не заполнены роли или исполнители спектакля'
                 elif cell['status'] != 'ready':
                     reason = 'Нужны ответы исполнителей' if cell['status'] == 'waiting' else 'Не хватает разных доступных исполнителей для всех ролей'
                 diagnostic = {'date': slot['date'], 'reason': reason, 'roles': cell['roles'],
-                              'rehearsals': cell.get('rehearsals', [])}
+                              'rehearsals': cell.get('rehearsals', []),
+                              'start_time': window[0].isoformat() if window else None,
+                              'end_time': window[1].isoformat() if window else None}
                 self.diagnostics[key]['dates'].append(diagnostic)
                 if reason is None:
-                    candidates[key] = cell
+                    candidates[key] = {**cell, 'start_time': window[0].isoformat(), 'end_time': window[1].isoformat()}
                     self.diagnostics[key]['ready_dates'].append(slot['date'])
             if candidates:
                 self.options[slot['date']] = candidates
@@ -198,7 +208,8 @@ class RepertoireProblem:
                 yield None
                 if cast is not None:
                     yield from visit(index + 1, entries + [{'date': day, 'key': key, 'name': self.names[key], 'cast': cast,
-                                                          'fixed': False, 'rehearsals': cell.get('rehearsals', [])}])
+                                                          'fixed': False, 'rehearsals': cell.get('rehearsals', []),
+                                                          'start_time': cell['start_time'], 'end_time': cell['end_time']}])
                     if best is not None and best[0] == 0:
                         break
         yield from visit(0, [])

@@ -17,6 +17,7 @@ from sheets_client import _format_schedule_header
 from .models import PlanningAssignment, RepertoireSettings
 from .repertoire import Rules, default_rule, digest
 from .services import build_plan, norm
+from .show_times import show_format
 
 _sheet_lock = Lock()
 _sheet_cache = {}
@@ -88,6 +89,7 @@ def load_snapshot(db, client, month, fresh=False):
     fixed = {}
     occupied = defaultdict(list)
     rehearsals = defaultdict(list)
+    calendar_events = defaultdict(list)
     # Existing assignments, including adjacent months, retain their actual cast.
     for selected_month in sorted({before.strftime('%Y-%m'), month, after.strftime('%Y-%m')}):
         for slot in build_plan(source, selected_month)['slots']:
@@ -126,7 +128,7 @@ def load_snapshot(db, client, month, fresh=False):
     for event in events:
         start, end = as_local(event.start_time), as_local(event.end_time)
         day = start.date().isoformat()
-        event_signature.append([event.id, event.title, start.isoformat(), end.isoformat(), event.description, event.is_cancelled])
+        event_signature.append([event.id, event.title, start.isoformat(), end.isoformat(), event.description, event.is_cancelled, event.is_all_day])
         op = operations.get(event.google_event_id)
         if op:
             request = json.loads(op.payload)['request']
@@ -154,8 +156,11 @@ def load_snapshot(db, client, month, fresh=False):
             if event_type == 'rehearsal':
                 rehearsals[cursor.isoformat()].append({'event_id': event.id, 'title': event.title,
                     'start_time': start.isoformat(), 'end_time': end.isoformat()})
-            else:
+            elif event_type == 'performance':
                 occupied[cursor.isoformat()].append('В календаре: ' + (event.title or 'Событие'))
+            else:
+                calendar_events[cursor.isoformat()].append({'event_id': event.id, 'title': event.title or 'Событие',
+                    'start_time': start.isoformat(), 'end_time': end.isoformat(), 'all_day': bool(event.is_all_day)})
             cursor += timedelta(days=1)
         if event_type != 'performance':
             continue
@@ -166,6 +171,7 @@ def load_snapshot(db, client, month, fresh=False):
             continue
         key = show_keys.get(name, 'sheet:' + norm(name))
         item = fixed.setdefault((day, key), {'date': day, 'key': key, 'name': name, 'cast': {}, 'fixed': True})
+        item.update(start_time=start.isoformat(), end_time=end.isoformat())
         if op:
             request = json.loads(op.payload)['request']
             if request['show_name'] == name and as_local(datetime.fromisoformat(request['start_time'])).date().isoformat() == day:
@@ -185,6 +191,7 @@ def load_snapshot(db, client, month, fresh=False):
         seen.add(day)
         slot['column'] = original[day][0]['column'] if len(original[day]) == 1 else None
         slot['blocked'] = '; '.join(sorted(set(occupied[day])))
+        slot['calendar_events'] = calendar_events[day]
         if len(original[day]) > 1:
             slot['blocked'] = 'Несколько столбцов одной даты в графике: сначала объедините их'
         for cell in slot['shows']:
@@ -207,4 +214,8 @@ def get_rules(db, month, shows):
         rules.pins = []
     known = {s.key for s in rules.shows}
     rules.shows.extend(default_rule(s['key'], s['name']) for s in shows if s['key'] not in known)
+    names = {s['key']: s['name'] for s in shows}
+    for rule in rules.shows:
+        if rule.format is None:
+            rule.format = show_format(names.get(rule.key, ''))
     return rules, row.revision if row else 0, default.revision if default else 0

@@ -8,13 +8,14 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from core.database import get_db
-from core.time import local_now
+from core.time import local_now, as_local
 from config import TIMEZONE
 from modules.attendance.services import answer_lock
 from .models import RepertoireSettings
 from .repertoire import Rules, RepertoireProblem, load_warnings
 from .repertoire_source import load_snapshot, get_rules
 from .repertoire_search import search_page
+from .show_times import performance_window
 
 logger = logging.getLogger(__name__)
 settings_lock = RLock()
@@ -117,6 +118,9 @@ def validate_review(db, client, req, day):
     choices.update((d, k) for d, k, _ in problem.pinned)
     if (day.isoformat(), review.key) not in choices or problem.names.get(review.key) != req.show_name or problem.pin_errors:
         raise HTTPException(409, 'Дата или спектакль больше не подходят для этого плана')
+    window = performance_window(day, req.show_name, problem.rule[review.key].format)
+    if (as_local(req.start_time), as_local(req.end_time)) != window:
+        raise HTTPException(409, 'Время отличается от проверенного плана. Откройте назначение из актуального варианта заново.')
     if rules.load_mode == 'forbid':
         baseline = load_warnings(data['fixed'], rules.streak)
         updated = load_warnings(data['fixed'] + [{'date': day.isoformat(), 'cast': req.cast}], rules.streak)
@@ -148,8 +152,10 @@ def prepare_assignment(req: PrepareAssignment, db: Session = Depends(get_db)):
         plan = get_planning(req.month, db)
         slot = next((s for s in plan['slots'] if s['date'] == req.day.isoformat()), None)
         name = next(s['name'] for s in data['shows'] if s['key'] == req.key)
+        start, end = performance_window(req.day, name, problem.rule[req.key].format)
         return {'plan': plan, 'column': slot['column'], 'show': name,
-                'repertoire': {'key': req.key, 'fingerprint': refreshed['fingerprint'], 'revision': revision}}
+                'repertoire': {'key': req.key, 'fingerprint': refreshed['fingerprint'], 'revision': revision,
+                               'start_time': start.isoformat(), 'end_time': end.isoformat()}}
 
 
 from .repertoire_sharing import router as sharing_router

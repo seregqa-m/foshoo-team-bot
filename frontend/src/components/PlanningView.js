@@ -19,8 +19,8 @@ function AttendanceSummary({ data }) {
 function CastDialog({ slot, cell, month, fingerprint, timezone, onClose, onSaved, isAdmin, initialCast, repertoireContext }) {
   const pending = slot.operation?.show_name === cell.show && slot.operation.status !== 'complete' ? slot.operation : null;
   const [cast, setCast] = useState(pending?.cast || initialCast || cell.suggested_cast);
-  const [start, setStart] = useState(pending?.start_time.slice(0, 16) || `${slot.date}T19:00`);
-  const [end, setEnd] = useState(pending?.end_time.slice(0, 16) || `${slot.date}T21:00`);
+  const [start, setStart] = useState(pending?.start_time.slice(0, 16) || repertoireContext?.start_time?.slice(0, 16) || `${slot.date}T19:00`);
+  const [end, setEnd] = useState(pending?.end_time.slice(0, 16) || repertoireContext?.end_time?.slice(0, 16) || `${slot.date}T21:00`);
   const [location, setLocation] = useState(pending?.location || '');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -79,8 +79,9 @@ function CastDialog({ slot, cell, month, fingerprint, timezone, onClose, onSaved
           {duplicate && <div className="alert alert-error" role="alert">Один актёр выбран на несколько ролей. Выберите разных исполнителей.</div>}
           {(assignable || pending) && <>
             <p className="planning-note">Время: {timezone}. Сохранение создаст событие в расписании и запишет спектакль и роли в график.</p>
-            <label className="planning-field">Начало<input className="form-input" type="datetime-local" value={start} required disabled={saving || !!pending} onChange={e => setStart(e.target.value)} /></label>
-            <label className="planning-field">Окончание<input className="form-input" type="datetime-local" value={end} min={start} required disabled={saving || !!pending} onChange={e => setEnd(e.target.value)} /></label>
+            {repertoireContext && <p className="planning-note">Время взято из выбранного плана и проверено на пересечения с календарём.</p>}
+            <label className="planning-field">Начало<input className="form-input" type="datetime-local" value={start} required disabled={saving || !!pending || !!repertoireContext} onChange={e => setStart(e.target.value)} /></label>
+            <label className="planning-field">Окончание<input className="form-input" type="datetime-local" value={end} min={start} required disabled={saving || !!pending || !!repertoireContext} onChange={e => setEnd(e.target.value)} /></label>
             <label className="planning-field">Место<input className="form-input" value={location} required disabled={saving || !!pending} onChange={e => setLocation(e.target.value)} placeholder="Зал или адрес" /></label>
           </>}
           {error && <div className="alert alert-error" role="alert">{error}</div>}

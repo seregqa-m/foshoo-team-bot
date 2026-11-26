@@ -15,7 +15,7 @@ from starlette.concurrency import run_in_threadpool
 
 from config import GROUP_CHAT_ID
 from core.database import get_db
-from core.time import local_now
+from core.time import local_now, as_local
 from modules.theater.models import TheaterChat, TheaterShow
 from modules.theater.routing import poll_link
 from .models import RepertoireShare
@@ -76,7 +76,8 @@ def message_text(month, variant, target, warnings):
     for entry in sorted(variant['entries'], key=lambda e: (e['date'], e['name'])):
         day = format_date(date.fromisoformat(entry['date']), 'd MMM, EEE', locale='ru_RU')
         suffix = ' (уже в расписании)' if entry['fixed'] else ' (репетиционный слот)' if entry.get('rehearsals') else ''
-        lines.append(f'{day} — {entry["name"]}{suffix}')
+        clock = f' в {as_local(datetime.fromisoformat(entry["start_time"])):%H:%M}' if entry.get('start_time') else ''
+        lines.append(f'{day}{clock} — {entry["name"]}{suffix}')
     if variant['missing']:
         lines += ['', 'Не хватает: ' + '; '.join(f'{s["name"]} — {s["count"]}' for s in variant['missing']) + '.']
     for warning in variant['spread_warnings']:
