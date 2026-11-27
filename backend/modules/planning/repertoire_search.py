@@ -1,7 +1,7 @@
 """Cooperative exhaustive search cache, disk-backed so variants don't fill RAM.
 
 Single-process deployment. LRU jobs can be rebuilt from their immutable input;
-no source data is written. Request work is time-sliced, results are paginated.
+no source data is written. Request work is time-sliced; the UI gets a shortlist.
 """
 import json
 import sqlite3
@@ -11,6 +11,7 @@ from threading import RLock
 from time import monotonic
 
 from .repertoire import digest
+from .repertoire_recommendations import shortlist, changes
 
 
 class SearchJob:
@@ -19,7 +20,7 @@ class SearchJob:
         self.generator = problem.search()
         self.directory = tempfile.TemporaryDirectory(prefix='foshoo-repertoire-')
         self.db = sqlite3.connect(self.directory.name + '/variants.sqlite', check_same_thread=False)
-        self.db.execute('CREATE TABLE variants (id TEXT PRIMARY KEY, load INTEGER, spread INTEGER, payload TEXT)')
+        self.db.execute('CREATE TABLE variants (id TEXT PRIMARY KEY, load INTEGER, spread INTEGER, payload TEXT, summary TEXT)')
         self.db.execute('CREATE INDEX rank ON variants(load, spread, id)')
         self.complete = False
         self.best_count = None
@@ -36,8 +37,10 @@ class SearchJob:
             self.steps += 1
             if variant is not None:
                 self.best_count = variant['count']
-                self.db.execute('INSERT OR IGNORE INTO variants VALUES (?, ?, ?, ?)',
-                    (variant['id'], variant['load_score'], variant['spread_score'], json.dumps(variant, ensure_ascii=False)))
+                summary = {k: variant[k] for k in ('id', 'load_score', 'spread_score', 'missing')}
+                summary['entries'] = [{k: e[k] for k in ('date', 'key', 'name')} for e in variant['entries']]
+                self.db.execute('INSERT OR IGNORE INTO variants VALUES (?, ?, ?, ?, ?)',
+                    (variant['id'], variant['load_score'], variant['spread_score'], json.dumps(variant, ensure_ascii=False), json.dumps(summary, ensure_ascii=False)))
         self.db.commit()
 
     def page(self, page=0, size=20, selected=None):
@@ -55,6 +58,33 @@ class SearchJob:
         self.db.close()
         self.directory.cleanup()
 
+    def recommendations(self, selected=None):
+        def ranked():
+            for row in self.db.execute('SELECT summary FROM variants ORDER BY load, spread, id'):
+                yield json.loads(row[0])
+        picked = shortlist(ranked)
+        retained = None
+        if selected and picked and all(v['id'] != selected for v in picked):
+            row = self.db.execute('SELECT summary FROM variants WHERE id=?', (selected,)).fetchone()
+            if row:
+                retained = selected
+                # Keep the current calendar stable as the search improves;
+                # retain it inside the limit, never as a sixth alternative.
+                picked = picked[:4] + [json.loads(row[0])]
+        variants = []
+        reference = picked[0] if picked else None
+        for item in picked:
+            variant = json.loads(self.db.execute('SELECT payload FROM variants WHERE id=?', (item['id'],)).fetchone()[0])
+            variant['changes'] = changes(reference, item)
+            variant['retained'] = variant['id'] == retained
+            variants.append(variant)
+        return {'variants': variants, 'selected_variant': next((v for v in variants if v['id'] == selected), None),
+                'recommended_id': reference['id'] if reference else None,
+                'total_variants': len(variants), 'considered_variants': self.db.execute('SELECT count(*) FROM variants').fetchone()[0],
+                'page': 0, 'page_size': 5, 'complete': self.complete, 'maximum': self.best_count,
+                'upper_bound': self.problem.upper, 'target': self.problem.target,
+                'search_steps': self.steps, 'pin_errors': self.problem.pin_errors}
+
 
 _jobs = OrderedDict()
 _drafts = OrderedDict()
@@ -71,7 +101,7 @@ def search_page(problem, page=0, selected=None):
         while len(_jobs) > 4:
             _jobs.popitem(last=False)[1].close()
         job.advance()
-        return {'search_id': key, **job.page(page, selected=selected)}
+        return {'search_id': key, **job.recommendations(selected=selected)}
 
 
 def search_key(problem):

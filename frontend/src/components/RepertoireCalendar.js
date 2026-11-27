@@ -4,7 +4,7 @@ const WEEK = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
 const SHORT = { 'урод': 'Урод', 'любовь громова': 'ЛГ', 'цианистый калий': 'ЦК', 'микрополь': 'Микр.' };
 const dayLabel = day => new Intl.DateTimeFormat('ru', { day: 'numeric', month: 'long', weekday: 'short', timeZone: 'UTC' }).format(new Date(`${day}T12:00:00Z`));
 
-export default function RepertoireCalendar({ month, entries, pins, renderEntry, renderDay, focusDate }) {
+export default function RepertoireCalendar({ month, entries, pins, renderEntry, renderDay, focusDate, onSelectDay }) {
   const [selectedDate, setSelectedDate] = useState(() => focusDate || entries[0]?.date || `${month}-01`);
   const first = new Date(`${month}-01T12:00:00Z`);
   const offset = (first.getUTCDay() + 6) % 7;
@@ -27,7 +27,7 @@ export default function RepertoireCalendar({ month, entries, pins, renderEntry, 
         return <button type="button" key={day} data-date={day} className={`repertoire-calendar-day${events.length ? ' repertoire-calendar-day--show' : ''}`}
           aria-pressed={selectedDate === day} aria-controls="repertoire-day-detail"
           aria-label={`${dayLabel(day)}: ${events.map(e => e.name + (e.start_time ? ` в ${e.start_time.slice(11, 16)}` : '')).join(', ') || 'Нет показов'}${fixed ? ', уже в расписании' : ''}${pinned ? ', закреплено' : ''}`}
-          onClick={() => setSelectedDate(day)}>
+          onClick={() => { setSelectedDate(day); onSelectDay?.(day); }}>
           <span>{i + 1}</span>{events.map(e => <small key={e.key}>{labels[e.key]}{e.start_time && <><br />{e.start_time.slice(11, 16)}</>}</small>)}
           {(fixed || pinned) && <span className="repertoire-calendar-mark" aria-hidden="true">{fixed ? '✓' : '●'}</span>}
         </button>;

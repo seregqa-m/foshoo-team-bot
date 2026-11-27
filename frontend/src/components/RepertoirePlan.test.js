@@ -33,9 +33,9 @@ test('shows maximum partial plan, shortfall and per-role reasons; switches alter
   expect(container.textContent).toContain('Не хватает: Урод — 1');
   expect(container.textContent).toContain('Нужны ответы исполнителей');
   expect(container.textContent).toContain('Анна — Нет ответа');
-  const select = container.querySelector('[aria-label="Вариант расписания"]');
-  expect(select.options.length).toBe(2);
-  await act(async () => Simulate.change(select, { target: { value: 'second' } }));
+  expect(container.textContent).toContain('Вариант 1 из 2');
+  expect(container.querySelector('[aria-label="Вариант расписания"]')).toBeNull();
+  await act(async () => container.querySelector('[aria-label="Следующий вариант"]').click());
   expect(container.querySelector('[aria-label="Закрепить Урод, 2028-10-08"]')).not.toBeNull();
 });
 
@@ -67,20 +67,43 @@ test('future month loads without horizon limit and old response does not replace
   response = { ...fixture(), month: '2032-06' };
   await render({ month: '2032-06' });
   await act(async () => resolveOld({ data: fixture() }));
-  expect(client.get.mock.calls.filter(([url]) => url === '/api/planning/repertoire').at(-1)).toEqual(['/api/planning/repertoire', { params: { month: '2032-06', page: 0 } }]);
+  expect(client.get.mock.calls.filter(([url]) => url === '/api/planning/repertoire').at(-1)).toEqual(['/api/planning/repertoire', { params: { month: '2032-06' } }]);
   act(() => button('Параметры').click());
   expect(container.textContent).toContain('Правила на 2032-06');
 });
 
-test('pagination exposes all found variants and unfinished search is explicit', async () => {
-  response.total_variants = 41; response.complete = false;
+test('shortlist uses arrows, hides the exhaustive count and preserves choice while searching', async () => {
+  jest.useFakeTimers();
+  response.considered_variants = 80; response.complete = false;
+  response.variants[1].changes = [{ key: 'catalog:1', name: 'Урод', from: ['2028-10-07'], to: ['2028-10-08'] }];
   await render();
-  expect(container.textContent).toContain('Перебор продолжается');
-  expect(container.textContent).toContain('Страница 1 из 3');
-  response = { ...response, page: 1 };
-  await act(async () => button('→').click());
-  expect(client.get.mock.calls.filter(([url]) => url === '/api/planning/repertoire').at(-1)).toEqual(['/api/planning/repertoire', { params: { month: '2028-10', page: 1 } }]);
-  expect(container.textContent).toContain('Страница 2 из 3');
+  expect(container.textContent).toContain('Подбираем лучшие варианты');
+  expect(container.textContent).not.toContain('80');
+  expect(container.textContent).not.toContain('Страница');
+  await act(async () => container.querySelector('[aria-label="Следующий вариант"]').click());
+  expect(container.textContent).toContain('Вариант 2 из 2');
+  expect(container.textContent).toContain('Отличия от рекомендованного');
+  expect(container.textContent).toContain('7 окт. → 8 окт.');
+  response = { ...response, selected_variant: response.variants[1] };
+  await act(async () => jest.advanceTimersByTime(1000));
+  expect(client.get.mock.calls.filter(([url]) => url === '/api/planning/repertoire').at(-1)).toEqual(['/api/planning/repertoire', { params: { month: '2028-10', selected: 'second' } }]);
+  expect(container.textContent).toContain('Вариант 2 из 2');
+});
+
+test('reading votes pins the viewed variant even when a newer recommendation arrives in flight', async () => {
+  jest.useFakeTimers();
+  await render();
+  const originalGet = client.get.getMockImplementation();
+  let finishRefresh;
+  client.get.mockImplementation((url, options) => url === '/api/planning/repertoire'
+    ? new Promise(resolve => { finishRefresh = resolve; }) : originalGet(url, options));
+  await act(async () => jest.advanceTimersByTime(30_000));
+  await act(async () => container.querySelector('[data-date="2028-10-20"]').click());
+  const newer = { ...response, variants: [response.variants[1], response.variants[0]], recommended_id: 'second', selected_variant: response.variants[0] };
+  client.get.mockImplementation((url, options) => url === '/api/planning/repertoire' ? Promise.resolve({ data: newer }) : originalGet(url, options));
+  await act(async () => finishRefresh({ data: { ...response, variants: [response.variants[1]], selected_variant: null } }));
+  expect(client.get.mock.calls.filter(([url]) => url === '/api/planning/repertoire').at(-1)[1].params.selected).toBe('first');
+  expect(container.querySelector('[data-date="2028-10-20"]').getAttribute('aria-pressed')).toBe('true');
 });
 
 test('refreshes answers automatically and blocks actions on stale data', async () => {
@@ -132,7 +155,7 @@ test('opening another variant for sharing resets the previous preview', async ()
   act(() => Simulate.change(container.querySelector('[aria-label="Чат для согласования"]'), { target: { value: '-100123' } }));
   await act(async () => button('Предпросмотр сообщения').click());
   expect(container.querySelector('pre').textContent).toBe('Первый вариант');
-  await act(async () => Simulate.change(container.querySelector('[aria-label="Вариант расписания"]'), { target: { value: 'second' } }));
+  await act(async () => container.querySelector('[aria-label="Следующий вариант"]').click());
   await act(async () => button('Отправить в чат').click());
   expect(container.querySelector('pre')).toBeNull();
   act(() => Simulate.change(container.querySelector('[aria-label="Чат для согласования"]'), { target: { value: '-100123' } }));
