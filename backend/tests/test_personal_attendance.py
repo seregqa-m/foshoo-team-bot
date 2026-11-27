@@ -41,7 +41,8 @@ class PersonalAttendanceTests(unittest.TestCase):
     def setUp(self):
         self.engine = create_engine('sqlite://', connect_args={'check_same_thread': False}, poolclass=StaticPool)
         Base.metadata.create_all(self.engine)
-        self.db = sessionmaker(bind=self.engine)()
+        # Match production: new rows are not queryable until explicitly flushed.
+        self.db = sessionmaker(bind=self.engine, autoflush=False)()
         self.day = date(2026, 12, 19)
         self.other_day = date(2026, 12, 20)
         record_answers(self.db, 42, 'actor', 'availability:1', {self.day: 'no', self.other_day: 'yes'})

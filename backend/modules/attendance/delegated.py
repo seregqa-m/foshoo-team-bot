@@ -111,6 +111,8 @@ async def change_participant_answer(target_id: int, payload: DelegatedAnswer,
             voter = db.get(VoterRegistration, target_id)
             voter.membership_status = 'member'
             record_answers(db, target_id, target.username, source, {payload.date: payload.answer})
+            # SessionLocal disables autoflush; a first answer is still pending.
+            db.flush()
             row = db.get(DayAnswer, (target_id, payload.date))
             row.actor_name = voter.actor_name or row.actor_name
             db.commit()
