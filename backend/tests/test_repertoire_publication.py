@@ -91,7 +91,17 @@ class RepertoirePublicationTests(unittest.TestCase):
         self.assertTrue(saved['locked']); self.assertIsNone(saved['lock_error'])
         self.assertEqual(len(saved['variants']), 1)
         self.assertEqual([e['date'] for e in saved['variants'][0]['entries']], ['2028-10-07', '2028-10-14'])
-        self.assertTrue(all(e['cast'] for e in saved['variants'][0]['entries']))
+        self.assertTrue(all(not e['cast'] for e in saved['variants'][0]['entries']))
+        stored = json.loads(self.db.get(RepertoireAffiche, '2028-10').payload)
+        self.assertTrue(all(not e['cast'] for e in stored['entries']))
+        # Old audit payloads must not turn provisional solver choices into assignments.
+        old = self.db.get(RepertoirePublication, preview['id'])
+        payload = json.loads(old.payload)
+        for entry in payload['variant']['entries']:
+            entry['cast'] = {'Роль': 'Анна'}
+        old.payload = json.dumps(payload); self.db.commit()
+        source = load_snapshot(self.db, self.client, '2028-10', fresh=True)
+        self.assertTrue(all(not e['cast'] for e in source['fixed']))
         preview_req = self.request([])
         with self.assertRaises(HTTPException): review_draft(preview_req, self.db)
         unlock_affiche(UnlockRequest(month='2028-10', expected_revision=saved['revision']), self.http, self.db)

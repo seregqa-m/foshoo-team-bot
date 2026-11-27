@@ -1,4 +1,5 @@
 """Read the saved monthly affiche and explicitly unlock it without calendar rollback."""
+import copy
 import json
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -16,6 +17,16 @@ from .repertoire_editing import review_entries
 router = APIRouter()
 
 
+def without_cast_assignments(variant):
+    """Publishing dates does not appoint the solver's provisional actors."""
+    result = copy.deepcopy(variant)
+    for entry in result['entries']:
+        entry['cast'] = {}
+    result['load_warnings'] = []
+    result['load_score'] = 0
+    return result
+
+
 def pair_set(entries):
     return {(e['date'], e['key']) for e in entries}
 
@@ -27,7 +38,7 @@ def check_locked_day(db, month, day, key):
 
 
 def locked_result(row, source, rules):
-    saved = json.loads(row.payload)
+    saved = without_cast_assignments(json.loads(row.payload))
     variant, error, pending = saved, None, False
     try:
         fixed = pair_set([e for e in source['fixed'] if e['date'].startswith(source['month'])])

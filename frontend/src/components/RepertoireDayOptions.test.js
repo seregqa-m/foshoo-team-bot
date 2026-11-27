@@ -32,7 +32,8 @@ test('a planned date offers replacements while a fixed show remains read-only', 
   response.shows[1].reason = null;
   const current = { date: '2028-10-07', key: '1' };
   await render({ entries: [current] });
-  expect(container.textContent).toContain('Выбран в этом варианте');
+  expect(container.textContent).toContain('Ответы на эту дату · Урод');
+  expect(container.textContent).toContain('Кто как ответил');
   expect(button('Заменить на «Другой»').disabled).toBe(false);
   await render({ entries: [{ ...current, fixed: true }] });
   expect(button('Заменить на «Другой»').disabled).toBe(true);
@@ -55,4 +56,24 @@ test('late response from a previously selected date is ignored', async () => {
   await act(async () => resolveOld({ data: response }));
   expect(container.textContent).toContain('Новая дата');
   expect(container.textContent).not.toContain('Урод');
+});
+
+test('selected show has a live answer tile without assigning people to roles', async () => {
+  response.shows[0].votes = { yes: 1, no: 0, unknown: 1, unanswered: 2, other: 3 };
+  response.shows[0].roles[0].actors[0].vote = 'yes';
+  response.shows[0].roles.push({ name: 'Вторая роль', actors: [response.shows[0].roles[0].actors[0]] });
+  const current = { date: '2028-10-07', key: '1', name: 'Урод', cast: { Роль: 'Старое назначение' } };
+  await render({ entries: [current] });
+  let tile = container.querySelector('[aria-label="Ответы на «Урод»"]');
+  expect(tile.textContent).toContain('Не определились: 1');
+  expect(tile.textContent).toContain('Нет ответа: 2');
+  expect(tile.textContent).not.toContain('Старое назначение');
+  expect(tile.textContent).not.toContain('Вторая роль');
+  expect(tile.textContent.match(/Анна/g)).toHaveLength(1);
+  response = { ...response, checked_at: 'later', shows: [{ ...response.shows[0], votes: { yes: 0, no: 1, unknown: 1, unanswered: 2, other: 3 } }] };
+  client.get.mockResolvedValue({ data: response });
+  await render({ entries: [current], data: { ...data, checked_at: 'later' } });
+  tile = container.querySelector('[aria-label="Ответы на «Урод»"]');
+  expect(tile.textContent).toContain('Смогут: 0');
+  expect(tile.textContent).toContain('Не смогут: 1');
 });

@@ -143,8 +143,9 @@ test('labels a rehearsal slot and explains how calendar assignment works', async
   await render();
   expect(container.textContent).toContain('Репетиционный слот');
   expect(container.textContent).toContain('для любого спектакля с полным составом');
-  expect(container.textContent).toContain('В календаре: Урод [Реп]');
-  expect(container.textContent).toContain('какую репетицию заменит спектакль');
+  expect([...container.querySelectorAll('summary')].some(s => s.textContent === 'Состав')).toBe(false);
+  expect(container.textContent).not.toContain('Летте — Анна');
+  expect(container.textContent).not.toContain('Состав собран');
   expect(container.textContent).not.toContain('Даты с событиями календаря заняты');
 });
 

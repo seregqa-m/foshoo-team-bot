@@ -43,14 +43,15 @@ def day_choices(month: str, day: date, db: Session = Depends(get_db)):
         if cell is None:
             continue
         actors = {norm(a['name']): a for r in cell['roles'] for a in r['actors']}
-        votes = Counter(a['status'] for a in actors.values())
+        votes = Counter(a['vote'] for a in actors.values())
+        answer_roles = [{**r, 'actors': [{**a, 'status': a['vote']} for a in r['actors']]} for r in cell['roles']]
         reason = cell['reason']
         if pin and pin.key != diagnostic['key']:
             reason = 'На эту дату закреплён другой спектакль. Сначала снимите закрепление.'
         shows.append({**cell, 'key': diagnostic['key'], 'name': diagnostic['name'], 'reason': reason,
-                      'covered': len(match_roles(cell['roles'])), 'total': len(cell['roles']),
-                      'votes': {'yes': votes['yes'] + votes['assigned'], 'no': votes['no'],
-                                'other': len(actors) - votes['yes'] - votes['assigned'] - votes['no']}})
+                      'covered': len(match_roles(answer_roles, ('yes',))), 'total': len(cell['roles']),
+                      'votes': {'yes': votes['yes'], 'no': votes['no'], 'unknown': votes['unknown'],
+                                'unanswered': votes['unanswered'], 'other': votes['unknown'] + votes['unanswered']}})
     return {'month': month, 'day': day.isoformat(), 'fingerprint': source['fingerprint'],
             'revision': revision, 'shows': shows}
 

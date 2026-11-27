@@ -234,12 +234,9 @@ export default function RepertoirePlan({ month, dataVersion, userId, isSuperAdmi
         <RepertoireCalendar key={`${month}:${selected.id}`} month={month} focusDate={focusDate} entries={selected.entries} pins={data.rules.pins} onSelectDay={() => { if (!selected.manual) selectedId.current = selected.id; }}
           renderDay={day => <RepertoireDayOptions key={day} month={month} day={day} data={data} entries={selected.entries} disabled={editingDisabled} onReplace={replaceShow} onRefresh={refreshNow} />} renderEntry={entry => {
           const pinned = data.rules.pins.some(p => p.day === entry.date && p.key === entry.key);
-          return <div className="repertoire-date" key={`${entry.date}:${entry.key}`}><div className="repertoire-row"><div><span className="repertoire-date-label">{prettyDate(entry.date)}{entry.start_time && ` · ${entry.start_time.slice(11, 16)}`}</span><strong>{entry.name}</strong><small>{entry.fixed ? 'Уже в расписании' : data.locked ? 'В закреплённой афише' : pinned ? 'Закреплено в плане' : draftError ? 'Требует проверки' : 'Состав собран'}</small>{entry.rehearsals?.length > 0 && <small>Репетиционный слот</small>}</div>
+          return <div className="repertoire-date" key={`${entry.date}:${entry.key}`}><div className="repertoire-row"><div><span className="repertoire-date-label">{prettyDate(entry.date)}{entry.start_time && ` · ${entry.start_time.slice(11, 16)}`}</span><strong>{entry.name}</strong><small>{entry.fixed ? 'Уже в расписании' : data.locked ? 'В закреплённой афише' : pinned ? 'Закреплено в плане' : draftError ? 'Требует проверки' : 'В плане'}</small>{entry.rehearsals?.length > 0 && <small>Репетиционный слот</small>}</div>
             {!entry.fixed && <button type="button" className="btn btn-secondary" aria-label={`Удалить ${entry.name}, ${entry.date}`} disabled={editingDisabled || pinned} onClick={() => replaceShow(entry.date, null)}>Удалить из афиши</button>}
-          </div><details><summary>Состав</summary>{Object.entries(entry.cast).map(([role, actor]) => <p key={role} className="repertoire-note">{role} — {actor}</p>)}
-            {!Object.keys(entry.cast).length && <p className="repertoire-note">Состав не указан; нагрузка этого показа не проверена.</p>}
-            {entry.rehearsals?.length > 0 && <p className="repertoire-note">В календаре: {entry.rehearsals.map(r => r.title).join('; ')}. При закреплении афиши будет показано, какую репетицию заменит спектакль.</p>}
-          </details></div>;
+          </div></div>;
         }} />
         <button type="button" className="btn btn-primary repertoire-share-button" disabled={stale || !selected.entries.length} onClick={() => setShare({ data: copy(data), variant: copy(selected) })}>Отправить в чат</button>
       </>}

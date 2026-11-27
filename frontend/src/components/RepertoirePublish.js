@@ -60,7 +60,7 @@ export default function RepertoirePublish({ data, variant, publication, onClose,
   };
   return <div className="repertoire-modal-overlay"><section className="repertoire-modal" role="dialog" aria-modal="true" aria-labelledby="publish-title" tabIndex={-1} ref={panel} onKeyDown={keyboard}>
     <h3 id="publish-title">Закрепить афишу и обновить календарь</h3>
-    <p>Репетиции ниже будут переименованы в спектакли с указанным временем. На свободные даты будут созданы новые события. Афиша месяца сохранится для всех администраторов.</p>
+    <p>Репетиции ниже будут переименованы в спектакли с указанным временем. На свободные даты будут созданы новые события. Афиша месяца сохранится для всех администраторов. Исполнители на роли не назначаются.</p>
     <p className="repertoire-note">Из повторяющейся серии меняется только выбранная дата. Остальные события сохраняются. Снятие закрепления не откатит изменения календаря. Сообщения в чат не отправляются.</p>
     {busy && <p role="status">{preview ? 'Сохраняем календарь…' : 'Проверяем календарь и готовим изменения…'}</p>}
     {error && <p role="alert" className="planning-warning">{error}</p>}

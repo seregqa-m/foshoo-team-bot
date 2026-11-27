@@ -107,7 +107,13 @@ def build_plan(source, month):
                         status, reason = 'busy', f'Назначение: {raw}'
                     else:
                         status, reason = 'unknown', f'Нужна проверка: {raw}'
-                    actors.append({'name': actor_name, 'status': status, 'reason': reason})
+                    # Availability answers are distinct from an assigned role.
+                    answers = source.get('availability', {}).get(slot['date'], {})
+                    if actor_key in answers:
+                        vote = answer if answer in ('yes', 'no', 'unknown') else 'unanswered'
+                    else:
+                        vote = {'да': 'yes', 'нет': 'no'}.get(norm(raw), 'unanswered') if len(matches) == 1 else 'unanswered'
+                    actors.append({'name': actor_name, 'status': status, 'reason': reason, 'vote': vote})
                 roles.append({'name': role['name'], 'actors': actors})
             suggested = match_roles(roles)
             possible = match_roles(roles, ('yes', 'assigned', 'unknown'))

@@ -58,7 +58,7 @@ class RepertoireEditingTests(unittest.TestCase):
         self.assertEqual({s['name'] for s in result['shows']}, {'Урод', 'Другой'})
         for show in result['shows']:
             self.assertIsNone(show['reason'])
-            self.assertEqual(show['votes'], {'yes': 1, 'no': 0, 'other': 0})
+            self.assertEqual(show['votes'], {'yes': 1, 'no': 0, 'unknown': 0, 'unanswered': 0, 'other': 0})
             self.assertEqual(show['covered'], 1)
             self.assertEqual(show['roles'][0]['actors'][0]['name'], 'Анна')
         self.assertEqual(self.db.query(PlanningAssignment).count(), 0)
@@ -67,6 +67,16 @@ class RepertoireEditingTests(unittest.TestCase):
         result = day_choices('2028-10', date(2028, 10, 20), self.db)
         self.assertEqual(len(result['shows']), 2)
         self.assertTrue(all(s['reason'] and s['votes']['other'] == 1 for s in result['shows']))
+
+    def test_day_votes_are_live_unique_answers_not_role_assignments(self):
+        self.source['casts'].append(['Урод', 'Вторая роль', 'Анна'])
+        self.source['schedule'] = [['Актёр', '7 окт 2028'], ['', 'Урод'], ['Анна', 'Летте']]
+        for value, bucket in [('yes', 'yes'), ('no', 'no'), ('unknown', 'unknown'), ('retracted', 'unanswered')]:
+            self.answer('2028-10-07', value)
+            selected = next(s for s in day_choices('2028-10', date(2028, 10, 7), self.db)['shows'] if s['key'] == 'catalog:1')
+            self.assertEqual(selected['votes'][bucket], 1)
+            self.assertEqual(sum(selected['votes'][k] for k in ('yes', 'no', 'unknown', 'unanswered')), 1)
+            self.assertEqual(selected['covered'], 1 if value == 'yes' else 0)
 
     def test_exact_replacement_retains_other_date_and_exposes_shortfall_and_excess(self):
         result = self.review([('2028-10-07', 'catalog:2'), ('2028-10-14', 'catalog:1')])

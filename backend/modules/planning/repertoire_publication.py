@@ -19,7 +19,7 @@ from .models import RepertoireAffiche, RepertoirePublication
 from .repertoire import RepertoireProblem, digest
 from .repertoire_source import get_rules
 from .repertoire_search import cached_variant, search_key
-from .repertoire_affiche import LockRequest, save_revision
+from .repertoire_affiche import LockRequest, save_revision, without_cast_assignments
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -101,7 +101,7 @@ def preview_publication(req: LockRequest, request: Request, db: Session = Depend
                     'start_time': e['start'].get('dateTime', e['start'].get('date')), 'end_time': e['end'].get('dateTime', e['end'].get('date')),
                     'location': e.get('location', ''), 'description': e.get('description', ''), 'all_day': 'date' in e['start'],
                     'recurring': bool(e.get('recurringEventId'))} for e in targets]})
-        payload = {'variant': variant, 'actions': actions, 'revision': revision, 'fingerprint': source['fingerprint'],
+        payload = {'variant': without_cast_assignments(variant), 'actions': actions, 'revision': revision, 'fingerprint': source['fingerprint'],
                    'source_fingerprint': source['source_fingerprint'], 'events': {e['id']: e['etag'] for e in events}}
         op_id = digest([request.state.telegram_user.id, req.month, payload])
         row = db.get(RepertoirePublication, op_id)
@@ -228,7 +228,7 @@ def confirm_publication(req: ConfirmPublication, request: Request, db: Session =
             saved = db.get(RepertoireAffiche, row.month)
             if saved is None:
                 saved = RepertoireAffiche(month=row.month); db.add(saved)
-            saved.payload = json.dumps(payload['variant'], ensure_ascii=False)
+            saved.payload = json.dumps(without_cast_assignments(payload['variant']), ensure_ascii=False)
             row.status, row.error = 'complete', None
             db.commit()
             return publication_data(row)
