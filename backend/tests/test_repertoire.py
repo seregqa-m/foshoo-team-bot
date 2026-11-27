@@ -149,7 +149,7 @@ class RepertoireSolverTests(unittest.TestCase):
 
     def test_start_times_for_every_weekday_and_both_formats(self):
         for day, small, large in [(2, '20:00', None), (3, '20:00', None), (4, '20:00', None), (5, '20:00', None),
-                                   (6, '19:00', '19:00'), (7, '19:00', '18:00'), (8, '19:00', '18:00')]:
+                                   (6, '19:00', '19:00'), (7, '19:00', '19:00'), (8, '19:00', '18:00')]:
             for name, expected in [('Урод', small), ('Цианистый Калий', large)]:
                 window = performance_window(date(2028, 10, day), name)
                 if expected is None:
@@ -166,8 +166,8 @@ class RepertoireSolverTests(unittest.TestCase):
         problem = RepertoireProblem(data, rules, date(2026, 11, 27))
         results = [v for v in problem.search() if v is not None]
         self.assertEqual(results[0]['count'], 2)
-        self.assertEqual(results[0]['entries'][1]['start_time'], '2027-01-30T18:00:00+03:00')
-        self.assertEqual(results[0]['entries'][1]['end_time'], '2027-01-30T21:00:00+03:00')
+        self.assertEqual(results[0]['entries'][1]['start_time'], '2027-01-30T19:00:00+03:00')
+        self.assertEqual(results[0]['entries'][1]['end_time'], '2027-01-30T22:00:00+03:00')
         self.assertEqual(results[0]['spread_warnings'][0]['gap'], 13)
 
     def test_overlap_depends_on_show_window_and_exact_boundaries(self):
@@ -176,11 +176,12 @@ class RepertoireSolverTests(unittest.TestCase):
         event = {'title': 'Лаба', 'start_time': '2028-10-07T15:30:00Z', 'end_time': '2028-10-07T16:00:00Z'}
         data['slots'][0]['calendar_events'] = [event]  # 18:30–19:00 Moscow
         problem, _ = variants(data, rules)
-        self.assertEqual(set(problem.options['2028-10-07']), {'0'})
-        self.assertIn('Лаба (18:30–19:00)', problem.diagnostics[1]['dates'][0]['reason'])
-        event.update(start_time='2028-10-07T21:00:00+03:00', end_time='2028-10-08T01:00:00+03:00')
+        self.assertEqual(set(problem.options['2028-10-07']), {'0', '1'})
+        event['end_time'] = '2028-10-07T19:01:00+03:00'
+        self.assertNotIn('2028-10-07', variants(data, rules)[0].options)
+        event.update(start_time='2028-10-07T22:00:00+03:00', end_time='2028-10-08T01:00:00+03:00')
         self.assertEqual(set(variants(data, rules)[0].options['2028-10-07']), {'0', '1'})
-        event['start_time'] = '2028-10-07T20:59:00+03:00'
+        event['start_time'] = '2028-10-07T21:59:00+03:00'
         self.assertEqual(set(variants(data, rules)[0].options['2028-10-07']), {'0'})
         event.update(start_time='2028-10-06T23:00:00+03:00', end_time='2028-10-08T01:00:00+03:00')
         self.assertNotIn('2028-10-07', variants(data, rules)[0].options)
@@ -309,6 +310,14 @@ class RepertoireSourceTests(unittest.TestCase):
                        'schedule': [['Актёр'], [''], ['Анна']]}
         self.client.get_planning_data.side_effect = lambda: copy.deepcopy(self.source)
         self.client.get_actor_mapping.return_value = {'anna': 'Анна'}
+
+    def test_changing_show_hours_invalidates_prepared_snapshots(self):
+        current = load_snapshot(self.db, self.client, '2028-10', fresh=True)
+        with patch.dict('modules.planning.show_times.PERFORMANCE_START_HOURS',
+                        {'large': (None, None, None, None, 19, 18, 18)}):
+            old_hours = load_snapshot(self.db, self.client, '2028-10', fresh=True)
+        self.assertEqual(current['source_fingerprint'], old_hours['source_fingerprint'])
+        self.assertNotEqual(current['fingerprint'], old_hours['fingerprint'])
 
     def tearDown(self):
         self.db.close()

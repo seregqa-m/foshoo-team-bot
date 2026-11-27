@@ -17,7 +17,7 @@ from sheets_client import _format_schedule_header
 from .models import PlanningAssignment, RepertoireSettings
 from .repertoire import Rules, default_rule, digest
 from .services import build_plan, norm
-from .show_times import show_format
+from .show_times import show_format, PERFORMANCE_START_HOURS
 
 _sheet_lock = Lock()
 _sheet_cache = {}
@@ -201,7 +201,8 @@ def load_snapshot(db, client, month, fresh=False):
     result = {'month': month, 'shows': [{'key': show_keys[n], 'name': n} for n in names],
               'slots': slots, 'fixed': sorted(fixed.values(), key=lambda s: (s['date'], s['key'])),
               'warnings': sorted(set(warnings)), 'source_fingerprint': plan['fingerprint']}
-    result['fingerprint'] = digest([result, event_signature, [(op.id, op.status, op.payload) for op in operations.values()]])
+    # Prepared shares/publications must be reviewed again when show times change.
+    result['fingerprint'] = digest([result, event_signature, [(op.id, op.status, op.payload) for op in operations.values()], PERFORMANCE_START_HOURS])
     return result
 
 

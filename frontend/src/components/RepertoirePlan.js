@@ -47,7 +47,7 @@ function RulesEditor({ data, busy, conflict, onSave, onCancel }) {
           <div className="repertoire-days" aria-label={`Дни: ${names[rule.key]}`}>{DAYS.map((day, index) => <button type="button" className="btn btn-secondary" key={day} aria-pressed={rule.weekdays.includes(index)}
             disabled={rule.format === 'large' && index < 4}
             onClick={() => { const days = rule.weekdays.includes(index) ? rule.weekdays.filter(d => d !== index) : [...rule.weekdays, index].sort(); if (days.length) update(rule.key, { weekdays: days }); }}>{day}</button>)}</div>
-          <p className="repertoire-note">{rule.format === 'large' ? 'Начало: пт — 19:00, сб–вс — 18:00.' : 'Начало: пн–чт — 20:00, пт–вс — 19:00.'}</p>
+          <p className="repertoire-note">{rule.format === 'large' ? 'Начало: пт–сб — 19:00, вс — 18:00.' : 'Начало: пн–чт — 20:00, пт–вс — 19:00.'}</p>
           <label className="repertoire-check"><input type="checkbox" checked={rule.spread} onChange={e => update(rule.key, { spread: e.target.checked })} />Разносить показы по месяцу</label>
           <label className="repertoire-field">Желаемый интервал, дней<input className="form-input" type="number" min="1" max="31" required disabled={!rule.spread} value={rule.gap} onChange={e => update(rule.key, { gap: e.target.value === '' ? '' : Number(e.target.value) })} /></label>
           <label className="repertoire-field">Планировать начиная с<input className="form-input" type="date" value={rule.start || ''} onChange={e => update(rule.key, { start: e.target.value || null })} /></label>

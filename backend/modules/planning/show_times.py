@@ -5,16 +5,21 @@ from core.time import as_local
 from .services import norm
 
 
+PERFORMANCE_START_HOURS = {
+    'small': (20, 20, 20, 20, 19, 19, 19),
+    'large': (None, None, None, None, 19, 19, 18),
+}
+
+
 def show_format(name):
     return 'large' if norm(name) in ('цианистый калий', 'микрополь') else 'small'
 
 
 def performance_window(day, name, kind=None):
     kind = kind or show_format(name)
-    weekday = day.weekday()
-    if kind == 'large' and weekday < 4:
+    hour = PERFORMANCE_START_HOURS[kind][day.weekday()]
+    if hour is None:
         return None
-    hour = 20 if weekday < 4 else 19 if weekday == 4 or kind == 'small' else 18
     start = as_local(datetime.combine(day, time(hour)))
     return start, start + timedelta(minutes=180 if kind == 'large' else 90)
 
