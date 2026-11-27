@@ -27,23 +27,39 @@ class RepertoireRecommendationTests(unittest.TestCase):
         self.assertEqual(result[0]['id'], values[0]['id'])
         self.assertTrue(all(different(a, b) for i, a in enumerate(result) for b in result[i + 1:]))
 
-    def test_nearby_moves_are_collapsed_without_padding_to_five(self):
+    def test_nearby_moves_fill_free_places_after_diverse_choices(self):
         values = [variant(f'{day:02}', (1, day)) for day in range(15, 21)]
-        self.assertEqual(len(pick(values)), 1)
+        self.assertEqual(len(pick(values)), 5)
         values.append(variant('week', (1, 22)))
-        self.assertEqual(len(pick(values)), 2)
+        self.assertEqual(len(pick(values)), 5)
+        self.assertIn('week', {v['id'] for v in pick(values)})
+        self.assertEqual(len(pick(values[:2])), 2)
 
-    def test_diversity_does_not_introduce_extra_actor_load_or_far_worse_spacing(self):
+    def test_soft_tradeoffs_remain_available_after_better_alternatives(self):
         best = variant('a')
         load = variant('b', (8, 23), load=1)
         spread = variant('c', (9, 24), spread=8)
         allowed = variant('d', (10, 25), spread=7)
-        self.assertEqual([v['id'] for v in pick([spread, load, allowed, best])], ['a', 'd'])
+        self.assertEqual([v['id'] for v in pick([spread, load, allowed, best])], ['a', 'd', 'c', 'b'])
+
+    def test_nearby_unloaded_schedules_take_priority_over_loaded_diverse_ones(self):
+        values = [variant(str(i), (1, 15 + i)) for i in range(5)]
+        values.append(variant('loaded', (8, 25), load=1))
+        result = pick(values)
+        self.assertEqual(len(result), 5)
+        self.assertTrue(all(v['load_score'] == 0 for v in result))
+
+    def test_same_dates_and_shows_never_fill_places_with_other_casts(self):
+        best = variant('a')
+        duplicate = copy.deepcopy(best)
+        duplicate['id'] = 'b'
+        duplicate['entries'][0]['cast'] = {'Роль': 'Борис'}
+        self.assertEqual([v['id'] for v in pick([best, duplicate])], ['a'])
 
     def test_different_shortfalls_keep_their_best_representatives(self):
         values = [variant('best-a', missing=('a',)), variant('near-a', (1, 16), missing=('a',)),
                   variant('best-b', load=1, missing=('b',)), variant('best-c', spread=20, missing=('c',))]
-        self.assertEqual({v['id'] for v in pick(values)}, {'best-a', 'best-b', 'best-c'})
+        self.assertEqual({v['id'] for v in pick(values)}, {'best-a', 'near-a', 'best-b', 'best-c'})
 
     def test_more_than_five_shortfalls_still_respect_the_limit(self):
         self.assertEqual(len(pick([variant(str(i), missing=(str(i),)) for i in range(9)])), 5)

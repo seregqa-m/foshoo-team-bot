@@ -124,9 +124,10 @@ def projected_casts(roles, relevant):
     Match required actors to roles first, then augment to cover the remaining
     roles. Augmentation preserves each required actor's participation.
     """
+    available = [{norm(a['name']): a['name'] for a in role['actors']
+                  if a['status'] in ('yes', 'assigned')} for role in roles]
     def match(required, excluded):
-        choices = [[norm(a['name']) for a in role['actors']
-                    if a['status'] in ('yes', 'assigned') and norm(a['name']) not in excluded] for role in roles]
+        choices = [[a for a in actors if a not in excluded] for actors in available]
         owners = {}
         def place_actor(actor, seen):
             for i, actors in enumerate(choices):
@@ -152,7 +153,7 @@ def projected_casts(roles, relevant):
         for i in range(len(roles)):
             if i not in owners and not place_role(i, set()):
                 return None
-        return {roles[i]['name']: next(a['name'] for a in roles[i]['actors'] if norm(a['name']) == actor)
+        return {roles[i]['name']: available[i][actor]
                 for actor, i in assigned.items()}
 
     actors = sorted(relevant)
@@ -256,6 +257,9 @@ class RepertoireProblem:
         mandatory = []
         for day, key, cell in selected:
             cache_key = (day, key)
+            if not critical[day]:
+                mandatory.append({'date': day, 'cast': {}})
+                continue
             if cache_key not in self._mandatory:
                 required = []
                 available = {norm(a['name']): a['name'] for r in cell['roles'] for a in r['actors'] if a['status'] in ('yes', 'assigned')}
@@ -289,7 +293,10 @@ class RepertoireProblem:
                     best = (score, entries.copy(), warnings)
                 return
             day, key, cell = selected[index]
-            for cast in projected_casts(cell['roles'], critical[day]):
+            # Forced actors cannot vary between casts; branching on their
+            # inclusion only produces infeasible exclusions.
+            forced = {norm(a) for a in mandatory[index]['cast'].values()}
+            for cast in projected_casts(cell['roles'], critical[day] - forced):
                 yield None
                 if cast is not None:
                     yield from visit(index + 1, entries + [{'date': day, 'key': key, 'name': self.names[key], 'cast': cast,
@@ -337,25 +344,43 @@ class RepertoireProblem:
         suffix = [Counter() for _ in range(len(days) + 1)]
         for i in range(len(days) - 1, -1, -1):
             suffix[i] = suffix[i + 1] + Counter(self.options[days[i]].keys())
-        def visit(index, needed, capacities, chosen):
+        fixed_days = {date.fromisoformat(e['date']).toordinal() for e in self.fixed}
+        base_days = fixed_days | {date.fromisoformat(day).toordinal() for day, _, _ in self.pinned}
+        ordinals = {day: date.fromisoformat(day).toordinal() for day in days}
+
+        def has_run(selected_days):
+            return any(all(day + offset in selected_days for offset in range(1, self.rules.streak))
+                       for day in selected_days)
+
+        # Start with schedules that cannot create actor streaks at all. Their
+        # casts need no cross-day optimization. The complementary pass still
+        # examines every other schedule, including consecutive shows with
+        # different actors. Partition by dates rather than storing seen IDs.
+        separated_first = self.rules.load_mode != 'ignore' and not has_run(base_days)
+
+        def visit(index, needed, capacities, chosen, selected_days, separated):
             yield None
             if needed == 0:
-                yield from self._best_cast(self.pinned + chosen)
+                if not separated_first or has_run(selected_days) != separated:
+                    yield from self._best_cast(self.pinned + chosen)
                 return
             if index == len(days) or len(days) - index < needed or sum(min(n, suffix[index][key]) for key, n in capacities.items()) < needed:
                 return
             day = days[index]
-            for key in self.options[day]:
-                if capacities[key] > 0:
-                    capacities[key] -= 1
-                    yield from visit(index + 1, needed - 1, capacities, chosen + [(day, key, self.options[day][key])])
-                    capacities[key] += 1
-            yield from visit(index + 1, needed, capacities, chosen)
+            next_days = selected_days | {ordinals[day]}
+            if not separated or not has_run(next_days):
+                for key in self.options[day]:
+                    if capacities[key] > 0:
+                        capacities[key] -= 1
+                        yield from visit(index + 1, needed - 1, capacities, chosen + [(day, key, self.options[day][key])], next_days, separated)
+                        capacities[key] += 1
+            yield from visit(index + 1, needed, capacities, chosen, selected_days, separated)
         for size in range(self.upper - self.counted_fixed - len(self.pinned), -1, -1):
             found = False
-            for result in visit(0, size, self.remaining.copy(), []):
-                if result is not None:
-                    found = True
-                yield result
+            for separated in ([True, False] if separated_first else [False]):
+                for result in visit(0, size, self.remaining.copy(), [], base_days, separated):
+                    if result is not None:
+                        found = True
+                    yield result
             if found:
                 return

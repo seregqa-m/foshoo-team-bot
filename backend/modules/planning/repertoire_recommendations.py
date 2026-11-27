@@ -26,9 +26,9 @@ def different(a, b):
 def shortlist(ranked, limit=5):
     """ranked is a repeatable iterator factory, ordered by load/spread/id.
 
-    Keep the best representative of distinct shortfalls first. Within each
-    profile allow at most one extra week of spacing penalty and no extra actor
-    load; then greedily suppress near-duplicate schedules. Never pad the list.
+    Keep distinct shortfalls and diverse schedules of comparable quality first.
+    Fill remaining places with nearby moves, then schedules with soft tradeoffs.
+    Soft preferences rank alternatives; they never hide all remaining choices.
     """
     leaders = {}
     selected = []
@@ -39,11 +39,17 @@ def shortlist(ranked, limit=5):
             selected.append(variant)
             if len(selected) == limit:
                 return selected
-    for variant in ranked():
-        leader = leaders[profile(variant)]
-        if variant['load_score'] > leader['load_score'] or variant['spread_score'] > leader['spread_score'] + 7:
-            continue
-        if all(different(variant, other) for other in selected):
+    for comparable, diverse in ((True, True), (True, False), (False, True), (False, False)):
+        if len(selected) >= limit:
+            break
+        for variant in ranked():
+            leader = leaders[profile(variant)]
+            if comparable and (variant['load_score'] > leader['load_score'] or variant['spread_score'] > leader['spread_score'] + 7):
+                continue
+            if any(pairs(variant) == pairs(other) for other in selected):
+                continue
+            if diverse and not all(different(variant, other) for other in selected):
+                continue
             selected.append(variant)
             if len(selected) == limit:
                 break

@@ -36,6 +36,18 @@ test('one recommendation is not padded and manual drafts do not silently switch'
 test('ongoing search and retention explain recommendation changes', () => {
   render({ complete: false });
   expect(container.textContent).toContain('среди найденных');
+  expect(container.textContent).toContain('Лучший из найденных');
   render({ variants: [variants[0], { ...variants[1], retained: true }], selected: variants[1] });
   expect(container.textContent).toContain('Ваш выбор сохранён');
+});
+
+test('alternatives explain additional actor load and worse spacing', () => {
+  const options = [{ ...variants[0], load_score: 0, spread_score: 7 },
+    { ...variants[1], load_score: 2, spread_score: 10 }];
+  render({ variants: options, selected: options[1] });
+  expect(container.textContent).toContain('Больше игровых дней подряд у актёров');
+  expect(container.textContent).toContain('Разнос повторных показов хуже');
+  render({ variants: options, selected: options[0] });
+  expect(container.textContent).not.toContain('Больше игровых дней подряд у актёров');
+  expect(container.textContent).not.toContain('Разнос повторных показов хуже');
 });

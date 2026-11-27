@@ -2,7 +2,7 @@ import copy
 import os
 import random
 import unittest
-from itertools import product
+from itertools import combinations, product
 from datetime import date, datetime
 from unittest.mock import MagicMock, patch
 
@@ -48,6 +48,51 @@ def variants(snapshot, rules):
 
 
 class RepertoireSolverTests(unittest.TestCase):
+    def test_january_starts_with_unloaded_schedules_and_keeps_all_275(self):
+        ready = [{16, 17, 18, 23, 25, 30, 31}, {23, 24, 30},
+                 {16, 17, 23, 24, 25, 30, 31}, {16, 17, 22, 23, 24, 30}]
+        data = fixture({f'2027-01-{d:02}': [i for i, dates in enumerate(ready) if d in dates]
+                        for d in sorted(set.union(*ready))},
+                       ('Любовь Громова', 'Микрополь', 'Урод', 'Цианистый Калий'),
+                       casts={i: [{'name': 'Роль', 'actors': [actor('Общий актёр')]}] for i in range(4)})
+        data['month'] = '2027-01'
+        rules = Rules(shows=[ShowRule(key=str(i), count=n) for i, n in enumerate((2, 2, 1, 2))])
+        problem = RepertoireProblem(data, rules, date(2026, 11, 27))
+        results = []
+        first_five_steps = None
+        for steps, result in enumerate(problem.search()):
+            if result is not None:
+                results.append(result)
+                if len(results) == 5:
+                    first_five_steps = steps
+        self.assertEqual(len(results), 275)
+        self.assertEqual(len({v['id'] for v in results}), 275)
+        self.assertLess(first_five_steps, 1000)
+        self.assertTrue(all(v['count'] == 7 and v['load_score'] == 0 for v in results[:5]))
+        self.assertTrue(any(v['load_score'] > 0 for v in results))
+
+    def test_search_partition_preserves_every_schedule_with_pins_and_existing_runs(self):
+        days = [f'2028-10-{n:02}' for n in range(1, 6)]
+        for mode, threshold, existing_run in product(('prefer', 'forbid', 'ignore'), (2, 3), (False, True)):
+            data = fixture({day: [0, 1] for day in days}, ('Урод', 'Любовь Громова'),
+                           casts={i: [{'name': 'Роль', 'actors': [actor('Анна'), actor('Борис')]}] for i in range(2)})
+            if existing_run:
+                data['fixed'] = [{'date': day, 'key': 'old', 'name': 'Старый', 'cast': {'Роль': 'Анна'}, 'fixed': True}
+                                 for day in ('2028-09-28', '2028-09-29', '2028-09-30')]
+            rules = Rules(shows=[ShowRule(key='0', count=2), ShowRule(key='1', count=1)],
+                          pins=[Pin(day=days[0], key='0')], load_mode=mode, streak=threshold)
+            problem = RepertoireProblem(data, rules, date(2028, 9, 1))
+            expected = {}
+            for extra_days in combinations(days[1:], 2):
+                for keys in (('0', '1'), ('1', '0')):
+                    selected = problem.pinned + [(d, k, problem.options[d][k]) for d, k in zip(extra_days, keys)]
+                    for v in problem._best_cast(selected):
+                        if v is not None:
+                            expected[v['id']] = v['load_score']
+            results = [v for v in problem.search() if v is not None]
+            self.assertEqual({v['id']: v['load_score'] for v in results}, expected, (mode, threshold, existing_run))
+            self.assertEqual(len(results), len(expected))
+
     def test_projected_casts_preserve_every_feasible_relevant_actor_set(self):
         rng = random.Random(30)
         names = ['А', 'Б', 'В', 'Г', 'Д']
