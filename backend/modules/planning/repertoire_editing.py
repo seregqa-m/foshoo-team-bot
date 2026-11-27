@@ -12,6 +12,8 @@ from .repertoire import Pin, RepertoireProblem
 from .repertoire_source import get_rules
 from .repertoire_search import draft_variant
 from .services import match_roles, norm
+from modules.attendance.roster import attendance_totals
+from modules.theater.routing import show_aliases
 
 router = APIRouter()
 
@@ -37,6 +39,8 @@ def day_choices(month: str, day: date, db: Session = Depends(get_db)):
     rules, revision, _ = get_rules(db, month, source['shows'])
     problem = daily_problem(source, rules)
     shows = []
+    slot = next((s for s in source['slots'] if s['date'] == day.isoformat()), None)
+    chats = {show.name: show.telegram_chat_id for show in show_aliases(db).values()}
     pin = next((p for p in rules.pins if p.day == day), None)
     for diagnostic in problem.diagnostics:
         cell = next((d for d in diagnostic['dates'] if d['date'] == day.isoformat()), None)
@@ -48,12 +52,15 @@ def day_choices(month: str, day: date, db: Session = Depends(get_db)):
         reason = cell['reason']
         if pin and pin.key != diagnostic['key']:
             reason = 'На эту дату закреплён другой спектакль. Сначала снимите закрепление.'
-        shows.append({**cell, 'key': diagnostic['key'], 'name': diagnostic['name'], 'reason': reason,
+        planning_cell = next(c for c in slot['shows'] if c['key'] == diagnostic['key'])
+        planning_cell = {**planning_cell, 'attendance': attendance_totals(db, chats.get(diagnostic['name']), day)}
+        shows.append({**cell, 'planning_cell': planning_cell, 'key': diagnostic['key'], 'name': diagnostic['name'], 'reason': reason,
                       'covered': len(match_roles(answer_roles, ('yes',))), 'total': len(cell['roles']),
                       'votes': {'yes': votes['yes'], 'no': votes['no'], 'unknown': votes['unknown'],
                                 'unanswered': votes['unanswered'], 'other': votes['unknown'] + votes['unanswered']}})
     return {'month': month, 'day': day.isoformat(), 'fingerprint': source['fingerprint'],
-            'revision': revision, 'shows': shows}
+            'revision': revision, 'shows': shows,
+            'planning_slot': {k: slot[k] for k in ('date', 'label', 'assigned_show')} if slot else None}
 
 
 class DraftRequest(BaseModel):

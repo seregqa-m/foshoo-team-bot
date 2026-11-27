@@ -70,6 +70,7 @@
 .repertoire-modal-overlay { position: fixed; inset: 0; z-index: 1100; background: #0007; display: flex; align-items: center; justify-content: center; padding: 12px; }
 .repertoire-modal { width: min(100%, 620px); max-height: 90dvh; overflow-y: auto; background: var(--tg-theme-bg-color, #fff); color: var(--tg-theme-text-color, #25232a); border-radius: 16px; padding: 20px; box-sizing: border-box; }
 .repertoire-modal .repertoire-actions { position: sticky; bottom: -20px; background: var(--tg-theme-bg-color, #fff); padding: 12px 0; }
-.repertoire-vote-summary { margin: 12px 0 20px; padding: 14px 16px; border: 1px solid var(--tg-theme-hint-color, #ddd); border-radius: 12px; }
 .repertoire-vote-counts { line-height: 1.7; margin: 8px 0; }
 .repertoire-vote-counts span { display: inline-block; }
+
+.repertoire-cast-button { width: 100%; margin: 12px 0 20px; }

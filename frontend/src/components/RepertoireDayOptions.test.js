@@ -1,10 +1,11 @@
 import React, { act } from 'react';
+import { Simulate } from 'react-dom/test-utils';
 import { createRoot } from 'react-dom/client';
 import RepertoireDayOptions from './RepertoireDayOptions';
 import client from '../api/client';
 
-jest.mock('../api/client', () => ({ __esModule: true, default: { get: jest.fn() } }));
-let container, root, onReplace, response;
+jest.mock('../api/client', () => ({ __esModule: true, default: { get: jest.fn(), post: jest.fn() } }));
+let container, root, onReplace, response, plan;
 const data = { fingerprint: 'fresh', revision: 2, checked_at: 'now' };
 const show = (key, name, reason = null) => ({ key, name, reason, start_time: '2028-10-07T19:00:00+03:00', covered: 1, total: 1,
   votes: { yes: 1, no: 1, other: 1 }, roles: [{ name: 'Роль', actors: [{ name: 'Анна', status: 'yes', reason: 'Свободен' }, { name: 'Борис', status: 'no', reason: 'Не может' }] }] });
@@ -12,7 +13,14 @@ beforeEach(() => {
   global.IS_REACT_ACT_ENVIRONMENT = true;
   container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container);
   onReplace = jest.fn(); response = { day: '2028-10-07', ...data, shows: [show('1', 'Урод'), show('2', 'Другой', 'Нужны ответы исполнителей')] };
-  client.get.mockResolvedValue({ data: response });
+  plan = { month: '2028-10', fingerprint: 'planning-fresh', timezone: 'Europe/Moscow', slots: [{
+    column: 'B', date: response.day, label: '7 окт 2028', assigned_show: '', shows: [{
+      show: 'Урод', status: 'ready', incomplete: false, roles: response.shows[0].roles,
+      suggested_cast: { Роль: 'Анна' }, attendance: { total: 3, yes: 1, no: 1, unknown: 0, unanswered: 1 },
+    }],
+  }] };
+  client.get.mockImplementation(url => Promise.resolve({ data: url === '/api/planning' ? plan : response }));
+  client.post.mockResolvedValue({ data: {} });
 });
 afterEach(() => { act(() => root.unmount()); container.remove(); jest.clearAllMocks(); });
 const render = async props => { await act(async () => root.render(<RepertoireDayOptions month="2028-10" day="2028-10-07" data={data} entries={[]} onReplace={onReplace} onRefresh={jest.fn()} {...props} />)); };
@@ -32,8 +40,7 @@ test('a planned date offers replacements while a fixed show remains read-only', 
   response.shows[1].reason = null;
   const current = { date: '2028-10-07', key: '1' };
   await render({ entries: [current] });
-  expect(container.textContent).toContain('Ответы на эту дату · Урод');
-  expect(container.textContent).toContain('Кто как ответил');
+  expect(button('Посмотреть голоса и состав · Урод')).toBeDefined();
   expect(button('Заменить на «Другой»').disabled).toBe(false);
   await render({ entries: [{ ...current, fixed: true }] });
   expect(button('Заменить на «Другой»').disabled).toBe(true);
@@ -58,30 +65,22 @@ test('late response from a previously selected date is ignored', async () => {
   expect(container.textContent).not.toContain('Урод');
 });
 
-test('background refresh keeps vote cards and expanded details until fresh answers arrive', async () => {
+test('background refresh keeps alternatives mounted and blocks opening stale answers', async () => {
   const entries = [{ date: response.day, key: '1', name: 'Урод' }];
   await render({ entries });
   const card = container.querySelector('.repertoire-day-option');
-  const summary = container.querySelector('.repertoire-vote-summary');
-  const details = summary.querySelector('details');
+  const details = card.querySelector('details');
   details.open = true;
   let finish;
   client.get.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
   await render({ entries, data: { ...data, fingerprint: 'updated', checked_at: 'later' } });
   expect(container.querySelector('.repertoire-day-option')).toBe(card);
-  expect(summary.textContent).toContain('Смогут: 1');
-  expect(summary.querySelector('details')).toBe(details);
   expect(details.open).toBe(true);
-  expect(container.textContent).not.toContain('Загружаем ответы');
-  expect(button('Заменить на «Другой»').disabled).toBe(true);
-  await act(async () => finish({ data: { ...response, fingerprint: 'updated', shows: [
-    { ...response.shows[0], votes: { yes: 2, no: 0, other: 1 } }, show('2', 'Другой'),
-  ] } }));
+  expect(button('Посмотреть голоса и состав · Урод').disabled).toBe(true);
+  await act(async () => finish({ data: { ...response, fingerprint: 'updated' } }));
   expect(container.querySelector('.repertoire-day-option')).toBe(card);
-  expect(summary.querySelector('details')).toBe(details);
   expect(details.open).toBe(true);
-  expect(summary.textContent).toContain('Смогут: 2');
-  expect(button('Заменить на «Другой»').disabled).toBe(false);
+  expect(button('Посмотреть голоса и состав · Урод').disabled).toBe(false);
 });
 
 test('failed background refresh retains answers for reading but blocks replacement', async () => {
@@ -103,22 +102,56 @@ test('changing the date never displays answers from the previous date while load
   expect(container.querySelector('.repertoire-day-option')).toBeNull();
 });
 
-test('selected show has a live answer tile without assigning people to roles', async () => {
-  response.shows[0].votes = { yes: 1, no: 0, unknown: 1, unanswered: 2, other: 3 };
-  response.shows[0].roles[0].actors[0].vote = 'yes';
-  response.shows[0].roles.push({ name: 'Вторая роль', actors: [response.shows[0].roles[0].actors[0]] });
-  const current = { date: '2028-10-07', key: '1', name: 'Урод', cast: { Роль: 'Старое назначение' } };
-  await render({ entries: [current] });
-  let tile = container.querySelector('[aria-label="Ответы на «Урод»"]');
-  expect(tile.textContent).toContain('Не определились: 1');
-  expect(tile.textContent).toContain('Нет ответа: 2');
-  expect(tile.textContent).not.toContain('Старое назначение');
-  expect(tile.textContent).not.toContain('Вторая роль');
-  expect(tile.textContent.match(/Анна/g)).toHaveLength(1);
-  response = { ...response, checked_at: 'later', shows: [{ ...response.shows[0], votes: { yes: 0, no: 1, unknown: 1, unanswered: 2, other: 3 } }] };
-  client.get.mockResolvedValue({ data: response });
-  await render({ entries: [current], data: { ...data, checked_at: 'later' } });
-  tile = container.querySelector('[aria-label="Ответы на «Урод»"]');
-  expect(tile.textContent).toContain('Смогут: 0');
-  expect(tile.textContent).toContain('Не смогут: 1');
+test('opens the existing cast dialog with fresh planning answers and saves through its usual endpoint', async () => {
+  const onRefresh = jest.fn(), onCastSaved = jest.fn();
+  await render({ entries: [{ date: response.day, key: '1', name: 'Урод' }], onRefresh, onCastSaved });
+  await act(async () => button('Посмотреть голоса и состав · Урод').click());
+  const dialog = container.querySelector('[role="dialog"]');
+  expect(dialog.textContent).toContain('Участников: 3');
+  expect(dialog.textContent).toContain('Каждая роль — отдельный исполнитель');
+  expect(dialog.textContent).toContain('Анна: Свободен');
+  expect(dialog.querySelector('[aria-label="Исполнитель: Роль"]').value).toBe('Анна');
+  expect(dialog.querySelector('option[value="Борис"]').disabled).toBe(true);
+  act(() => Simulate.change(dialog.querySelector('input[placeholder="Зал или адрес"]'), { target: { value: 'Зал' } }));
+  await act(async () => Simulate.submit(dialog.querySelector('form')));
+  expect(client.post).toHaveBeenCalledWith('/api/planning/assign', expect.objectContaining({
+    column: 'B', show_name: 'Урод', expected_fingerprint: 'planning-fresh', cast: { Роль: 'Анна' },
+  }));
+  expect(onRefresh).toHaveBeenCalledTimes(1);
+  expect(onCastSaved).toHaveBeenCalledTimes(1);
+  expect(container.querySelector('[role="dialog"]')).toBeNull();
+});
+
+test('a date absent from Sheets uses the same dialog without preparing or assigning a column', async () => {
+  response.planning_slot = { date: response.day, label: '7 окт 2028', assigned_show: '' };
+  response.shows[0].planning_cell = plan.slots[0].shows[0];
+  plan.slots = [];
+  await render({ entries: [{ date: response.day, key: '1', name: 'Урод' }] });
+  await act(async () => button('Посмотреть голоса и состав · Урод').click());
+  expect(container.querySelector('[role="dialog"]').textContent).toContain('Анна: Свободен');
+  expect(container.querySelector('[aria-label="Исполнитель: Роль"]').disabled).toBe(true);
+  expect(button('Назначить спектакль')).toBeUndefined();
+  expect(client.post).not.toHaveBeenCalled();
+  act(() => container.querySelector('[aria-label="Закрыть состав"]').click());
+  expect(container.querySelector('[role="dialog"]')).toBeNull();
+});
+
+test('a late cast response cannot open a dialog for a previously selected date', async () => {
+  await render({ entries: [{ date: response.day, key: '1', name: 'Урод' }] });
+  let finish;
+  client.get.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  await act(async () => button('Посмотреть голоса и состав · Урод').click());
+  await render({ day: '2028-10-08' });
+  await act(async () => finish({ data: plan }));
+  expect(container.querySelector('[role="dialog"]')).toBeNull();
+});
+
+test('failed cast loading reports the error and allows retry', async () => {
+  await render({ entries: [{ date: response.day, key: '1', name: 'Урод' }] });
+  client.get.mockRejectedValueOnce(new Error('offline'));
+  await act(async () => button('Посмотреть голоса и состав · Урод').click());
+  expect(container.querySelector('[role="alert"]').textContent).toContain('Не удалось загрузить состав');
+  expect(container.querySelector('[role="dialog"]')).toBeNull();
+  await act(async () => button('Посмотреть голоса и состав · Урод').click());
+  expect(container.querySelector('[role="dialog"]')).not.toBeNull();
 });

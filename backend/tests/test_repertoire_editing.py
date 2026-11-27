@@ -63,6 +63,19 @@ class RepertoireEditingTests(unittest.TestCase):
             self.assertEqual(show['roles'][0]['actors'][0]['name'], 'Анна')
         self.assertEqual(self.db.query(PlanningAssignment).count(), 0)
 
+    def test_day_exposes_existing_planner_cell_without_creating_sheet_columns(self):
+        result = day_choices('2028-10', date(2028, 10, 7), self.db)
+        source = load_snapshot(self.db, self.client, '2028-10', fresh=True)
+        slot = next(s for s in source['slots'] if s['date'] == result['day'])
+        self.assertEqual(result['planning_slot']['label'], slot['label'])
+        self.assertNotIn('column', result['planning_slot'])
+        for show in result['shows']:
+            original = next(c for c in slot['shows'] if c['key'] == show['key'])
+            for key in ('roles', 'status', 'suggested_cast', 'incomplete'):
+                self.assertEqual(show['planning_cell'][key], original[key])
+            self.assertIn('attendance', show['planning_cell'])
+        self.client.ensure_schedule_columns.assert_not_called()
+
     def test_unanswered_date_still_lists_votes_and_disables_show(self):
         result = day_choices('2028-10', date(2028, 10, 20), self.db)
         self.assertEqual(len(result['shows']), 2)

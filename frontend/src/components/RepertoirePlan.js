@@ -88,7 +88,7 @@ function Diagnostics({ data, variant }) {
   </details>;
 }
 
-export default function RepertoirePlan({ month, dataVersion, userId, isSuperAdmin = false }) {
+export default function RepertoirePlan({ month, dataVersion, userId, isSuperAdmin = false, onCastSaved }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
@@ -241,7 +241,7 @@ export default function RepertoirePlan({ month, dataVersion, userId, isSuperAdmi
         {selected.load_warnings.map((w, i) => <p className="planning-warning" key={`load-${i}`}>{w.actor}: {w.dates.length} игровых дня подряд · {w.dates.map(prettyDate).join(' → ')}</p>)}
         {!unverified && !selected.spread_score && !selected.load_warnings.length && <p className="repertoire-good">✓ Пожелания по разносу и нагрузке соблюдены для известных составов</p>}
         <RepertoireCalendar key={`${month}:${selected.id}`} month={month} focusDate={focusDate} entries={selected.entries} pins={data.rules.pins} onSelectDay={() => { if (!selected.manual) selectedId.current = selected.id; }}
-          renderDay={day => <RepertoireDayOptions key={day} month={month} day={day} data={data} entries={selected.entries} disabled={editingDisabled} onReplace={replaceShow} onRefresh={refreshNow} />} renderEntry={entry => {
+          renderDay={day => <RepertoireDayOptions key={day} month={month} day={day} data={data} entries={selected.entries} disabled={editingDisabled} onReplace={replaceShow} onRefresh={refreshNow} onCastSaved={onCastSaved} />} renderEntry={entry => {
           const pinned = data.rules.pins.some(p => p.day === entry.date && p.key === entry.key);
           return <div className="repertoire-date" key={`${entry.date}:${entry.key}`}><div className="repertoire-row"><div><span className="repertoire-date-label">{prettyDate(entry.date)}{entry.start_time && ` · ${entry.start_time.slice(11, 16)}`}</span><strong>{entry.name}</strong><small>{entry.fixed ? 'Уже в расписании' : data.locked ? 'В закреплённой афише' : pinned ? 'Закреплено в плане' : draftError ? 'Требует проверки' : 'В плане'}</small>{entry.rehearsals?.length > 0 && <small>Репетиционный слот</small>}</div>
             {!entry.fixed && <button type="button" className="btn btn-secondary" aria-label={`Удалить ${entry.name}, ${entry.date}`} disabled={editingDisabled || pinned} onClick={() => replaceShow(entry.date, null)}>Удалить из афиши</button>}
@@ -250,7 +250,7 @@ export default function RepertoirePlan({ month, dataVersion, userId, isSuperAdmi
         <button type="button" className="btn btn-primary repertoire-share-button" disabled={stale || !selected.entries.length} onClick={() => setShare({ data: copy(data), variant: copy(selected) })}>Отправить в чат</button>
       </>}
       {!selected && <RepertoireCalendar month={month} focusDate={focusDate} entries={[]} pins={data.rules.pins}
-        renderDay={day => <RepertoireDayOptions key={day} month={month} day={day} data={data} entries={[]} disabled={editingDisabled} onReplace={replaceShow} onRefresh={refreshNow} />} />}
+        renderDay={day => <RepertoireDayOptions key={day} month={month} day={day} data={data} entries={[]} disabled={editingDisabled} onReplace={replaceShow} onRefresh={refreshNow} onCastSaved={onCastSaved} />} />}
       {(data.maximum === null || data.maximum < data.target || selected?.missing.length > 0) && <Diagnostics data={data} variant={selected} />}
       {data.complete && !data.total_variants && !data.pin_errors.length && <p className="planning-warning">Нет допустимого варианта с закреплёнными датами и текущими ограничениями нагрузки. Проверьте параметры.</p>}
       <p className="repertoire-note">Один показ в день. Репетиционная дата подходит для любого спектакля с полным составом. Прочие события мешают только при пересечении по времени. Свободное время не подтверждает бронь зала.</p>
