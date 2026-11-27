@@ -1,10 +1,11 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import client from '../api/client';
 import './RepertoirePlan.css';
 import RepertoireCalendar from './RepertoireCalendar';
 import RepertoireShare from './RepertoireShare';
 import RepertoireDayOptions from './RepertoireDayOptions';
 import RepertoireAlternatives from './RepertoireAlternatives';
+import RepertoirePublish from './RepertoirePublish';
 
 const DAYS = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
 const prettyDate = day => new Intl.DateTimeFormat('ru', { day: 'numeric', month: 'short', weekday: 'short', timeZone: 'UTC' }).format(new Date(`${day}T12:00:00Z`));
@@ -87,7 +88,7 @@ function Diagnostics({ data, variant }) {
   </details>;
 }
 
-export default function RepertoirePlan({ month, dataVersion, onPrepared, userId }) {
+export default function RepertoirePlan({ month, dataVersion, userId, isSuperAdmin = false }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
@@ -97,12 +98,15 @@ export default function RepertoirePlan({ month, dataVersion, onPrepared, userId 
   const [selected, setSelected] = useState(null);
   const [refresh, setRefresh] = useState(0);
   const [share, setShare] = useState(null);
+  const [publish, setPublish] = useState(null);
   const [focusDate, setFocusDate] = useState(null);
   const [draftPending, setDraftPending] = useState(false);
+  const [draftError, setDraftError] = useState('');
   const storageKey = userId ? `foshoo:repertoire-draft:${userId}:${month}` : null;
   const [initialDraft] = useState(() => readDraft(storageKey, month));
   const draft = useRef(initialDraft);
   const [storageError, setStorageError] = useState(false);
+  const forgetDraft = useCallback(() => { if (storageKey) { try { localStorage.removeItem(storageKey); setStorageError(false); } catch { setStorageError(true); } } }, [storageKey]);
   const selectedId = useRef(null);
   const refreshNow = () => setRefresh(n => n + 1);
   useEffect(() => {
@@ -117,17 +121,27 @@ export default function RepertoirePlan({ month, dataVersion, onPrepared, userId 
         if (!active) return;
         if (!draft.current && requestedSelected !== selectedId.current) { refreshNow(); return; }
         if (result.month !== month || !Array.isArray(result.variants)) throw new Error('Invalid planning response');
+        if (result.locked) { draft.current = null; forgetDraft(); }
         searching = !result.complete && !draft.current;
         let next = result.selected_variant || result.variants.find(v => v.id === selectedId.current) || result.variants[0] || null;
         if (draft.current) {
-          const { data: reviewed } = await client.post('/api/planning/repertoire/draft', { month, entries: draft.current,
-            expected_fingerprint: result.fingerprint, expected_revision: result.revision });
+          setData(result);
+          let reviewed;
+          try {
+            ({ data: reviewed } = await client.post('/api/planning/repertoire/draft', { month, entries: draft.current,
+              expected_fingerprint: result.fingerprint, expected_revision: result.revision }));
+          } catch (e) {
+            if (!active) return;
+            if (e.response?.status !== 409) throw e;
+            calculating = false; setDraftPending(false); setDraftError(message(e)); setError(''); return;
+          }
           if (!active) return;
           calculating = reviewed.status === 'calculating'; setDraftPending(calculating);
-          if (calculating) { setData(result); setError(''); return; }
+          if (calculating) { setError(''); return; }
           next = reviewed.variant;
           if (storageKey) { try { localStorage.setItem(storageKey, JSON.stringify(draft.current)); setStorageError(false); } catch { setStorageError(true); } }
         } else { calculating = false; setDraftPending(false); }
+        setDraftError('');
         setData(result); setError('');
         setSelected(next);
         if (selectedId.current && next?.id !== selectedId.current) selectedId.current = null;
@@ -140,7 +154,7 @@ export default function RepertoirePlan({ month, dataVersion, onPrepared, userId 
     const focus = () => { clearTimeout(timer); load(); };
     load(); window.addEventListener('focus', focus); document.addEventListener('visibilitychange', focus);
     return () => { active = false; clearTimeout(timer); window.removeEventListener('focus', focus); document.removeEventListener('visibilitychange', focus); };
-  }, [month, refresh, dataVersion, storageKey]);
+  }, [month, refresh, dataVersion, storageKey, forgetDraft]);
 
   const save = async (rules, useAsDefault, base = data) => {
     if (busy) return;
@@ -151,76 +165,92 @@ export default function RepertoirePlan({ month, dataVersion, onPrepared, userId 
     } catch (e) { setError(message(e)); if (e.response?.status === 409) setConflict(true); }
     finally { setBusy(false); }
   };
-  const pin = entry => {
-    const exists = data.rules.pins.some(p => p.day === entry.date && p.key === entry.key);
-    const pins = data.rules.pins.filter(p => p.day !== entry.date);
-    if (!exists) pins.push({ day: entry.date, key: entry.key });
-    save({ ...data.rules, pins }, false);
-  };
-  const prepare = async entry => {
-    if (busy || error) return;
-    setBusy(true);
+  const toggleAffiche = async () => {
+    if (busy || loading || !isSuperAdmin) return;
+    setBusy(true); setError('');
     try {
-      const { data: result } = await client.post('/api/planning/repertoire/prepare', { month, day: entry.date, key: entry.key, expected_fingerprint: data.fingerprint, expected_revision: data.revision });
-      onPrepared(result, entry.cast);
+      if (data.locked || data.rules.pins.length) {
+        await client.post('/api/planning/repertoire/unlock', { month, expected_revision: data.revision });
+        draft.current = selected ? selected.entries.filter(e => !e.fixed).map(e => ({ day: e.date, key: e.key })) : null;
+      } else {
+        setShare(null); setPublish({ data: copy(data), variant: copy(selected) });
+        return;
+      }
+      forgetDraft(); setShare(null); selectedId.current = null; setDraftError(''); refreshNow();
     } catch (e) { setError(message(e)); }
     finally { setBusy(false); }
   };
   const totals = selected?.entries.reduce((map, item) => ({ ...map, [item.key]: (map[item.key] || 0) + 1 }), {}) || {};
   const names = Object.fromEntries((data?.shows || []).map(s => [s.key, s.name]));
-  const forgetDraft = () => { if (storageKey) { try { localStorage.removeItem(storageKey); setStorageError(false); } catch { setStorageError(true); } } };
-  const resetDraft = () => { draft.current = null; forgetDraft(); setDraftPending(false); setFocusDate(null); setShare(null); selectedId.current = null; refreshNow(); };
+  const resetDraft = () => { draft.current = null; forgetDraft(); setDraftPending(false); setDraftError(''); setFocusDate(null); setShare(null); selectedId.current = null; refreshNow(); };
   const replaceShow = (day, key) => {
-    if (busy || loading || error || draftPending) return;
-    draft.current = [...(selected?.entries || []).filter(e => !e.fixed && e.date !== day).map(e => ({ day: e.date, key: e.key })), { day, key }];
+    if (busy || loading || error || draftPending || data.locked) return;
+    draft.current = [...(selected?.entries || []).filter(e => !e.fixed && e.date !== day).map(e => ({ day: e.date, key: e.key })), ...(key ? [{ day, key }] : [])];
+    if (!key) {
+      const entries = selected.entries.filter(e => e.date !== day);
+      const counts = Object.fromEntries(data.rules.shows.map(s => [s.key, entries.filter(e => e.key === s.key).length]));
+      setSelected({ ...selected, manual: true, entries, count: data.rules.shows.reduce((n, s) => n + Math.min(s.count, counts[s.key]), 0),
+        missing: data.rules.shows.filter(s => counts[s.key] < s.count).map(s => ({ key: s.key, name: names[s.key], count: s.count - counts[s.key] })) });
+    }
     setFocusDate(day); setShare(null); setDraftPending(true); selectedId.current = null; refreshNow();
   };
-  const stale = Boolean(error) || busy || loading || draftPending;
+  const stale = Boolean(error || draftError || data?.lock_error) || busy || loading || draftPending || data?.lock_pending || !!data?.publication;
+  const editingDisabled = Boolean(error) || busy || loading || draftPending || data?.locked || !!data?.publication;
   return <section className="repertoire-plan" aria-labelledby="repertoire-title">
     <div className="repertoire-row"><div><h2 id="repertoire-title">План афиши</h2><p className="repertoire-note">По ответам участников и составам</p></div>
-      {data && !editor && <button className="btn btn-secondary" onClick={() => { setEditor(copy(data)); setConflict(false); }} disabled={busy}>Параметры</button>}
+      {data && !editor && <button className="btn btn-secondary" onClick={() => { setEditor(copy(data)); setConflict(false); }} disabled={busy || data.locked || !!data.publication}>Параметры</button>}
     </div>
     {error && <div className="alert alert-error" role="alert">{error} {data && 'Показаны последние полученные данные.'}<button className="btn btn-secondary" onClick={() => { setConflict(false); refreshNow(); }} disabled={busy}>Обновить предложения</button></div>}
     {loading && !data && <p role="status">Подбираем расписание…</p>}
     {editor ? <RulesEditor data={editor} busy={busy} conflict={conflict} onSave={save} onCancel={() => { setEditor(null); setConflict(false); refreshNow(); }} /> : data && <>
       <div className="repertoire-score" aria-live="polite"><strong>{selected?.manual ? selected.count : data.maximum ?? '…'} из {data.target}</strong><span>{data.maximum === null && !selected?.manual ? 'ищем подходящие показы' : 'показов по плану'}</span></div>
-      {draft.current && <div className="repertoire-manual"><p>{draftPending ? 'Проверяем замену и нагрузку…' : error ? 'Ручные изменения требуют проверки.' : 'Ручной вариант — остальные даты сохранены.'}</p><button type="button" className="btn btn-secondary" onClick={resetDraft} disabled={busy}>Отменить ручные изменения</button></div>}
-      {draft.current && storageKey && !draftPending && !error && <p className="repertoire-note">{storageError ? 'Браузер не сохранил черновик. Он доступен, пока открыт этот экран.' : 'Ручной черновик сохранён на этом устройстве для вашего аккаунта и месяца.'}</p>}
-      <p className="repertoire-note">До пяти заметно разных вариантов. {data.complete ? 'Подбор завершён.' : 'Подбираем лучшие варианты…'}
-        {!data.complete && <button className="btn btn-secondary" disabled={busy} onClick={refreshNow}>Обновить подбор</button>}</p>
+      {draft.current && <div className="repertoire-manual"><p>{draftPending ? 'Проверяем замену и нагрузку…' : error || draftError ? 'Ручные изменения требуют проверки.' : 'Ручной вариант — остальные даты сохранены.'}</p><button type="button" className="btn btn-secondary" onClick={resetDraft} disabled={busy}>Отменить ручные изменения</button></div>}
+      {draft.current && storageKey && !draftPending && !error && !draftError && <p className="repertoire-note">{storageError ? 'Браузер не сохранил черновик. Он доступен, пока открыт этот экран.' : 'Ручной черновик сохранён на этом устройстве для вашего аккаунта и месяца.'}</p>}
+      {!data.locked && <p className="repertoire-note">До пяти заметно разных вариантов. {data.complete ? 'Подбор завершён.' : 'Подбираем лучшие варианты…'}
+        {!data.complete && <button className="btn btn-secondary" disabled={busy} onClick={refreshNow}>Обновить подбор</button>}</p>}
       {selected?.manual && <p className="repertoire-note">Счётчики сравнивают ручной вариант с параметрами месяца. Остальные даты не переставляются.</p>}
       <div className="repertoire-totals">{data.rules.shows.filter(s => s.count > 0 || totals[s.key]).map(s => <span className={selected && (totals[s.key] || 0) < s.count ? 'repertoire-shortfall' : ''} key={s.key}>{names[s.key] || s.key} {totals[s.key] || 0}/{s.count}</span>)}</div>
       {data.warnings.map(w => <p className="planning-warning" key={w}>{w}</p>)}
       {data.pin_errors.map(w => <p className="planning-warning" role="alert" key={w}>{w}</p>)}
-      {data.rules.pins.length > 0 && <details><summary>Закреплённые даты ({data.rules.pins.length})</summary>{data.rules.pins.map(p => <div className="repertoire-row" key={p.day}><span>{prettyDate(p.day)} · {names[p.key] || p.key}</span><button className="btn btn-secondary" disabled={stale} onClick={() => save({ ...data.rules, pins: data.rules.pins.filter(x => x.day !== p.day) }, false)}>Снять закрепление</button></div>)}</details>}
-      <RepertoireAlternatives variants={data.variants} selected={selected} recommendedId={data.recommended_id} complete={data.complete} disabled={stale}
-        onSelect={v => { setFocusDate(null); setShare(null); setSelected(v); selectedId.current = v.id; }} />
+      {(selected || data.locked || data.rules.pins.length > 0) && <div className="repertoire-affiche">
+        {isSuperAdmin && <button type="button" className="btn btn-secondary" disabled={data.locked || data.rules.pins.length ? busy || loading : stale || !selected}
+          onClick={toggleAffiche}>{data.locked || data.rules.pins.length ? 'Снять закрепление' : 'Закрепить афишу месяца'}</button>}
+        <p className="repertoire-note">{data.locked ? 'Афиша месяца закреплена и сохранена для всех администраторов. Для правок снимите закрепление.' : data.rules.pins.length ? 'В этом месяце остались прежние закрепления отдельных дат. Снимите их, чтобы редактировать афишу целиком.' : 'Закрепление сохранит всю афишу, включая пустые даты.'} {data.locked ? 'Снятие закрепления не отменяет созданные и изменённые события календаря.' : 'После подтверждения репетиции станут показами, а на свободные даты добавятся новые события.'} {!isSuperAdmin && 'Закрепление доступно только суперадминистратору.'}</p>
+        {data.lock_pending && <p role="status">Проверяем актуальные ответы для закреплённой афиши…</p>}
+        {data.lock_error && <p className="planning-warning" role="alert">{data.lock_error} Сохранённая афиша оставлена без изменений; требуется проверка.</p>}
+      </div>}
+      {data.publication && <div className="planning-warning" role="status">Применение афиши не завершено. Сохранено: {data.publication.done} из {data.publication.actions.length}.
+        {isSuperAdmin && <button type="button" className="btn btn-primary" onClick={() => setPublish({ data: copy(data), publication: copy(data.publication) })}>Проверить и продолжить сохранение</button>}
+      </div>}
+      {draftError && <p className="planning-warning" role="alert">{draftError} Можно удалить или заменить проблемный показ.</p>}
+      {!data.locked && <RepertoireAlternatives variants={data.variants} selected={selected} recommendedId={data.recommended_id} complete={data.complete} disabled={stale}
+        onSelect={v => { setFocusDate(null); setShare(null); setSelected(v); selectedId.current = v.id; }} />}
       {selected && <>
         {selected.excess?.length > 0 && <p className="planning-warning">Сверх плана: {selected.excess.map(s => `${s.name} — ${s.count}`).join('; ')}. Всего в варианте {selected.entries.length} показов.</p>}
         {selected.missing.length > 0 && <div className="planning-warning">Не хватает: {selected.missing.map(s => `${s.name} — ${s.count}`).join('; ')}. Остальные показатели показаны выше.</div>}
         {selected.spread_warnings.map((w, i) => <p className="planning-warning" key={`gap-${i}`}>{w.name}: {w.dates.map(prettyDate).join(' → ')} · {w.gap} дн. между показами, желательно {w.desired}.{w.same_part && ' Одна часть месяца.'}</p>)}
         {selected.load_warnings.map((w, i) => <p className="planning-warning" key={`load-${i}`}>{w.actor}: {w.dates.length} игровых дня подряд · {w.dates.map(prettyDate).join(' → ')}</p>)}
-        {!selected.spread_score && !selected.load_warnings.length && <p className="repertoire-good">✓ Пожелания по разносу и нагрузке соблюдены для известных составов</p>}
+        {!stale && !selected.spread_score && !selected.load_warnings.length && <p className="repertoire-good">✓ Пожелания по разносу и нагрузке соблюдены для известных составов</p>}
         <RepertoireCalendar key={`${month}:${selected.id}`} month={month} focusDate={focusDate} entries={selected.entries} pins={data.rules.pins} onSelectDay={() => { if (!selected.manual) selectedId.current = selected.id; }}
-          renderDay={day => <RepertoireDayOptions key={day} month={month} day={day} data={data} entries={selected.entries} disabled={stale} onReplace={replaceShow} onRefresh={refreshNow} />} renderEntry={entry => {
+          renderDay={day => <RepertoireDayOptions key={day} month={month} day={day} data={data} entries={selected.entries} disabled={editingDisabled} onReplace={replaceShow} onRefresh={refreshNow} />} renderEntry={entry => {
           const pinned = data.rules.pins.some(p => p.day === entry.date && p.key === entry.key);
-          return <div className="repertoire-date" key={`${entry.date}:${entry.key}`}><div className="repertoire-row"><div><span className="repertoire-date-label">{prettyDate(entry.date)}{entry.start_time && ` · ${entry.start_time.slice(11, 16)}`}</span><strong>{entry.name}</strong><small>{entry.fixed ? 'Уже в расписании' : pinned ? 'Закреплено в плане' : 'Состав собран'}</small>{entry.rehearsals?.length > 0 && <small>Репетиционный слот</small>}</div>
-            {!entry.fixed && <button className="btn btn-secondary" aria-label={`${pinned ? 'Открепить' : 'Закрепить'} ${entry.name}, ${entry.date}`} aria-pressed={pinned} disabled={stale} onClick={() => pin(entry)}>{pinned ? 'Закреплено' : 'Закрепить'}</button>}
-          </div><details><summary>Состав и назначение</summary>{Object.entries(entry.cast).map(([role, actor]) => <p key={role} className="repertoire-note">{role} — {actor}</p>)}
+          return <div className="repertoire-date" key={`${entry.date}:${entry.key}`}><div className="repertoire-row"><div><span className="repertoire-date-label">{prettyDate(entry.date)}{entry.start_time && ` · ${entry.start_time.slice(11, 16)}`}</span><strong>{entry.name}</strong><small>{entry.fixed ? 'Уже в расписании' : data.locked ? 'В закреплённой афише' : pinned ? 'Закреплено в плане' : draftError ? 'Требует проверки' : 'Состав собран'}</small>{entry.rehearsals?.length > 0 && <small>Репетиционный слот</small>}</div>
+            {!entry.fixed && <button type="button" className="btn btn-secondary" aria-label={`Удалить ${entry.name}, ${entry.date}`} disabled={editingDisabled || pinned} onClick={() => replaceShow(entry.date, null)}>Удалить из афиши</button>}
+          </div><details><summary>Состав</summary>{Object.entries(entry.cast).map(([role, actor]) => <p key={role} className="repertoire-note">{role} — {actor}</p>)}
             {!Object.keys(entry.cast).length && <p className="repertoire-note">Состав не указан; нагрузка этого показа не проверена.</p>}
-            {entry.rehearsals?.length > 0 && <p className="repertoire-note">В календаре: {entry.rehearsals.map(r => r.title).join('; ')}. Назначение создаст отдельный показ. Репетиция автоматически не меняется — её замену нужно согласовать в календаре.</p>}
-            {!entry.fixed && <><p className="repertoire-note">Откроется форма времени, места и состава. При необходимости добавится пустая дата в график; событие создаётся после подтверждения формы.</p><button className="btn btn-primary" disabled={stale} onClick={() => prepare(entry)}>Перейти к назначению</button></>}
+            {entry.rehearsals?.length > 0 && <p className="repertoire-note">В календаре: {entry.rehearsals.map(r => r.title).join('; ')}. При закреплении афиши будет показано, какую репетицию заменит спектакль.</p>}
           </details></div>;
         }} />
         <button type="button" className="btn btn-primary repertoire-share-button" disabled={stale || !selected.entries.length} onClick={() => setShare({ data: copy(data), variant: copy(selected) })}>Отправить в чат</button>
       </>}
       {!selected && <RepertoireCalendar month={month} focusDate={focusDate} entries={[]} pins={data.rules.pins}
-        renderDay={day => <RepertoireDayOptions key={day} month={month} day={day} data={data} entries={[]} disabled={stale} onReplace={replaceShow} onRefresh={refreshNow} />} />}
+        renderDay={day => <RepertoireDayOptions key={day} month={month} day={day} data={data} entries={[]} disabled={editingDisabled} onReplace={replaceShow} onRefresh={refreshNow} />} />}
       {(data.maximum === null || data.maximum < data.target || selected?.missing.length > 0) && <Diagnostics data={data} variant={selected} />}
       {data.complete && !data.total_variants && !data.pin_errors.length && <p className="planning-warning">Нет допустимого варианта с закреплёнными датами и текущими ограничениями нагрузки. Проверьте параметры.</p>}
       <p className="repertoire-note">Один показ в день. Репетиционная дата подходит для любого спектакля с полным составом. Прочие события мешают только при пересечении по времени. Свободное время не подтверждает бронь зала.</p>
-      <p className="repertoire-note">Черновик · обновлено {new Intl.DateTimeFormat('ru', { hour: '2-digit', minute: '2-digit', timeZone: data.timezone }).format(new Date(data.checked_at))}. Ответы проверяются каждые 30 секунд, пока экран открыт.</p>
+      <p className="repertoire-note">{data.locked ? 'Закреплённая афиша' : 'Черновик'} · обновлено {new Intl.DateTimeFormat('ru', { hour: '2-digit', minute: '2-digit', timeZone: data.timezone }).format(new Date(data.checked_at))}. Ответы проверяются каждые 30 секунд, пока экран открыт.</p>
     </>}
+    {publish && isSuperAdmin && <RepertoirePublish {...publish} onClose={() => { setPublish(null); refreshNow(); }} onApplied={() => { draft.current = null; forgetDraft(); setPublish(null); setShare(null); selectedId.current = null; refreshNow(); }} />}
     {share && <RepertoireShare key={`${share.data.search_id}:${share.variant.id}`} data={share.data} variant={share.variant} onClose={() => setShare(null)} />}
   </section>;
 }

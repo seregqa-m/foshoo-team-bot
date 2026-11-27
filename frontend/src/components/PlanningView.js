@@ -96,7 +96,7 @@ function CastDialog({ slot, cell, month, fingerprint, timezone, onClose, onSaved
   );
 }
 
-export default function PlanningView({ onClose, closeLabel = '← К расписанию', dataVersion = 0, initialMonth = '', userId, isAdmin = false }) {
+export default function PlanningView({ onClose, closeLabel = '← К расписанию', dataVersion = 0, initialMonth = '', userId, isAdmin = false, isSuperAdmin = false }) {
   const [showNames, setShowNames] = useState([]);
   useEffect(() => {
     if (!isAdmin) return;
@@ -167,8 +167,7 @@ export default function PlanningView({ onClose, closeLabel = '← К распи�
         <button className="btn btn-secondary" aria-label="Следующий месяц планирования" disabled={!(month || data?.month)} onClick={() => move(1)}>›</button>
         <button className="btn btn-secondary" onClick={() => setRevision(n => n + 1)} disabled={loading}>Обновить</button>
       </div>
-      {isAdmin && (month || resolvedMonth) && <RepertoirePlan key={`${month || resolvedMonth}:${userId || ''}`} userId={userId} month={month || resolvedMonth} dataVersion={`${dataVersion}:${revision}`}
-        onPrepared={(result, cast) => { setData(result.plan); setSelected({ column: result.column, show: result.show, cast, repertoire: result.repertoire }); }} />}
+      {isAdmin && (month || resolvedMonth) && <RepertoirePlan isSuperAdmin={isSuperAdmin} key={`${month || resolvedMonth}:${userId || ''}`} userId={userId} month={month || resolvedMonth} dataVersion={`${dataVersion}:${revision}`} />}
       {success && <div className="alert alert-success" role="status">{success}</div>}
       {error && <div className="alert alert-error" role="alert">{error}</div>}
       {loading && <div className="empty-state" role="status">Загружаем график и составы...</div>}

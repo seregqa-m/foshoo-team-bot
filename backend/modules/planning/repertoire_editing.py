@@ -76,15 +76,25 @@ def review_draft(req: DraftRequest, db: Session = Depends(get_db)):
     rules, revision, _ = get_rules(db, req.month, source['shows'])
     if source['fingerprint'] != req.expected_fingerprint or revision != req.expected_revision:
         raise HTTPException(409, 'Ответы, календарь или параметры изменились. Обновите план и повторите замену.')
+    from .repertoire_publication import assert_no_publication
+    assert_no_publication(db, req.month)
+    from .models import RepertoireAffiche
+    if db.get(RepertoireAffiche, req.month):
+        raise HTTPException(409, 'Афиша месяца закреплена. Сначала снимите закрепление.')
+    return {**review_entries(source, rules, req.entries), 'fingerprint': source['fingerprint'], 'revision': revision}
+
+
+def review_entries(source, rules, entries):
+    month = source['month']
     probe = daily_problem(source, rules)
-    pairs = {(e.day.isoformat(), e.key) for e in req.entries}
-    fixed = {(e['date'], e['key']) for e in source['fixed'] if e['date'].startswith(req.month)}
+    pairs = {(e.day.isoformat(), e.key) for e in entries}
+    fixed = {(e['date'], e['key']) for e in source['fixed'] if e['date'].startswith(month)}
     if any((p.day.isoformat(), p.key) not in pairs | fixed for p in rules.pins):
         raise HTTPException(409, 'Замена меняет закреплённые даты. Сначала снимите соответствующее закрепление.')
     selected = []
-    for entry in sorted(req.entries, key=lambda e: e.day):
+    for entry in sorted(entries, key=lambda e: e.day):
         day = entry.day.isoformat()
-        if entry.day.strftime('%Y-%m') != req.month:
+        if entry.day.strftime('%Y-%m') != month:
             raise HTTPException(422, 'Все даты должны принадлежать выбранному месяцу')
         if (day, entry.key) in fixed:
             # A draft show may have been assigned since the previous review.
@@ -100,4 +110,4 @@ def review_draft(req: DraftRequest, db: Session = Depends(get_db)):
     result = draft_variant(problem, selected)
     if result['status'] == 'invalid':
         raise HTTPException(409, 'С этими датами не собирается состав без запрещённой нагрузки. Выберите другой спектакль или измените правило нагрузки.')
-    return {**result, 'fingerprint': source['fingerprint'], 'revision': revision}
+    return result

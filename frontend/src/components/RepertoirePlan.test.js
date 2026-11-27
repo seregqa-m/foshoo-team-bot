@@ -16,6 +16,7 @@ const fixture = () => ({
     missing: [{ key: 'catalog:1', name: 'Урод', count: 1 }], load_score: 0, spread_score: 0, load_warnings: [], spread_warnings: [] })),
 });
 beforeEach(() => {
+  jest.resetAllMocks();
   localStorage.clear();
   global.IS_REACT_ACT_ENVIRONMENT = true;
   container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container);
@@ -25,7 +26,7 @@ beforeEach(() => {
   client.put.mockResolvedValue({ data: { revision: 3 } });
 });
 afterEach(() => { act(() => root.unmount()); container.remove(); jest.clearAllMocks(); jest.useRealTimers(); });
-const render = async props => { await act(async () => root.render(<RepertoirePlan key={`${props?.month || '2028-10'}:${props?.userId || ''}`} month="2028-10" {...props} />)); };
+const render = async props => { await act(async () => root.render(<RepertoirePlan key={`${props?.month || '2028-10'}:${props?.userId || ''}`} month="2028-10" isSuperAdmin={true} {...props} />)); };
 
 test('shows maximum partial plan, shortfall and per-role reasons; switches alternatives', async () => {
   await render();
@@ -36,7 +37,7 @@ test('shows maximum partial plan, shortfall and per-role reasons; switches alter
   expect(container.textContent).toContain('Вариант 1 из 2');
   expect(container.querySelector('[aria-label="Вариант расписания"]')).toBeNull();
   await act(async () => container.querySelector('[aria-label="Следующий вариант"]').click());
-  expect(container.querySelector('[aria-label="Закрепить Урод, 2028-10-08"]')).not.toBeNull();
+  expect(container.querySelector('[aria-label="Удалить Урод, 2028-10-08"]')).not.toBeNull();
 });
 
 test('edits month rules without duration and saves the reviewed revision', async () => {
@@ -114,27 +115,27 @@ test('refreshes answers automatically and blocks actions on stale data', async (
   await act(async () => jest.advanceTimersByTime(30_000));
   expect(client.get.mock.calls.length).toBe(before + 1);
   expect(container.textContent).toContain('Показаны последние полученные данные');
-  expect(button('Перейти к назначению').disabled).toBe(true);
-  expect(button('Закрепить').disabled).toBe(true);
+  expect(button('Удалить из афиши').disabled).toBe(true);
+  expect(button('Закрепить афишу месяца').disabled).toBe(true);
 });
 
-test('pins date with optimistic revision and prepares assignment with fresh snapshot', async () => {
-  const onPrepared = jest.fn();
-  client.post.mockResolvedValue({ data: { plan: {}, column: 'B', show: 'Урод' } });
-  await render({ onPrepared });
-  await act(async () => button('Перейти к назначению').click());
-  expect(client.post).toHaveBeenCalledWith('/api/planning/repertoire/prepare', { month: '2028-10', day: '2028-10-07', key: 'catalog:1', expected_fingerprint: 'fresh', expected_revision: 2 });
-  expect(onPrepared).toHaveBeenCalledWith({ plan: {}, column: 'B', show: 'Урод' }, { Летте: 'Анна' });
-  await act(async () => button('Закрепить').click());
-  expect(client.put.mock.calls[0][1].rules.pins).toEqual([{ day: '2028-10-07', key: 'catalog:1' }]);
+test('whole month lock opens reviewed calendar confirmation without applying it', async () => {
+  client.post.mockResolvedValue({ data: { id: 'preview', status: 'preview', actions: [], existing_count: 0 } });
+  await render();
+  await act(async () => button('Закрепить афишу месяца').click());
+  expect(container.querySelector('[role="dialog"]')).not.toBeNull();
+  expect(client.post).toHaveBeenCalledWith('/api/planning/repertoire/lock/preview', { month: '2028-10', search_id: 'search', variant_id: 'first', expected_fingerprint: 'fresh', expected_revision: 2 });
+  expect(client.post.mock.calls.some(([url]) => url === '/api/planning/repertoire/lock')).toBe(false);
+  expect(container.textContent).toContain('Снятие закрепления не откатит изменения календаря');
 });
 
 test('existing pin can be removed even when no valid variant remains', async () => {
   response.rules.pins = [{ day: '2028-10-07', key: 'catalog:1' }];
   response.pin_errors = ['Закреплённый спектакль больше не подходит']; response.variants = []; response.total_variants = 0;
   await render();
+  client.post.mockResolvedValue({ data: { locked: false } });
   await act(async () => button('Снять закрепление').click());
-  expect(client.put.mock.calls[0][1].rules.pins).toEqual([]);
+  expect(client.post).toHaveBeenCalledWith('/api/planning/repertoire/unlock', { month: '2028-10', expected_revision: 2 });
 });
 
 test('labels a rehearsal slot and explains how calendar assignment works', async () => {
@@ -143,7 +144,7 @@ test('labels a rehearsal slot and explains how calendar assignment works', async
   expect(container.textContent).toContain('Репетиционный слот');
   expect(container.textContent).toContain('для любого спектакля с полным составом');
   expect(container.textContent).toContain('В календаре: Урод [Реп]');
-  expect(container.textContent).toContain('Репетиция автоматически не меняется');
+  expect(container.textContent).toContain('какую репетицию заменит спектакль');
   expect(container.textContent).not.toContain('Даты с событиями календаря заняты');
 });
 
@@ -229,4 +230,41 @@ test('saved manual dates are revalidated on reopen and isolated between users an
   await render({ userId: 42 });
   await act(async () => button('Отменить ручные изменения').click());
   expect(localStorage.getItem('foshoo:repertoire-draft:42:2028-10')).toBeNull();
+});
+
+
+test('deleting last recommendation leaves an empty draft and survives reopen', async () => {
+  const manual = { ...response.variants[0], id: 'empty', manual: true, entries: [], count: 0, missing: [{ key: 'catalog:1', name: 'Урод', count: 2 }] };
+  client.post.mockResolvedValue({ data: { status: 'ready', variant: manual } });
+  await render({ userId: 42 });
+  await act(async () => button('Удалить из афиши').click());
+  expect(client.post).toHaveBeenCalledWith('/api/planning/repertoire/draft', expect.objectContaining({ entries: [] }));
+  expect(container.querySelector('[data-date="2028-10-07"]').getAttribute('aria-label')).toContain('Нет показов');
+  expect(container.textContent).toContain('Не хватает: Урод — 2');
+  expect(localStorage.getItem('foshoo:repertoire-draft:42:2028-10')).toBe('[]');
+  await render({ userId: 43 }); await render({ userId: 42 });
+  expect(container.querySelector('[data-date="2028-10-07"]').getAttribute('aria-label')).toContain('Нет показов');
+});
+
+test('only superadmin can lock or unlock; locked month keeps votes available', async () => {
+  await render({ isSuperAdmin: false });
+  expect(button('Закрепить афишу месяца')).toBeUndefined();
+  response.locked = true; response.selected_variant = response.variants[0];
+  await render({ isSuperAdmin: false, userId: 43 });
+  expect(button('Снять закрепление')).toBeUndefined();
+  expect(button('Удалить из афиши').disabled).toBe(true);
+  expect(button('Параметры').disabled).toBe(true);
+  await act(async () => container.querySelector('[data-date="2028-10-20"]').click());
+  expect(client.get).toHaveBeenLastCalledWith('/api/planning/repertoire/day', { params: { month: '2028-10', day: '2028-10-20' } });
+});
+
+test('server locked calendar wins over local draft and remains unlockable when invalid', async () => {
+  localStorage.setItem('foshoo:repertoire-draft:42:2028-10', JSON.stringify([{ day: '2028-10-20', key: 'catalog:1' }]));
+  response.locked = true; response.lock_error = 'Календарь изменился'; response.selected_variant = response.variants[0];
+  await render({ userId: 42 });
+  expect(client.post).not.toHaveBeenCalled();
+  expect(localStorage.getItem('foshoo:repertoire-draft:42:2028-10')).toBeNull();
+  expect(container.textContent).toContain('Календарь изменился');
+  expect(button('Снять закрепление').disabled).toBe(false);
+  expect(button('Отправить в чат').disabled).toBe(true);
 });

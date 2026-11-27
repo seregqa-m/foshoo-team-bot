@@ -11,7 +11,7 @@ from core.database import get_db
 from core.time import local_now, as_local
 from config import TIMEZONE
 from modules.attendance.services import answer_lock
-from .models import RepertoireSettings
+from .models import RepertoireSettings, RepertoireAffiche
 from .repertoire import Rules, RepertoireProblem, load_warnings
 from .repertoire_source import load_snapshot, get_rules
 from .repertoire_search import search_page
@@ -51,7 +51,12 @@ def get_repertoire(month: str, page: int = Query(0, ge=0), selected: str | None 
     data = snapshot(db, month)
     rules, revision, defaults_revision = get_rules(db, month, data['shows'])
     problem = RepertoireProblem(data, rules, local_now().date())
-    return {**search_page(problem, page, selected), 'month': month, 'rules': rules.model_dump(mode='json'),
+    from .repertoire_affiche import locked_result
+    locked = db.get(RepertoireAffiche, month)
+    result = locked_result(locked, data, rules) if locked else {'locked': False, **search_page(problem, page, selected)}
+    from .repertoire_publication import pending_publication, publication_data
+    publication = pending_publication(db, month)
+    return {**result, 'publication': publication_data(publication) if publication else None, 'month': month, 'rules': rules.model_dump(mode='json'),
             'revision': revision, 'defaults_revision': defaults_revision, 'shows': data['shows'],
             'fingerprint': data['fingerprint'], 'diagnostics': problem.diagnostics, 'warnings': data['warnings'],
             'checked_at': local_now().isoformat(), 'timezone': TIMEZONE}
@@ -75,6 +80,10 @@ def save_repertoire(req: SaveRules, db: Session = Depends(get_db)):
         raise HTTPException(422, 'Спектакль закрепления отсутствует в параметрах')
     with settings_lock:
         db.expire_all()
+        from .repertoire_publication import assert_no_publication
+        assert_no_publication(db, req.month)
+        if db.get(RepertoireAffiche, req.month):
+            raise HTTPException(409, 'Афиша месяца закреплена. Сначала снимите закрепление для изменения параметров.')
         row = db.get(RepertoireSettings, req.month)
         default = db.get(RepertoireSettings, '*')
         if (row.revision if row else 0) != req.expected_revision or (
@@ -111,6 +120,8 @@ def validate_review(db, client, req, day):
     data = load_snapshot(db, client, req.month, fresh=True)
     rules, revision, _ = get_rules(db, req.month, data['shows'])
     review = req.repertoire
+    from .repertoire_affiche import check_locked_day
+    check_locked_day(db, req.month, day, review.key)
     if data['fingerprint'] != review.fingerprint or revision != review.revision:
         raise HTTPException(409, 'Календарь, ответы или параметры афиши изменились. Обновите предложения перед назначением.')
     problem = RepertoireProblem(data, rules, local_now().date())
@@ -137,6 +148,8 @@ def prepare_assignment(req: PrepareAssignment, db: Session = Depends(get_db)):
     if req.day.strftime('%Y-%m') != req.month or req.day < local_now().date():
         raise HTTPException(422, 'Выберите будущую дату в выбранном месяце')
     with settings_lock, answer_lock:
+        from .repertoire_affiche import check_locked_day
+        check_locked_day(db, req.month, req.day, req.key)
         data = snapshot(db, req.month, fresh=True)
         rules, revision, _ = get_rules(db, req.month, data['shows'])
         if revision != req.expected_revision or data['fingerprint'] != req.expected_fingerprint:
@@ -164,3 +177,8 @@ from .repertoire_sharing import router as sharing_router
 router.include_router(sharing_router)
 from .repertoire_editing import router as editing_router
 router.include_router(editing_router)
+from .repertoire_affiche import router as affiche_router
+router.include_router(affiche_router)
+
+from .repertoire_publication import router as publication_router
+router.include_router(publication_router)

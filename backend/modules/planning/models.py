@@ -36,3 +36,22 @@ class RepertoireShare(Base):
     retry_after = Column(DateTime, nullable=True)
     expires_at = Column(DateTime, nullable=False)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class RepertoireAffiche(Base):
+    """The explicitly saved month calendar, independent of search caches."""
+    __tablename__ = 'planning_repertoire_affiches'
+    month = Column(String, primary_key=True)
+    payload = Column(Text, nullable=False)
+
+
+class RepertoirePublication(Base):
+    """Reviewed calendar changes and durable per-event publication progress."""
+    __tablename__ = 'planning_repertoire_publications'
+    id = Column(String, primary_key=True)
+    month = Column(String, nullable=False, index=True)
+    actor_id = Column(BigInteger, nullable=False)
+    status = Column(String, nullable=False, default='preview')
+    payload = Column(Text, nullable=False)
+    error = Column(Text, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)

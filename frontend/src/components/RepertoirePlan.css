@@ -66,3 +66,7 @@
 .repertoire-share h3 { font-size: 17px; }
 .repertoire-message { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; font-size: 13px; line-height: 1.6; background: #f4f1f3; padding: 12px; border-radius: 8px; margin: 12px 0; }
 @media (max-width: 380px) { .repertoire-plan { padding: 12px; } .repertoire-plan .repertoire-row { gap: 8px; } }
+.repertoire-affiche { margin: 16px 0; }
+.repertoire-modal-overlay { position: fixed; inset: 0; z-index: 1100; background: #0007; display: flex; align-items: center; justify-content: center; padding: 12px; }
+.repertoire-modal { width: min(100%, 620px); max-height: 90dvh; overflow-y: auto; background: var(--tg-theme-bg-color, #fff); color: var(--tg-theme-text-color, #25232a); border-radius: 16px; padding: 20px; box-sizing: border-box; }
+.repertoire-modal .repertoire-actions { position: sticky; bottom: -20px; background: var(--tg-theme-bg-color, #fff); padding: 12px 0; }

@@ -60,26 +60,14 @@ test('loads the linked month immediately and lets the user change it', async () 
   expect(client.get).toHaveBeenLastCalledWith('/api/planning', { params: { month: '2027-01' } });
 });
 
-test('assignment from repertoire retains the reviewed times rather than generic form defaults', async () => {
+test('repertoire publication is available to superadmins through the parent view', async () => {
   const baseGet = client.get.getMockImplementation();
-  const repertoire = repertoireFixture();
-  const cast = { Летте: 'Борис', Фанни: 'Анна' };
-  repertoire.variants[0].entries[0].cast = cast;
-  client.get.mockImplementation((url, ...args) => url === '/api/planning/repertoire'
-    ? Promise.resolve({ data: repertoire }) : baseGet(url, ...args));
-  const context = { key: '1', fingerprint: 'fresh', revision: 0, start_time: '2028-10-01T19:00:00+03:00', end_time: '2028-10-01T20:30:00+03:00' };
-  client.post.mockResolvedValueOnce({ data: { plan, column: 'B', show: 'Урод', repertoire: context } });
+  client.get.mockImplementation((url, ...args) => url === '/api/planning/repertoire' ? Promise.resolve({ data: repertoireFixture() }) : baseGet(url, ...args));
   await act(async () => root.render(<PlanningView isAdmin />));
-  await act(async () => button('Перейти к назначению').click());
-  const [start, end] = [...container.querySelectorAll('input[type="datetime-local"]')];
-  expect(start.value).toBe('2028-10-01T19:00');
-  expect(end.value).toBe('2028-10-01T20:30');
-  expect(start.disabled && end.disabled).toBe(true);
-  act(() => Simulate.change(container.querySelector('input[placeholder="Зал или адрес"]'), { target: { value: 'Зал' } }));
-  await act(async () => Simulate.submit(container.querySelector('form')));
-  expect(client.post).toHaveBeenLastCalledWith('/api/planning/assign', expect.objectContaining({
-    start_time: '2028-10-01T19:00', end_time: '2028-10-01T20:30', repertoire: context, cast,
-  }));
+  expect(button('Закрепить афишу месяца')).toBeUndefined();
+  await act(async () => root.render(<PlanningView isAdmin isSuperAdmin />));
+  expect(button('Закрепить афишу месяца')).toBeDefined();
+  expect(button('Перейти к назначению')).toBeUndefined();
 });
 
 test('uses the server default month and marks today in the planning timezone at the UTC month boundary', async () => {

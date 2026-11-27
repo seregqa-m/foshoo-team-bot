@@ -14,7 +14,7 @@ from modules.calendar.models import CalendarEvent
 from modules.theater.routing import show_aliases, match_show
 from sheets_client import _format_schedule_header
 
-from .models import PlanningAssignment, RepertoireSettings
+from .models import PlanningAssignment, RepertoireSettings, RepertoirePublication
 from .repertoire import Rules, default_rule, digest
 from .services import build_plan, norm
 from .show_times import show_format
@@ -118,6 +118,13 @@ def load_snapshot(db, client, month, fresh=False):
         CalendarEvent.end_time > as_local(datetime.combine(before, time()))).order_by(CalendarEvent.id).all()
     operations = {op.id: op for op in db.query(PlanningAssignment).filter(PlanningAssignment.month.in_(
         sorted({before.strftime('%Y-%m'), month, after.strftime('%Y-%m')}))).all()}
+    published_casts = {}
+    for publication in db.query(RepertoirePublication).filter(RepertoirePublication.month.in_(sorted({before.strftime('%Y-%m'), month, after.strftime('%Y-%m')})), RepertoirePublication.status.in_(['applying', 'partial', 'complete', 'stopped'])).order_by(RepertoirePublication.created_at, RepertoirePublication.id).all():
+        payload = json.loads(publication.payload)
+        entries = {(e['date'], e['key']): e for e in payload['variant']['entries']}
+        for action in payload['actions']:
+            if action.get('done'):
+                published_casts[action['event_id']] = entries[(action['date'], action['key'])]
     active_pairs = set()
     for event in events:
         if not event.is_cancelled and classify_event(event.title, aliases)['event_type'] == 'performance':
@@ -176,6 +183,9 @@ def load_snapshot(db, client, month, fresh=False):
             request = json.loads(op.payload)['request']
             if request['show_name'] == name and as_local(datetime.fromisoformat(request['start_time'])).date().isoformat() == day:
                 item['cast'] = request['cast']
+        published = published_casts.get(event.google_event_id)
+        if published and published['date'] == day and published['name'] == name and not item['cast']:
+            item['cast'] = published['cast']
         if not item['cast']:
             warnings.append(f'{day}, {name}: состав календарного показа неизвестен; его нагрузка на актёров не проверена.')
     for op in operations.values():

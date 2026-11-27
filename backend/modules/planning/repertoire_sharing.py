@@ -90,8 +90,8 @@ def message_text(month, variant, target, warnings):
         lines.append(f'Нагрузка: {warning["actor"]} — {len(warning["dates"])} дня подряд ({", ".join(warning["dates"])}).')
     if warnings:
         lines += ['', 'Проверить перед утверждением:', *[f'• {w}' for w in warnings]]
-    lines += ['', 'Предлагаемый вариант для финального согласования. Просьба подтвердить даты или написать замечания в чат.',
-              'Новые показы ещё не назначены; репетиции автоматически не изменены.']
+    lines += ['', 'Предлагаемый вариант для финального согласования. Просьба подтвердить даты или написать замечания в чат.']
+    lines.append('Показы уже внесены в календарь.' if all(e['fixed'] for e in variant['entries']) else 'Новые показы ещё не назначены; репетиции автоматически не изменены.')
     return '\n'.join(lines)
 
 
@@ -126,6 +126,11 @@ def prepare_preview(req, actor_id, title, db):
     variant = cached_variant(req.search_id, req.variant_id)
     if not variant or not variant['entries']:
         raise HTTPException(409, 'Вариант больше не доступен. Обновите предложения.')
+    from .models import RepertoireAffiche
+    from .repertoire_affiche import pair_set
+    locked = db.get(RepertoireAffiche, req.month)
+    if locked and pair_set(json.loads(locked.payload)['entries']) != pair_set(variant['entries']):
+        raise HTTPException(409, 'Афиша закреплена. Обновите план для отправки сохранённого варианта.')
     text = message_text(req.month, variant, problem.target, source['warnings'])
     key = digest([actor_id, req.chat_id, text])
     payload = {'text': text, 'chat_title': title, 'fingerprint': source['fingerprint'],

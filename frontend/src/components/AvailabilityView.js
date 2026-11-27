@@ -15,6 +15,6 @@ export default function AvailabilityView({ active = true, dataVersion = 0, userI
         isSuperAdmin={isSuperAdmin} initialMonth={initialPlanningMonth} onMonthChange={setMonth} />
     </section>
     {planning && <PlanningView onClose={() => setPlanning(false)} closeLabel="← К моим датам"
-      dataVersion={dataVersion} initialMonth={month} userId={userId} isAdmin={isAdmin} />}
+      dataVersion={dataVersion} initialMonth={month} userId={userId} isAdmin={isAdmin} isSuperAdmin={isSuperAdmin} />}
   </>;
 }
