@@ -145,7 +145,7 @@ function App() {
           <CalendarView active={activeTab === 'calendar'} dataVersion={dataVersion} userId={userId} isAdmin={isAdmin} />
         </section>}
         {visitedTabs.includes('availability') && <section hidden={activeTab !== 'availability'}>
-          <AvailabilityView active={activeTab === 'availability'} dataVersion={dataVersion} isAdmin={isAdmin} isSuperAdmin={isSuperAdmin} initialPlanningMonth={initialPlanningMonth} />
+          <AvailabilityView active={activeTab === 'availability'} dataVersion={dataVersion} userId={userId} isAdmin={isAdmin} isSuperAdmin={isSuperAdmin} initialPlanningMonth={initialPlanningMonth} />
         </section>}
         {canFinance && visitedTabs.includes('finance') && <section hidden={activeTab !== 'finance'}>
           <FinanceView active={activeTab === 'finance'} dataVersion={dataVersion} username={username} isAdmin={isAdmin} />

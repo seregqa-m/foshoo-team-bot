@@ -4,8 +4,8 @@ const WEEK = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
 const SHORT = { 'урод': 'Урод', 'любовь громова': 'ЛГ', 'цианистый калий': 'ЦК', 'микрополь': 'Микр.' };
 const dayLabel = day => new Intl.DateTimeFormat('ru', { day: 'numeric', month: 'long', weekday: 'short', timeZone: 'UTC' }).format(new Date(`${day}T12:00:00Z`));
 
-export default function RepertoireCalendar({ month, entries, pins, renderEntry }) {
-  const [selectedDate, setSelectedDate] = useState(() => entries[0]?.date || `${month}-01`);
+export default function RepertoireCalendar({ month, entries, pins, renderEntry, renderDay, focusDate }) {
+  const [selectedDate, setSelectedDate] = useState(() => focusDate || entries[0]?.date || `${month}-01`);
   const first = new Date(`${month}-01T12:00:00Z`);
   const offset = (first.getUTCDay() + 6) % 7;
   const last = new Date(first); last.setUTCMonth(last.getUTCMonth() + 1, 0);
@@ -36,6 +36,7 @@ export default function RepertoireCalendar({ month, entries, pins, renderEntry }
     <div className="repertoire-calendar-legend">{shows.map(e => <span key={e.key}><strong>{labels[e.key]}</strong> — {e.name}</span>)}<span>✓ Уже в расписании · ● Закреплено</span></div>
     <section id="repertoire-day-detail" className="repertoire-day-detail" aria-live="polite" aria-label={dayLabel(selectedDate)}>
       {selected.length ? selected.map(renderEntry) : <p className="repertoire-note">{dayLabel(selectedDate)} — в выбранном варианте показов нет.</p>}
+      {renderDay?.(selectedDate)}
     </section>
   </div>;
 }

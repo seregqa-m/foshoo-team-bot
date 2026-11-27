@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import MyAvailabilityView from './MyAvailabilityView';
 import PlanningView from './PlanningView';
 
-export default function AvailabilityView({ active = true, dataVersion = 0, isAdmin, isSuperAdmin = false, initialPlanningMonth = '' }) {
+export default function AvailabilityView({ active = true, dataVersion = 0, userId, isAdmin, isSuperAdmin = false, initialPlanningMonth = '' }) {
   const [planning, setPlanning] = useState(!!initialPlanningMonth);
   const [month, setMonth] = useState(initialPlanningMonth);
 
@@ -15,6 +15,6 @@ export default function AvailabilityView({ active = true, dataVersion = 0, isAdm
         isSuperAdmin={isSuperAdmin} initialMonth={initialPlanningMonth} onMonthChange={setMonth} />
     </section>
     {planning && <PlanningView onClose={() => setPlanning(false)} closeLabel="← К моим датам"
-      dataVersion={dataVersion} initialMonth={month} isAdmin={isAdmin} />}
+      dataVersion={dataVersion} initialMonth={month} userId={userId} isAdmin={isAdmin} />}
   </>;
 }

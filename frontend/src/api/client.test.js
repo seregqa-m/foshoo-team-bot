@@ -20,3 +20,14 @@ test('successful writes invalidate data; chat requests do not', async () => {
   expect(listener).toHaveBeenCalledTimes(1);
   window.removeEventListener(DATA_CHANGED_EVENT, listener);
 });
+
+test('reviewing a draft does not trigger a global reload loop, while real writes still refresh data', async () => {
+  const changed = jest.fn();
+  window.addEventListener(DATA_CHANGED_EVENT, changed);
+  try {
+    await client.post('/api/planning/repertoire/draft', {});
+    expect(changed).not.toHaveBeenCalled();
+    await client.put('/api/planning/repertoire', {});
+    expect(changed).toHaveBeenCalledTimes(1);
+  } finally { window.removeEventListener(DATA_CHANGED_EVENT, changed); }
+});

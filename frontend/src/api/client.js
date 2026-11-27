@@ -18,7 +18,7 @@ client.interceptors.request.use(config => {
 export const DATA_CHANGED_EVENT = 'foshoo:data-changed';
 client.interceptors.response.use(response => {
   const method = response.config.method?.toLowerCase();
-  if (['post', 'put', 'patch', 'delete'].includes(method) && response.config.url !== '/api/assistant/chat') {
+  if (['post', 'put', 'patch', 'delete'].includes(method) && !['/api/assistant/chat', '/api/planning/repertoire/draft'].includes(response.config.url)) {
     window.dispatchEvent(new Event(DATA_CHANGED_EVENT));
   }
   return response;

@@ -48,6 +48,13 @@
 .repertoire-day-detail { margin-top: 10px; }
 .repertoire-share-button { width: 100%; }
 .repertoire-share { margin-top: 18px; padding-top: 16px; border-top: 1px solid #e9e2e6; }
+.repertoire-day-options { border-top: 1px solid #e9e2e6; margin-top: 12px; }
+.repertoire-day-options h4 { margin: 16px 0 8px; }
+.repertoire-day-option { padding: 12px 0; border-bottom: 1px solid #e9e2e6; }
+.repertoire-day-option > button { width: 100%; }
+.repertoire-vote-role { font-size: 13px; }
+.repertoire-vote-role ul { padding-left: 20px; line-height: 1.6; }
+.repertoire-manual { background: #f4f1f3; border-radius: 8px; padding: 10px; margin-top: 12px; font-size: 13px; }
 .repertoire-share h3 { font-size: 17px; }
 .repertoire-message { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; font-size: 13px; line-height: 1.6; background: #f4f1f3; padding: 12px; border-radius: 8px; margin: 12px 0; }
 @media (max-width: 380px) { .repertoire-plan { padding: 12px; } .repertoire-plan .repertoire-row { gap: 8px; } }

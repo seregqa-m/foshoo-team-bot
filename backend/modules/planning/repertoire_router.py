@@ -114,9 +114,10 @@ def validate_review(db, client, req, day):
     if data['fingerprint'] != review.fingerprint or revision != review.revision:
         raise HTTPException(409, 'Календарь, ответы или параметры афиши изменились. Обновите предложения перед назначением.')
     problem = RepertoireProblem(data, rules, local_now().date())
-    choices = {(d, k) for d, cells in problem.options.items() for k in cells}
-    choices.update((d, k) for d, k, _ in problem.pinned)
-    if (day.isoformat(), review.key) not in choices or problem.names.get(review.key) != req.show_name or problem.pin_errors:
+    from .repertoire_editing import daily_problem
+    choices = daily_problem(data, rules).options
+    wrong_pin = any(p.day == day and p.key != review.key for p in rules.pins)
+    if review.key not in choices.get(day.isoformat(), {}) or problem.names.get(review.key) != req.show_name or wrong_pin or problem.pin_errors:
         raise HTTPException(409, 'Дата или спектакль больше не подходят для этого плана')
     window = performance_window(day, req.show_name, problem.rule[review.key].format)
     if (as_local(req.start_time), as_local(req.end_time)) != window:
@@ -141,9 +142,10 @@ def prepare_assignment(req: PrepareAssignment, db: Session = Depends(get_db)):
         if revision != req.expected_revision or data['fingerprint'] != req.expected_fingerprint:
             raise HTTPException(409, 'Ответы, календарь или параметры изменились. Обновите предложения.')
         problem = RepertoireProblem(data, rules, local_now().date())
-        options = {(day, key) for day, cells in problem.options.items() for key in cells}
-        options.update((day, key) for day, key, _ in problem.pinned)
-        if (req.day.isoformat(), req.key) not in options or problem.pin_errors:
+        from .repertoire_editing import daily_problem
+        options = daily_problem(data, rules).options
+        wrong_pin = any(p.day == req.day and p.key != req.key for p in rules.pins)
+        if req.key not in options.get(req.day.isoformat(), {}) or wrong_pin or problem.pin_errors:
             raise HTTPException(409, 'Дата больше не подходит для назначения')
         client = get_client()
         client.ensure_schedule_columns([(datetime.combine(req.day, time()), '')])
@@ -160,3 +162,5 @@ def prepare_assignment(req: PrepareAssignment, db: Session = Depends(get_db)):
 
 from .repertoire_sharing import router as sharing_router
 router.include_router(sharing_router)
+from .repertoire_editing import router as editing_router
+router.include_router(editing_router)

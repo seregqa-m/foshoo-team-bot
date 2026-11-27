@@ -80,6 +80,10 @@ def message_text(month, variant, target, warnings):
         lines.append(f'{day}{clock} — {entry["name"]}{suffix}')
     if variant['missing']:
         lines += ['', 'Не хватает: ' + '; '.join(f'{s["name"]} — {s["count"]}' for s in variant['missing']) + '.']
+    if variant.get('manual'):
+        lines.append('Вариант с ручными заменами.')
+    if variant.get('excess'):
+        lines.append('Сверх плана: ' + '; '.join(f'{s["name"]} — {s["count"]}' for s in variant['excess']) + '.')
     for warning in variant['spread_warnings']:
         lines.append(f'Разнос: {warning["name"]}, {" / ".join(warning["dates"])} — {warning["gap"]} дн., желательно {warning["desired"]}.')
     for warning in variant['load_warnings']:

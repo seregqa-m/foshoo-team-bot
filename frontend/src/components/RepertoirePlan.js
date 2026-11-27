@@ -3,11 +3,20 @@ import client from '../api/client';
 import './RepertoirePlan.css';
 import RepertoireCalendar from './RepertoireCalendar';
 import RepertoireShare from './RepertoireShare';
+import RepertoireDayOptions from './RepertoireDayOptions';
 
 const DAYS = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
 const prettyDate = day => new Intl.DateTimeFormat('ru', { day: 'numeric', month: 'short', weekday: 'short', timeZone: 'UTC' }).format(new Date(`${day}T12:00:00Z`));
 const message = e => typeof e.response?.data?.detail === 'string' ? e.response.data.detail : 'Не удалось обновить план. Проверьте соединение и повторите.';
 const copy = value => JSON.parse(JSON.stringify(value));
+const readDraft = (key, month) => {
+  if (!key) return null;
+  try {
+    const entries = JSON.parse(localStorage.getItem(key));
+    return Array.isArray(entries) && entries.length <= 31 && entries.every(e => e && typeof e.day === 'string'
+      && e.day.startsWith(`${month}-`) && /^\d{4}-\d{2}-\d{2}$/.test(e.day) && typeof e.key === 'string' && e.key.length <= 250) ? entries : null;
+  } catch { return null; }
+};
 
 function RulesEditor({ data, busy, conflict, onSave, onCancel }) {
   const [rules, setRules] = useState(() => copy(data.rules));
@@ -77,7 +86,7 @@ function Diagnostics({ data, variant }) {
   </details>;
 }
 
-export default function RepertoirePlan({ month, dataVersion, onPrepared }) {
+export default function RepertoirePlan({ month, dataVersion, onPrepared, userId }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
@@ -88,10 +97,16 @@ export default function RepertoirePlan({ month, dataVersion, onPrepared }) {
   const [selected, setSelected] = useState(null);
   const [refresh, setRefresh] = useState(0);
   const [share, setShare] = useState(null);
+  const [focusDate, setFocusDate] = useState(null);
+  const [draftPending, setDraftPending] = useState(false);
+  const storageKey = userId ? `foshoo:repertoire-draft:${userId}:${month}` : null;
+  const [initialDraft] = useState(() => readDraft(storageKey, month));
+  const draft = useRef(initialDraft);
+  const [storageError, setStorageError] = useState(false);
   const selectedId = useRef(null);
   const refreshNow = () => setRefresh(n => n + 1);
   useEffect(() => {
-    let active = true, timer, inFlight = false;
+    let active = true, timer, inFlight = false, calculating = false;
     const load = async () => {
       if (inFlight || document.hidden) return;
       inFlight = true;
@@ -100,27 +115,36 @@ export default function RepertoirePlan({ month, dataVersion, onPrepared }) {
         const { data: result } = await client.get('/api/planning/repertoire', { params: { month, page, ...(selectedId.current ? { selected: selectedId.current } : {}) } });
         if (!active) return;
         if (result.month !== month || !Array.isArray(result.variants)) throw new Error('Invalid planning response');
+        let next = result.selected_variant || result.variants.find(v => v.id === selectedId.current) || result.variants[0] || null;
+        if (draft.current) {
+          const { data: reviewed } = await client.post('/api/planning/repertoire/draft', { month, entries: draft.current,
+            expected_fingerprint: result.fingerprint, expected_revision: result.revision });
+          if (!active) return;
+          calculating = reviewed.status === 'calculating'; setDraftPending(calculating);
+          if (calculating) { setData(result); setError(''); return; }
+          next = reviewed.variant;
+          if (storageKey) { try { localStorage.setItem(storageKey, JSON.stringify(draft.current)); setStorageError(false); } catch { setStorageError(true); } }
+        } else { calculating = false; setDraftPending(false); }
         setData(result); setError('');
-        const next = result.selected_variant || result.variants.find(v => v.id === selectedId.current) || result.variants[0] || null;
         setSelected(next);
         if (selectedId.current && next?.id !== selectedId.current) selectedId.current = null;
-      } catch (e) { if (active) setError(message(e)); }
+      } catch (e) { if (active) { calculating = false; setDraftPending(false); setError(message(e)); } }
       finally {
         inFlight = false;
-        if (active) { setLoading(false); timer = setTimeout(load, 30_000); }
+        if (active) { setLoading(false); timer = setTimeout(load, calculating ? 1000 : 30_000); }
       }
     };
     const focus = () => { clearTimeout(timer); load(); };
     load(); window.addEventListener('focus', focus); document.addEventListener('visibilitychange', focus);
     return () => { active = false; clearTimeout(timer); window.removeEventListener('focus', focus); document.removeEventListener('visibilitychange', focus); };
-  }, [month, page, refresh, dataVersion]);
+  }, [month, page, refresh, dataVersion, storageKey]);
 
   const save = async (rules, useAsDefault, base = data) => {
     if (busy) return;
     setBusy(true); setError('');
     try {
       await client.put('/api/planning/repertoire', { month, rules, expected_revision: base.revision, expected_defaults_revision: base.defaults_revision, use_as_default: useAsDefault });
-      setEditor(null); setConflict(false); selectedId.current = null; setSelected(null); setPage(0); refreshNow();
+      setEditor(null); setConflict(false); selectedId.current = null; if (!draft.current) setSelected(null); setPage(0); refreshNow();
     } catch (e) { setError(message(e)); if (e.response?.status === 409) setConflict(true); }
     finally { setBusy(false); }
   };
@@ -141,8 +165,15 @@ export default function RepertoirePlan({ month, dataVersion, onPrepared }) {
   };
   const totals = selected?.entries.reduce((map, item) => ({ ...map, [item.key]: (map[item.key] || 0) + 1 }), {}) || {};
   const names = Object.fromEntries((data?.shows || []).map(s => [s.key, s.name]));
-  const choosePage = next => { selectedId.current = null; setSelected(null); setPage(next); setLoading(true); };
-  const stale = Boolean(error) || busy || loading;
+  const forgetDraft = () => { if (storageKey) { try { localStorage.removeItem(storageKey); setStorageError(false); } catch { setStorageError(true); } } };
+  const resetDraft = () => { draft.current = null; forgetDraft(); setDraftPending(false); setFocusDate(null); setShare(null); selectedId.current = null; refreshNow(); };
+  const choosePage = next => { resetDraft(); setSelected(null); setPage(next); setLoading(true); };
+  const replaceShow = (day, key) => {
+    if (busy || loading || error || draftPending) return;
+    draft.current = [...(selected?.entries || []).filter(e => !e.fixed && e.date !== day).map(e => ({ day: e.date, key: e.key })), { day, key }];
+    setFocusDate(day); setShare(null); setDraftPending(true); selectedId.current = null; refreshNow();
+  };
+  const stale = Boolean(error) || busy || loading || draftPending;
   return <section className="repertoire-plan" aria-labelledby="repertoire-title">
     <div className="repertoire-row"><div><h2 id="repertoire-title">План афиши</h2><p className="repertoire-note">По ответам участников и составам</p></div>
       {data && !editor && <button className="btn btn-secondary" onClick={() => { setEditor(copy(data)); setConflict(false); }} disabled={busy}>Параметры</button>}
@@ -150,27 +181,35 @@ export default function RepertoirePlan({ month, dataVersion, onPrepared }) {
     {error && <div className="alert alert-error" role="alert">{error} {data && 'Показаны последние полученные данные.'}<button className="btn btn-secondary" onClick={() => { setConflict(false); refreshNow(); }} disabled={busy}>Обновить предложения</button></div>}
     {loading && !data && <p role="status">Подбираем расписание…</p>}
     {editor ? <RulesEditor data={editor} busy={busy} conflict={conflict} onSave={save} onCancel={() => { setEditor(null); setConflict(false); refreshNow(); }} /> : data && <>
-      <div className="repertoire-score" aria-live="polite"><strong>{data.maximum ?? '…'} из {data.target}</strong><span>{data.maximum === null ? 'ищем подходящие показы' : 'показов'}</span></div>
+      <div className="repertoire-score" aria-live="polite"><strong>{selected?.manual ? selected.count : data.maximum ?? '…'} из {data.target}</strong><span>{data.maximum === null && !selected?.manual ? 'ищем подходящие показы' : 'показов по плану'}</span></div>
+      {draft.current && <div className="repertoire-manual"><p>{draftPending ? 'Проверяем замену и нагрузку…' : error ? 'Ручные изменения требуют проверки.' : 'Ручной вариант — остальные даты сохранены.'}</p><button type="button" className="btn btn-secondary" onClick={resetDraft} disabled={busy}>Отменить ручные изменения</button></div>}
+      {draft.current && storageKey && !draftPending && !error && <p className="repertoire-note">{storageError ? 'Браузер не сохранил черновик. Он доступен, пока открыт этот экран.' : 'Ручной черновик сохранён на этом устройстве для вашего аккаунта и месяца.'}</p>}
       <p className="repertoire-note">{data.complete ? `Перебор завершён. Вариантов: ${data.total_variants}.` : `Найдено вариантов: ${data.total_variants}. Перебор продолжается — порядок ещё может измениться.`}
         {!data.complete && <button className="btn btn-secondary" disabled={busy} onClick={refreshNow}>Продолжить поиск</button>}</p>
-      <p className="repertoire-note">{data.maximum !== null && data.maximum < data.target ? 'Максимум по обязательным ограничениям. Ниже — все варианты с таким числом показов.' : 'Близкие показы и нагрузка снижают приоритет, но не скрывают допустимые варианты.'}</p>
+      <p className="repertoire-note">{selected?.manual ? 'Счётчики сравнивают ручной вариант с параметрами месяца. Остальные даты не переставляются.' : data.maximum !== null && data.maximum < data.target ? 'Максимум по обязательным ограничениям. Ниже — все варианты с таким числом показов.' : 'Близкие показы и нагрузка снижают приоритет, но не скрывают допустимые варианты.'}</p>
       <div className="repertoire-totals">{data.rules.shows.filter(s => s.count > 0 || totals[s.key]).map(s => <span className={selected && (totals[s.key] || 0) < s.count ? 'repertoire-shortfall' : ''} key={s.key}>{names[s.key] || s.key} {totals[s.key] || 0}/{s.count}</span>)}</div>
       {data.warnings.map(w => <p className="planning-warning" key={w}>{w}</p>)}
       {data.pin_errors.map(w => <p className="planning-warning" role="alert" key={w}>{w}</p>)}
       {data.rules.pins.length > 0 && <details><summary>Закреплённые даты ({data.rules.pins.length})</summary>{data.rules.pins.map(p => <div className="repertoire-row" key={p.day}><span>{prettyDate(p.day)} · {names[p.key] || p.key}</span><button className="btn btn-secondary" disabled={stale} onClick={() => save({ ...data.rules, pins: data.rules.pins.filter(x => x.day !== p.day) }, false)}>Снять закрепление</button></div>)}</details>}
       {data.total_variants > 0 && <>
-        <label className="repertoire-variant-label">Вариант расписания<select className="select-input" aria-label="Вариант расписания" value={data.variants.some(v => v.id === selected?.id) ? selected.id : ''} onChange={e => { const v = data.variants.find(item => item.id === e.target.value); setSelected(v); selectedId.current = v.id; }}>
-          {!data.variants.some(v => v.id === selected?.id) && <option value="">Выбранный вариант на другой странице</option>}
+        <label className="repertoire-variant-label">Вариант расписания<select className="select-input" aria-label="Вариант расписания" value={!selected?.manual && data.variants.some(v => v.id === selected?.id) ? selected.id : ''} onChange={e => {
+          const v = data.variants.find(item => item.id === e.target.value); if (!v) return;
+          const hadDraft = !!draft.current; draft.current = null; forgetDraft(); setDraftPending(false); setFocusDate(null); setShare(null);
+          setSelected(v); selectedId.current = v.id; if (hadDraft) refreshNow();
+        }}>
+          {(selected?.manual || !data.variants.some(v => v.id === selected?.id)) && <option value="">{selected?.manual ? 'Ручной вариант' : 'Выбранный вариант на другой странице'}</option>}
           {data.variants.map((v, i) => <option value={v.id} key={v.id}>{data.page * data.page_size + i + 1}. {v.count}/{data.target}{v.missing.length ? ` · Не хватает: ${v.missing.map(s => `${s.name} ×${s.count}`).join(', ')}` : ''}{v.load_score || v.spread_score ? ' · Есть отклонения' : ' · Предпочтения соблюдены'}</option>)}
         </select></label>
         {data.total_variants > data.page_size && <div className="repertoire-pages"><button className="btn btn-secondary" disabled={data.page === 0 || busy} onClick={() => choosePage(data.page - 1)}>←</button><span>Страница {data.page + 1} из {Math.ceil(data.total_variants / data.page_size)}</span><button className="btn btn-secondary" disabled={(data.page + 1) * data.page_size >= data.total_variants || busy} onClick={() => choosePage(data.page + 1)}>→</button></div>}
       </>}
       {selected && <>
+        {selected.excess?.length > 0 && <p className="planning-warning">Сверх плана: {selected.excess.map(s => `${s.name} — ${s.count}`).join('; ')}. Всего в варианте {selected.entries.length} показов.</p>}
         {selected.missing.length > 0 && <div className="planning-warning">Не хватает: {selected.missing.map(s => `${s.name} — ${s.count}`).join('; ')}. Остальные показатели показаны выше.</div>}
         {selected.spread_warnings.map((w, i) => <p className="planning-warning" key={`gap-${i}`}>{w.name}: {w.dates.map(prettyDate).join(' → ')} · {w.gap} дн. между показами, желательно {w.desired}.{w.same_part && ' Одна часть месяца.'}</p>)}
         {selected.load_warnings.map((w, i) => <p className="planning-warning" key={`load-${i}`}>{w.actor}: {w.dates.length} игровых дня подряд · {w.dates.map(prettyDate).join(' → ')}</p>)}
         {!selected.spread_score && !selected.load_warnings.length && <p className="repertoire-good">✓ Пожелания по разносу и нагрузке соблюдены для известных составов</p>}
-        <RepertoireCalendar key={`${month}:${selected.id}`} month={month} entries={selected.entries} pins={data.rules.pins} renderEntry={entry => {
+        <RepertoireCalendar key={`${month}:${selected.id}`} month={month} focusDate={focusDate} entries={selected.entries} pins={data.rules.pins}
+          renderDay={day => <RepertoireDayOptions key={day} month={month} day={day} data={data} entries={selected.entries} disabled={stale} onReplace={replaceShow} onRefresh={refreshNow} />} renderEntry={entry => {
           const pinned = data.rules.pins.some(p => p.day === entry.date && p.key === entry.key);
           return <div className="repertoire-date" key={`${entry.date}:${entry.key}`}><div className="repertoire-row"><div><span className="repertoire-date-label">{prettyDate(entry.date)}{entry.start_time && ` · ${entry.start_time.slice(11, 16)}`}</span><strong>{entry.name}</strong><small>{entry.fixed ? 'Уже в расписании' : pinned ? 'Закреплено в плане' : 'Состав собран'}</small>{entry.rehearsals?.length > 0 && <small>Репетиционный слот</small>}</div>
             {!entry.fixed && <button className="btn btn-secondary" aria-label={`${pinned ? 'Открепить' : 'Закрепить'} ${entry.name}, ${entry.date}`} aria-pressed={pinned} disabled={stale} onClick={() => pin(entry)}>{pinned ? 'Закреплено' : 'Закрепить'}</button>}
@@ -182,7 +221,9 @@ export default function RepertoirePlan({ month, dataVersion, onPrepared }) {
         }} />
         <button type="button" className="btn btn-primary repertoire-share-button" disabled={stale || !selected.entries.length} onClick={() => setShare({ data: copy(data), variant: copy(selected) })}>Отправить в чат</button>
       </>}
-      {(data.maximum === null || data.maximum < data.target) && <Diagnostics data={data} variant={selected} />}
+      {!selected && <RepertoireCalendar month={month} focusDate={focusDate} entries={[]} pins={data.rules.pins}
+        renderDay={day => <RepertoireDayOptions key={day} month={month} day={day} data={data} entries={[]} disabled={stale} onReplace={replaceShow} onRefresh={refreshNow} />} />}
+      {(data.maximum === null || data.maximum < data.target || selected?.missing.length > 0) && <Diagnostics data={data} variant={selected} />}
       {data.complete && !data.total_variants && !data.pin_errors.length && <p className="planning-warning">Нет допустимого варианта с закреплёнными датами и текущими ограничениями нагрузки. Проверьте параметры.</p>}
       <p className="repertoire-note">Один показ в день. Репетиционная дата подходит для любого спектакля с полным составом. Прочие события мешают только при пересечении по времени. Свободное время не подтверждает бронь зала.</p>
       <p className="repertoire-note">Черновик · обновлено {new Intl.DateTimeFormat('ru', { hour: '2-digit', minute: '2-digit', timeZone: data.timezone }).format(new Date(data.checked_at))}. Ответы проверяются каждые 30 секунд, пока экран открыт.</p>

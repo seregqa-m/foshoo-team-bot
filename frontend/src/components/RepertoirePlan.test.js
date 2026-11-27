@@ -16,14 +16,16 @@ const fixture = () => ({
     missing: [{ key: 'catalog:1', name: 'Урод', count: 1 }], load_score: 0, spread_score: 0, load_warnings: [], spread_warnings: [] })),
 });
 beforeEach(() => {
+  localStorage.clear();
   global.IS_REACT_ACT_ENVIRONMENT = true;
   container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container);
   response = fixture();
-  client.get.mockImplementation(() => Promise.resolve({ data: response }));
+  client.get.mockImplementation((url, options) => Promise.resolve({ data: url.endsWith('/day')
+    ? { day: options.params.day, fingerprint: response.fingerprint, revision: response.revision, shows: [] } : response }));
   client.put.mockResolvedValue({ data: { revision: 3 } });
 });
 afterEach(() => { act(() => root.unmount()); container.remove(); jest.clearAllMocks(); jest.useRealTimers(); });
-const render = async props => { await act(async () => root.render(<RepertoirePlan key={props?.month || '2028-10'} month="2028-10" {...props} />)); };
+const render = async props => { await act(async () => root.render(<RepertoirePlan key={`${props?.month || '2028-10'}:${props?.userId || ''}`} month="2028-10" {...props} />)); };
 
 test('shows maximum partial plan, shortfall and per-role reasons; switches alternatives', async () => {
   await render();
@@ -33,7 +35,7 @@ test('shows maximum partial plan, shortfall and per-role reasons; switches alter
   expect(container.textContent).toContain('Анна — Нет ответа');
   const select = container.querySelector('[aria-label="Вариант расписания"]');
   expect(select.options.length).toBe(2);
-  act(() => Simulate.change(select, { target: { value: 'second' } }));
+  await act(async () => Simulate.change(select, { target: { value: 'second' } }));
   expect(container.querySelector('[aria-label="Закрепить Урод, 2028-10-08"]')).not.toBeNull();
 });
 
@@ -65,7 +67,7 @@ test('future month loads without horizon limit and old response does not replace
   response = { ...fixture(), month: '2032-06' };
   await render({ month: '2032-06' });
   await act(async () => resolveOld({ data: fixture() }));
-  expect(client.get).toHaveBeenLastCalledWith('/api/planning/repertoire', { params: { month: '2032-06', page: 0 } });
+  expect(client.get.mock.calls.filter(([url]) => url === '/api/planning/repertoire').at(-1)).toEqual(['/api/planning/repertoire', { params: { month: '2032-06', page: 0 } }]);
   act(() => button('Параметры').click());
   expect(container.textContent).toContain('Правила на 2032-06');
 });
@@ -77,7 +79,7 @@ test('pagination exposes all found variants and unfinished search is explicit', 
   expect(container.textContent).toContain('Страница 1 из 3');
   response = { ...response, page: 1 };
   await act(async () => button('→').click());
-  expect(client.get).toHaveBeenLastCalledWith('/api/planning/repertoire', { params: { month: '2028-10', page: 1 } });
+  expect(client.get.mock.calls.filter(([url]) => url === '/api/planning/repertoire').at(-1)).toEqual(['/api/planning/repertoire', { params: { month: '2028-10', page: 1 } }]);
   expect(container.textContent).toContain('Страница 2 из 3');
 });
 
@@ -130,7 +132,7 @@ test('opening another variant for sharing resets the previous preview', async ()
   act(() => Simulate.change(container.querySelector('[aria-label="Чат для согласования"]'), { target: { value: '-100123' } }));
   await act(async () => button('Предпросмотр сообщения').click());
   expect(container.querySelector('pre').textContent).toBe('Первый вариант');
-  act(() => Simulate.change(container.querySelector('[aria-label="Вариант расписания"]'), { target: { value: 'second' } }));
+  await act(async () => Simulate.change(container.querySelector('[aria-label="Вариант расписания"]'), { target: { value: 'second' } }));
   await act(async () => button('Отправить в чат').click());
   expect(container.querySelector('pre')).toBeNull();
   act(() => Simulate.change(container.querySelector('[aria-label="Чат для согласования"]'), { target: { value: '-100123' } }));
@@ -149,4 +151,59 @@ test('large format keeps Friday available, disallows Monday–Thursday and has n
   expect(container.textContent.toLowerCase()).not.toContain('длительность');
   await act(async () => Simulate.submit(container.querySelector('form')));
   expect(client.put.mock.calls[0][1].rules.shows[0]).toEqual(expect.objectContaining({ format: 'large', weekdays: [4, 5, 6] }));
+});
+
+test('empty calendar cells show votes and a local addition survives automatic refresh', async () => {
+  jest.useFakeTimers();
+  client.get.mockImplementation((url, options) => Promise.resolve({ data: url.endsWith('/day') ? {
+    day: options.params.day, fingerprint: response.fingerprint, revision: response.revision,
+    shows: [{ key: 'catalog:2', name: 'Другой', reason: null, covered: 1, total: 1, votes: { yes: 1, no: 0, other: 0 },
+      roles: [{ name: 'Роль', actors: [{ name: 'Борис', reason: 'Свободен', status: 'yes' }] }] }],
+  } : response }));
+  const added = { date: '2028-10-10', key: 'catalog:2', name: 'Другой', cast: { Роль: 'Борис' }, fixed: false };
+  const manual = { ...response.variants[0], id: 'manual', manual: true, entries: [...response.variants[0].entries, added], excess: [{ name: 'Другой', count: 1 }] };
+  client.post.mockResolvedValue({ data: { status: 'ready', variant: manual } });
+  await render();
+  await act(async () => container.querySelector('[data-date="2028-10-10"]').click());
+  expect(container.textContent).toContain('Борис — Свободен');
+  await act(async () => button('Поставить «Другой»').click());
+  expect(client.post).toHaveBeenLastCalledWith('/api/planning/repertoire/draft', { month: '2028-10', expected_fingerprint: 'fresh', expected_revision: 2,
+    entries: [{ day: '2028-10-07', key: 'catalog:1' }, { day: '2028-10-10', key: 'catalog:2' }] });
+  expect(container.querySelector('[data-date="2028-10-10"]').getAttribute('aria-pressed')).toBe('true');
+  expect(container.querySelector('[data-date="2028-10-07"]').getAttribute('aria-label')).toContain('Урод');
+  expect(container.textContent).toContain('Сверх плана: Другой — 1');
+  await act(async () => jest.advanceTimersByTime(30_000));
+  expect(container.textContent).toContain('Ручной вариант');
+  expect(container.querySelector('[data-date="2028-10-10"]').getAttribute('aria-label')).toContain('Другой');
+  client.post.mockRejectedValue({ response: { data: { detail: 'Ответы изменились' } } });
+  await act(async () => window.dispatchEvent(new Event('focus')));
+  expect(container.textContent).toContain('Ответы изменились');
+  expect(button('Отправить в чат').disabled).toBe(true);
+  await act(async () => button('Отменить ручные изменения').click());
+  expect(container.querySelector('[data-date="2028-10-10"]').getAttribute('aria-label')).toContain('Нет показов');
+});
+
+test('calendar and date answers remain available before any automatic variant is found', async () => {
+  response.variants = []; response.total_variants = 0; response.maximum = null; response.complete = false;
+  await render();
+  expect(container.querySelectorAll('[data-date]')).toHaveLength(31);
+  await act(async () => container.querySelector('[data-date="2028-10-20"]').click());
+  expect(client.get).toHaveBeenLastCalledWith('/api/planning/repertoire/day', { params: { month: '2028-10', day: '2028-10-20' } });
+});
+
+test('saved manual dates are revalidated on reopen and isolated between users and months', async () => {
+  const entries = [{ day: '2028-10-20', key: 'catalog:1' }];
+  localStorage.setItem('foshoo:repertoire-draft:42:2028-10', JSON.stringify(entries));
+  const manual = { ...response.variants[0], id: 'restored', manual: true, entries: [{ ...response.variants[0].entries[0], date: '2028-10-20' }] };
+  client.post.mockResolvedValue({ data: { status: 'ready', variant: manual } });
+  await render({ userId: 42 });
+  expect(client.post).toHaveBeenCalledWith('/api/planning/repertoire/draft', expect.objectContaining({ entries }));
+  expect(container.querySelector('[data-date="2028-10-20"]').getAttribute('aria-label')).toContain('Урод');
+  const reviewed = client.post.mock.calls.length;
+  await render({ userId: 43 });
+  expect(client.post.mock.calls.length).toBe(reviewed);
+  expect(container.querySelector('[data-date="2028-10-20"]').getAttribute('aria-label')).toContain('Нет показов');
+  await render({ userId: 42 });
+  await act(async () => button('Отменить ручные изменения').click());
+  expect(localStorage.getItem('foshoo:repertoire-draft:42:2028-10')).toBeNull();
 });

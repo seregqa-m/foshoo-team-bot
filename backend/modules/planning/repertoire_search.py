@@ -6,7 +6,7 @@ no source data is written. Request work is time-sliced, results are paginated.
 import json
 import sqlite3
 import tempfile
-from collections import OrderedDict
+from collections import OrderedDict, Counter
 from threading import RLock
 from time import monotonic
 
@@ -57,6 +57,7 @@ class SearchJob:
 
 
 _jobs = OrderedDict()
+_drafts = OrderedDict()
 _lock = RLock()
 
 
@@ -79,8 +80,40 @@ def search_key(problem):
 
 def cached_variant(search_id, variant_id):
     with _lock:
+        draft = _drafts.get((search_id, variant_id))
+        if draft and draft['variant']:
+            return draft['variant']
         job = _jobs.get(search_id)
         if job is None:
             return None
         row = job.db.execute('SELECT payload FROM variants WHERE id=?', (variant_id,)).fetchone()
         return json.loads(row[0]) if row else None
+
+
+def draft_variant(problem, selected):
+    """Validate one explicit schedule cooperatively, outside the automatic list."""
+    pairs = [(e['date'], e['key']) for e in problem.current_fixed] + [(day, key) for day, key, _ in selected]
+    key = (search_key(problem), digest(sorted(pairs)))
+    with _lock:
+        if key not in _drafts:
+            _drafts[key] = {'generator': problem._best_cast(selected), 'variant': None, 'complete': False}
+        _drafts.move_to_end(key)
+        while len(_drafts) > 32:
+            _drafts.popitem(last=False)[1]['generator'].close()
+        draft = _drafts[key]
+        deadline = monotonic() + .20
+        while not draft['complete'] and monotonic() < deadline:
+            try:
+                value = next(draft['generator'])
+            except StopIteration:
+                draft['complete'] = True
+                break
+            if value is not None:
+                counts = Counter(e['key'] for e in value['entries'])
+                value['manual'] = True
+                value['excess'] = [{'key': r.key, 'name': problem.names.get(r.key, r.key), 'count': counts[r.key] - r.count}
+                                   for r in problem.rules.shows if counts[r.key] > r.count]
+                draft['variant'], draft['complete'] = value, True
+                draft['generator'].close()
+        return {'status': 'ready' if draft['variant'] else 'invalid' if draft['complete'] else 'calculating',
+                'variant': draft['variant'], 'search_id': key[0]}
