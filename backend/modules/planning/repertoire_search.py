@@ -93,7 +93,7 @@ def cached_variant(search_id, variant_id):
 def draft_variant(problem, selected):
     """Validate one explicit schedule cooperatively, outside the automatic list."""
     pairs = [(e['date'], e['key']) for e in problem.current_fixed] + [(day, key) for day, key, _ in selected]
-    key = (search_key(problem), digest(sorted(pairs)))
+    key = (search_key(problem), digest(['manual', sorted(pairs)]))
     with _lock:
         if key not in _drafts:
             _drafts[key] = {'generator': problem._best_cast(selected), 'variant': None, 'complete': False}
@@ -109,6 +109,7 @@ def draft_variant(problem, selected):
                 draft['complete'] = True
                 break
             if value is not None:
+                value['id'] = key[1]
                 counts = Counter(e['key'] for e in value['entries'])
                 value['manual'] = True
                 value['excess'] = [{'key': r.key, 'name': problem.names.get(r.key, r.key), 'count': counts[r.key] - r.count}

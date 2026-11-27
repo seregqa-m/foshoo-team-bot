@@ -5,6 +5,7 @@ from unittest.mock import patch
 import test_repertoire as base
 from modules.planning.repertoire_editing import DraftRequest, review_draft, day_choices
 from modules.planning.repertoire_source import load_snapshot, get_rules
+from modules.planning.repertoire import digest
 from modules.planning.repertoire_search import cached_variant, _drafts
 from modules.planning.repertoire_sharing import prepare_preview, PreviewRequest
 from modules.planning.models import RepertoireSettings, PlanningAssignment
@@ -71,6 +72,7 @@ class RepertoireEditingTests(unittest.TestCase):
         result = self.review([('2028-10-07', 'catalog:2'), ('2028-10-14', 'catalog:1')])
         variant = result['variant']
         self.assertTrue(variant['manual'])
+        self.assertNotEqual(variant['id'], digest([(e['date'], e['key']) for e in variant['entries']]))
         self.assertEqual([(e['date'], e['key']) for e in variant['entries']], [('2028-10-07', 'catalog:2'), ('2028-10-14', 'catalog:1')])
         self.assertEqual(variant['missing'], [{'key': 'catalog:1', 'name': 'Урод', 'count': 1}])
         self.assertEqual(variant['excess'], [{'key': 'catalog:2', 'name': 'Другой', 'count': 1}])
