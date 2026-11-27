@@ -13,7 +13,7 @@ with patch.dict(os.environ, {'BOT_TOKEN': '123456:offline-test-token', 'DATABASE
     from modules.planning.repertoire import Rules, ShowRule, RepertoireProblem
     from modules.planning.repertoire_search import search_page
     from modules.planning.router import router
-    from modules.theater.models import TheaterShow
+    from modules.theater.models import TheaterChat, TheaterShow
 from aiogram.exceptions import TelegramBadRequest, TelegramRetryAfter
 from aiogram.methods import SendMessage
 from fastapi import FastAPI, HTTPException
@@ -168,6 +168,37 @@ class RepertoireShareTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await sharing.share_chats(self.request, self.db))['chats'], [])
         self.bot.get_chat_member.side_effect = TimeoutError()
         self.assertTrue((await sharing.share_chats(self.request, self.db))['warning'])
+
+    async def test_registered_coordination_group_needs_no_show_mapping(self):
+        coordination_chat = -1002495894419
+        self.db.add(TheaterChat(telegram_chat_id=coordination_chat, title='Согласование афиши'))
+        self.db.commit()
+        self.assertEqual(sharing.destinations(self.db)[coordination_chat], 'Согласование афиши')
+        chats = await sharing.share_chats(self.request, self.db)
+        self.assertIn(coordination_chat, {chat['id'] for chat in chats['chats']})
+        self.req.chat_id = coordination_chat
+        preview = await self.preview()
+        self.bot.send_message.assert_not_awaited()
+        sent = await self.send(preview)
+        self.assertEqual(sent['status'], 'sent')
+        self.bot.send_message.assert_awaited_once_with(chat_id=coordination_chat, text=preview['text'], parse_mode=None)
+        self.assertEqual(self.db.query(TheaterShow).one().telegram_chat_id, self.chat)
+
+    async def test_standalone_group_still_checks_admin_and_chat_type(self):
+        self.db.add(TheaterChat(telegram_chat_id=-987, title='Согласование'))
+        self.db.commit()
+        self.req.chat_id = -987
+        self.bot.get_chat_member.return_value.status = 'member'
+        with self.assertRaises(HTTPException) as error:
+            await self.preview()
+        self.assertEqual(error.exception.status_code, 403)
+        self.request.state.is_superadmin = True
+        self.assertEqual((await self.preview())['status'], 'preview')
+        self.bot.get_chat.return_value.type = 'channel'
+        with self.assertRaises(HTTPException) as error:
+            await self.preview()
+        self.assertEqual(error.exception.status_code, 403)
+        self.bot.send_message.assert_not_awaited()
 
     def test_partial_plan_and_soft_warnings_are_in_message(self):
         variant = copy.deepcopy(self.variant)

@@ -37,6 +37,8 @@ def destinations(db):
     if GROUP_CHAT_ID:
         ids.add(int(GROUP_CHAT_ID))
     titles = {c.telegram_chat_id: c.title for c in db.query(TheaterChat).all()}
+    # Coordination groups can be registered without being a show's poll route.
+    ids.update(titles)
     return {chat: titles.get(chat, 'Общий чат' if chat == GROUP_CHAT_ID else str(chat)) for chat in sorted(ids)}
 
 
