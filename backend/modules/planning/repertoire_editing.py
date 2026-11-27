@@ -1,14 +1,14 @@
 """Read daily cast answers and review a locally edited repertoire draft."""
 from collections import Counter
-from datetime import date
+from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, model_validator
 from sqlalchemy.orm import Session
 
 from core.database import get_db
-from core.time import local_now
-from .repertoire import Pin, RepertoireProblem
+from core.time import local_now, as_local
+from .repertoire import DraftEntry, RepertoireProblem
 from .repertoire_source import get_rules
 from .repertoire_search import draft_variant
 from .services import match_roles, norm
@@ -18,7 +18,7 @@ from modules.theater.routing import show_aliases
 router = APIRouter()
 
 
-def daily_problem(source, rules):
+def daily_problem(source, rules, entries=()):
     # Monthly quantities are goals for a manual draft, not a reason to hide
     # a show or its answers. All other date/cast/time constraints still apply.
     probe = rules.model_copy(deep=True)
@@ -26,7 +26,8 @@ def daily_problem(source, rules):
     for rule in probe.shows:
         rule.count = fixed[rule.key] + 1
     probe.pins = []
-    return RepertoireProblem(source, probe, local_now().date())
+    return RepertoireProblem(source, probe, local_now().date(),
+                             start_times={(e.day.isoformat(), e.key): e.start_time for e in entries if e.start_time})
 
 
 @router.get('/repertoire/day')
@@ -65,7 +66,7 @@ def day_choices(month: str, day: date, db: Session = Depends(get_db)):
 
 class DraftRequest(BaseModel):
     month: str
-    entries: list[Pin] = Field(max_length=31)
+    entries: list[DraftEntry] = Field(max_length=31)
     expected_fingerprint: str
     expected_revision: int = Field(ge=0)
 
@@ -94,7 +95,7 @@ def review_draft(req: DraftRequest, db: Session = Depends(get_db)):
 
 def review_entries(source, rules, entries):
     month = source['month']
-    probe = daily_problem(source, rules)
+    probe = daily_problem(source, rules, entries)
     pairs = {(e.day.isoformat(), e.key) for e in entries}
     fixed = {(e['date'], e['key']) for e in source['fixed'] if e['date'].startswith(month)}
     if any((p.day.isoformat(), p.key) not in pairs | fixed for p in rules.pins):
@@ -105,6 +106,10 @@ def review_entries(source, rules, entries):
         if entry.day.strftime('%Y-%m') != month:
             raise HTTPException(422, 'Все даты должны принадлежать выбранному месяцу')
         if (day, entry.key) in fixed:
+            existing = next(e for e in source['fixed'] if (e['date'], e['key']) == (day, entry.key))
+            existing_time = as_local(datetime.fromisoformat(existing['start_time'])).strftime('%H:%M') if existing.get('start_time') else None
+            if entry.start_time and entry.start_time != existing_time:
+                raise HTTPException(409, f'{day}: показ уже внесён в календарь. Измените его время в основном календаре.')
             # A draft show may have been assigned since the previous review.
             # Keep it once as a fixed event instead of losing the rest of the draft.
             continue

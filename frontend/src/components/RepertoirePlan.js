@@ -6,17 +6,20 @@ import RepertoireShare from './RepertoireShare';
 import RepertoireDayOptions from './RepertoireDayOptions';
 import RepertoireAlternatives from './RepertoireAlternatives';
 import RepertoirePublish from './RepertoirePublish';
+import RepertoireShowTime from './RepertoireShowTime';
 
 const DAYS = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
 const prettyDate = day => new Intl.DateTimeFormat('ru', { day: 'numeric', month: 'short', weekday: 'short', timeZone: 'UTC' }).format(new Date(`${day}T12:00:00Z`));
 const message = e => typeof e.response?.data?.detail === 'string' ? e.response.data.detail : 'Не удалось обновить план. Проверьте соединение и повторите.';
 const copy = value => JSON.parse(JSON.stringify(value));
+const draftEntry = entry => ({ day: entry.date, key: entry.key, ...(entry.start_time ? { start_time: entry.start_time.slice(11, 16) } : {}) });
 const readDraft = (key, month) => {
   if (!key) return null;
   try {
     const entries = JSON.parse(localStorage.getItem(key));
     return Array.isArray(entries) && entries.length <= 31 && entries.every(e => e && typeof e.day === 'string'
-      && e.day.startsWith(`${month}-`) && /^\d{4}-\d{2}-\d{2}$/.test(e.day) && typeof e.key === 'string' && e.key.length <= 250) ? entries : null;
+      && e.day.startsWith(`${month}-`) && /^\d{4}-\d{2}-\d{2}$/.test(e.day) && typeof e.key === 'string' && e.key.length <= 250
+      && (e.start_time == null || (typeof e.start_time === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(e.start_time)))) ? entries : null;
   } catch { return null; }
 };
 
@@ -47,7 +50,7 @@ function RulesEditor({ data, busy, conflict, onSave, onCancel }) {
           <div className="repertoire-days" aria-label={`Дни: ${names[rule.key]}`}>{DAYS.map((day, index) => <button type="button" className="btn btn-secondary" key={day} aria-pressed={rule.weekdays.includes(index)}
             disabled={rule.format === 'large' && index < 4}
             onClick={() => { const days = rule.weekdays.includes(index) ? rule.weekdays.filter(d => d !== index) : [...rule.weekdays, index].sort(); if (days.length) update(rule.key, { weekdays: days }); }}>{day}</button>)}</div>
-          <p className="repertoire-note">{rule.format === 'large' ? 'Начало: пт–сб — 19:00, вс — 18:00.' : 'Начало: пн–чт — 20:00, пт–вс — 19:00.'}</p>
+          <p className="repertoire-note">{rule.format === 'large' ? 'Начало: пт–сб — 19:00, вс — 18:00.' : 'Начало: пн–чт — 20:00, пт–сб — 19:00, вс — 18:00.'} Время отдельного показа можно изменить в его карточке.</p>
           <label className="repertoire-check"><input type="checkbox" checked={rule.spread} onChange={e => update(rule.key, { spread: e.target.checked })} />Разносить показы по месяцу</label>
           <label className="repertoire-field">Желаемый интервал, дней<input className="form-input" type="number" min="1" max="31" required disabled={!rule.spread} value={rule.gap} onChange={e => update(rule.key, { gap: e.target.value === '' ? '' : Number(e.target.value) })} /></label>
           <label className="repertoire-field">Планировать начиная с<input className="form-input" type="date" value={rule.start || ''} onChange={e => update(rule.key, { start: e.target.value || null })} /></label>
@@ -179,7 +182,7 @@ export default function RepertoirePlan({ month, dataVersion, userId, isSuperAdmi
     try {
       if (data.locked || data.rules.pins.length) {
         await client.post('/api/planning/repertoire/unlock', { month, expected_revision: data.revision });
-        draft.current = selected ? selected.entries.filter(e => !e.fixed).map(e => ({ day: e.date, key: e.key })) : null;
+        draft.current = selected ? selected.entries.filter(e => !e.fixed).map(draftEntry) : null;
       } else {
         setShare(null); setPublish({ data: copy(data), variant: copy(selected) });
         return;
@@ -191,9 +194,10 @@ export default function RepertoirePlan({ month, dataVersion, userId, isSuperAdmi
   const totals = selected?.entries.reduce((map, item) => ({ ...map, [item.key]: (map[item.key] || 0) + 1 }), {}) || {};
   const names = Object.fromEntries((data?.shows || []).map(s => [s.key, s.name]));
   const resetDraft = () => { draft.current = null; forgetDraft(); setDraftPending(false); setDraftError(''); setFocusDate(null); setShare(null); selectedId.current = null; refreshNow(); };
-  const replaceShow = (day, key) => {
+  const replaceShow = (day, key, startTime) => {
     if (busy || loading || error || draftPending || data.locked) return;
-    draft.current = [...(selected?.entries || []).filter(e => !e.fixed && e.date !== day).map(e => ({ day: e.date, key: e.key })), ...(key ? [{ day, key }] : [])];
+    const base = draft.current || (selected?.entries || []).filter(e => !e.fixed).map(draftEntry);
+    draft.current = [...base.filter(e => e.day !== day), ...(key ? [{ day, key, ...(startTime ? { start_time: startTime } : {}) }] : [])];
     if (!key) {
       const entries = selected.entries.filter(e => e.date !== day);
       const counts = Object.fromEntries(data.rules.shows.map(s => [s.key, entries.filter(e => e.key === s.key).length]));
@@ -245,7 +249,8 @@ export default function RepertoirePlan({ month, dataVersion, userId, isSuperAdmi
           const pinned = data.rules.pins.some(p => p.day === entry.date && p.key === entry.key);
           return <div className="repertoire-date" key={`${entry.date}:${entry.key}`}><div className="repertoire-row"><div><span className="repertoire-date-label">{prettyDate(entry.date)}{entry.start_time && ` · ${entry.start_time.slice(11, 16)}`}</span><strong>{entry.name}</strong><small>{entry.fixed ? 'Уже в расписании' : data.locked ? 'В закреплённой афише' : pinned ? 'Закреплено в плане' : draftError ? 'Требует проверки' : 'В плане'}</small>{entry.rehearsals?.length > 0 && <small>Репетиционный слот</small>}</div>
             {!entry.fixed && <button type="button" className="btn btn-secondary" aria-label={`Удалить ${entry.name}, ${entry.date}`} disabled={editingDisabled || pinned} onClick={() => replaceShow(entry.date, null)}>Удалить из афиши</button>}
-          </div></div>;
+          </div>{!entry.fixed && <RepertoireShowTime key={`${entry.date}:${entry.key}:${entry.start_time}`} entry={entry} disabled={editingDisabled}
+            onChange={value => replaceShow(entry.date, entry.key, value)} />}</div>;
         }} />
         <button type="button" className="btn btn-primary repertoire-share-button" disabled={stale || !selected.entries.length} onClick={() => setShare({ data: copy(data), variant: copy(selected) })}>Отправить в чат</button>
       </>}

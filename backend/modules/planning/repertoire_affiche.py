@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from core.database import get_db
 from core.time import local_now
 from .models import RepertoireAffiche, RepertoireSettings
-from .repertoire import Pin, RepertoireProblem
+from .repertoire import DraftEntry, RepertoireProblem
 from .repertoire_source import get_rules
 from .repertoire_search import search_key
 from .repertoire_editing import review_entries
@@ -44,7 +44,8 @@ def locked_result(row, source, rules):
         fixed = pair_set([e for e in source['fixed'] if e['date'].startswith(source['month'])])
         if not pair_set([e for e in saved['entries'] if e['fixed']]) <= fixed or not fixed <= pair_set(saved['entries']):
             raise HTTPException(409, 'Назначенные показы в календаре изменились. Снимите закрепление и проверьте афишу.')
-        reviewed = review_entries(source, rules, [Pin(day=e['date'], key=e['key']) for e in saved['entries']])
+        reviewed = review_entries(source, rules, [DraftEntry(day=e['date'], key=e['key'],
+            start_time=e['start_time'][11:16] if e.get('start_time') else None) for e in saved['entries']])
         pending = reviewed['status'] == 'calculating'
         if not pending:
             variant = reviewed['variant']

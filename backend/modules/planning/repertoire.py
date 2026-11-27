@@ -37,6 +37,10 @@ class Pin(BaseModel):
     key: str
 
 
+class DraftEntry(Pin):
+    start_time: str | None = Field(default=None, pattern=r'^([01][0-9]|2[0-3]):[0-5][0-9]$')
+
+
 class Rules(BaseModel):
     shows: list[ShowRule] = Field(default_factory=list, max_length=100)
     streak: int = Field(default=3, ge=2, le=7, strict=True)
@@ -171,7 +175,7 @@ def projected_casts(roles, relevant):
 
 
 class RepertoireProblem:
-    def __init__(self, snapshot, rules, today):
+    def __init__(self, snapshot, rules, today, start_times=None):
         self.snapshot, self.rules = snapshot, rules
         self.today = today
         self.names = {s['key']: s['name'] for s in snapshot['shows']}
@@ -193,13 +197,19 @@ class RepertoireProblem:
                 if key not in self.rule or not self.remaining[key]:
                     continue
                 r = self.rule[key]
-                window = performance_window(day, self.names[key], r.format)
+                time_error = None
+                try:
+                    window = performance_window(day, self.names[key], r.format, (start_times or {}).get((slot['date'], key)))
+                except ValueError as exc:
+                    window, time_error = None, str(exc)
                 conflicts = calendar_conflicts(slot.get('calendar_events', []), *window) if window else []
                 reason = None
                 if day < today:
                     reason = 'Дата уже прошла'
                 elif day.weekday() not in r.weekdays:
                     reason = 'День недели запрещён параметрами'
+                elif time_error:
+                    reason = time_error
                 elif window is None:
                     reason = 'Большие спектакли разрешены только в пятницу, субботу и воскресенье'
                 elif r.start and day < r.start:

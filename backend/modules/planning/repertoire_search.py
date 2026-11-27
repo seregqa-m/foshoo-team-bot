@@ -122,7 +122,8 @@ def cached_variant(search_id, variant_id):
 
 def draft_variant(problem, selected):
     """Validate one explicit schedule cooperatively, outside the automatic list."""
-    pairs = [(e['date'], e['key']) for e in problem.current_fixed] + [(day, key) for day, key, _ in selected]
+    pairs = [(e['date'], e['key'], e.get('start_time'), e.get('end_time')) for e in problem.current_fixed]
+    pairs += [(day, key, cell['start_time'], cell['end_time']) for day, key, cell in selected]
     key = (search_key(problem), digest(['manual', sorted(pairs)]))
     with _lock:
         if key not in _drafts:

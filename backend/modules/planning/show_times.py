@@ -6,7 +6,7 @@ from .services import norm
 
 
 PERFORMANCE_START_HOURS = {
-    'small': (20, 20, 20, 20, 19, 19, 19),
+    'small': (20, 20, 20, 20, 19, 19, 18),
     'large': (None, None, None, None, 19, 19, 18),
 }
 
@@ -15,13 +15,16 @@ def show_format(name):
     return 'large' if norm(name) in ('цианистый калий', 'микрополь') else 'small'
 
 
-def performance_window(day, name, kind=None):
+def performance_window(day, name, kind=None, start_time=None):
     kind = kind or show_format(name)
     hour = PERFORMANCE_START_HOURS[kind][day.weekday()]
     if hour is None:
         return None
-    start = as_local(datetime.combine(day, time(hour)))
-    return start, start + timedelta(minutes=180 if kind == 'large' else 90)
+    start = as_local(datetime.combine(day, time.fromisoformat(start_time) if start_time else time(hour)))
+    end = start + timedelta(minutes=180 if kind == 'large' else 90)
+    if end > as_local(datetime.combine(day + timedelta(days=1), time())):
+        raise ValueError('Показ должен завершиться не позже полуночи: ответы актёров проверяются на выбранный день.')
+    return start, end
 
 
 def calendar_conflicts(events, start, end):

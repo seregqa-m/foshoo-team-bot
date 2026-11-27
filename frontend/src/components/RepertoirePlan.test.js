@@ -373,3 +373,42 @@ test('server locked calendar wins over local draft and remains unlockable when i
   expect(button('Снять закрепление').disabled).toBe(false);
   expect(button('Отправить в чат').disabled).toBe(true);
 });
+
+test('editing one show time preserves the rest, persists and shares the reviewed draft', async () => {
+  response.variants[0].entries = [
+    { ...response.variants[0].entries[0], start_time: '2028-10-07T19:00:00+03:00', end_time: '2028-10-07T20:30:00+03:00' },
+    { ...response.variants[0].entries[0], date: '2028-10-14', start_time: '2028-10-14T19:00:00+03:00', end_time: '2028-10-14T20:30:00+03:00' },
+  ];
+  const manual = { ...response.variants[0], id: 'custom-time', manual: true, entries: response.variants[0].entries.map((e, i) => i ? e : { ...e, start_time: '2028-10-07T18:45:00+03:00', end_time: '2028-10-07T20:15:00+03:00' }) };
+  client.post.mockImplementation(url => Promise.resolve({ data: url.endsWith('/draft') ? { status: 'ready', variant: manual } : { id: 'preview', status: 'preview', text: '18:45 — Урод' } }));
+  await render({ userId: 42 });
+  const input = container.querySelector('[aria-label="Начало Урод, 2028-10-07"]');
+  expect(input.value).toBe('19:00');
+  act(() => Simulate.change(input, { target: { value: '18:45' } }));
+  await act(async () => Simulate.submit(input.closest('form')));
+  const expected = [{ day: '2028-10-14', key: 'catalog:1', start_time: '19:00' }, { day: '2028-10-07', key: 'catalog:1', start_time: '18:45' }];
+  expect(client.post).toHaveBeenCalledWith('/api/planning/repertoire/draft', expect.objectContaining({ entries: expected }));
+  expect(JSON.parse(localStorage.getItem('foshoo:repertoire-draft:42:2028-10'))).toEqual(expected);
+  expect(container.querySelector('[data-date="2028-10-07"]').getAttribute('aria-label')).toContain('18:45');
+  await render({ userId: 43 }); await render({ userId: 42 });
+  expect(container.querySelector('[aria-label="Начало Урод, 2028-10-07"]').value).toBe('18:45');
+  client.get.mockImplementation(url => Promise.resolve({ data: url.endsWith('/chats') ? { chats: [{ id: -100123, title: 'Театр' }] } : response }));
+  await act(async () => button('Отправить в чат').click());
+  act(() => Simulate.change(container.querySelector('[aria-label="Чат для согласования"]'), { target: { value: '-100123' } }));
+  await act(async () => button('Предпросмотр сообщения').click());
+  expect(client.post).toHaveBeenLastCalledWith('/api/planning/repertoire/share/preview', expect.objectContaining({ variant_id: 'custom-time' }));
+});
+
+test('time conflict blocks publication but allows correcting the proposed clock', async () => {
+  response.variants[0].entries[0].start_time = '2028-10-07T19:00:00+03:00';
+  client.post.mockRejectedValue({ response: { status: 409, data: { detail: 'Пересечение по времени: аренда' } } });
+  await render();
+  const input = container.querySelector('[aria-label="Начало Урод, 2028-10-07"]');
+  act(() => Simulate.change(input, { target: { value: '20:00' } }));
+  await act(async () => Simulate.submit(input.closest('form')));
+  expect(container.textContent).toContain('Пересечение по времени: аренда');
+  expect(button('Отправить в чат').disabled).toBe(true);
+  expect(button('Закрепить афишу месяца').disabled).toBe(true);
+  expect(input.disabled).toBe(false);
+  expect(input.value).toBe('20:00');
+});

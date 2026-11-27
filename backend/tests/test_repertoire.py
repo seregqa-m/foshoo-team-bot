@@ -149,7 +149,7 @@ class RepertoireSolverTests(unittest.TestCase):
 
     def test_start_times_for_every_weekday_and_both_formats(self):
         for day, small, large in [(2, '20:00', None), (3, '20:00', None), (4, '20:00', None), (5, '20:00', None),
-                                   (6, '19:00', '19:00'), (7, '19:00', '19:00'), (8, '19:00', '18:00')]:
+                                   (6, '19:00', '19:00'), (7, '19:00', '19:00'), (8, '18:00', '18:00')]:
             for name, expected in [('Урод', small), ('Цианистый Калий', large)]:
                 window = performance_window(date(2028, 10, day), name)
                 if expected is None:
