@@ -12,7 +12,7 @@ from core.time import local_now, as_local
 from config import TIMEZONE
 from modules.attendance.services import answer_lock
 from .models import RepertoireSettings, RepertoireAffiche
-from .repertoire import Rules, RepertoireProblem, load_warnings
+from .repertoire import Rules, DraftEntry, RepertoireProblem, load_warnings
 from .repertoire_source import load_snapshot, get_rules
 from .repertoire_search import search_page
 from .show_times import performance_window
@@ -126,11 +126,11 @@ def validate_review(db, client, req, day):
         raise HTTPException(409, 'Календарь, ответы или параметры афиши изменились. Обновите предложения перед назначением.')
     problem = RepertoireProblem(data, rules, local_now().date())
     from .repertoire_editing import daily_problem
-    choices = daily_problem(data, rules).options
+    choices = daily_problem(data, rules, [DraftEntry(day=day, key=review.key, start_time=review.time_override)]).options
     wrong_pin = any(p.day == day and p.key != review.key for p in rules.pins)
     if review.key not in choices.get(day.isoformat(), {}) or problem.names.get(review.key) != req.show_name or wrong_pin or problem.pin_errors:
         raise HTTPException(409, 'Дата или спектакль больше не подходят для этого плана')
-    window = performance_window(day, req.show_name, problem.rule[review.key].format)
+    window = performance_window(day, req.show_name, problem.rule[review.key].format, review.time_override)
     if (as_local(req.start_time), as_local(req.end_time)) != window:
         raise HTTPException(409, 'Время отличается от проверенного плана. Откройте назначение из актуального варианта заново.')
     if rules.load_mode == 'forbid':

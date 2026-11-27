@@ -136,6 +136,21 @@ test('a date absent from Sheets uses the same dialog without preparing or assign
   expect(container.querySelector('[role="dialog"]')).toBeNull();
 });
 
+test('cast assignment preserves the manually selected time of this show day', async () => {
+  await render({ entries: [{ date: response.day, key: '1', name: 'Урод',
+    start_time: '2028-10-07T18:45:00+03:00', end_time: '2028-10-07T20:15:00+03:00' }] });
+  await act(async () => button('Посмотреть голоса и состав · Урод').click());
+  const dialog = container.querySelector('[role="dialog"]');
+  expect([...dialog.querySelectorAll('input[type="datetime-local"]')].map(input => input.value))
+    .toEqual(['2028-10-07T18:45', '2028-10-07T20:15']);
+  act(() => Simulate.change(dialog.querySelector('input[placeholder="Зал или адрес"]'), { target: { value: 'Зал' } }));
+  await act(async () => Simulate.submit(dialog.querySelector('form')));
+  expect(client.post).toHaveBeenCalledWith('/api/planning/assign', expect.objectContaining({
+    start_time: '2028-10-07T18:45', end_time: '2028-10-07T20:15',
+    repertoire: expect.objectContaining({ key: '1', fingerprint: 'fresh', revision: 2, time_override: '18:45' }),
+  }));
+});
+
 test('a late cast response cannot open a dialog for a previously selected date', async () => {
   await render({ entries: [{ date: response.day, key: '1', name: 'Урод' }] });
   let finish;

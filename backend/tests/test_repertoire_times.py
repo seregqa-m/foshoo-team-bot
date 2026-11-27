@@ -12,7 +12,8 @@ from modules.planning.repertoire_source import load_snapshot
 from modules.planning.repertoire_sharing import prepare_preview, PreviewRequest
 from modules.planning.repertoire_affiche import LockRequest, locked_result
 from modules.planning.repertoire_publication import preview_publication
-from modules.planning.repertoire_router import get_repertoire
+from modules.planning.repertoire_router import get_repertoire, validate_review
+from modules.planning.router import AssignRequest
 from modules.planning.models import RepertoireAffiche
 from modules.calendar.models import CalendarEvent
 
@@ -80,6 +81,24 @@ class RepertoireTimeTests(unittest.TestCase):
         result = locked_result(row, source, rules)
         self.assertIsNone(result['lock_error'])
         self.assertEqual(result['variants'][0]['entries'][0]['start_time'][11:16], '18:45')
+
+    def test_cast_assignment_checks_the_selected_show_day_time(self):
+        source = load_snapshot(self.db, self.client, '2028-10', fresh=True)
+        req = AssignRequest(month='2028-10', column='B', show_name='Урод', cast={'Летте': 'Анна'},
+            expected_fingerprint='sheet', start_time='2028-10-07T18:45', end_time='2028-10-07T20:15', location='Зал',
+            repertoire={'key': 'catalog:1', 'fingerprint': source['fingerprint'], 'revision': 0, 'time_override': '18:45'})
+        day = date(2028, 10, 7)
+        validate_review(self.db, self.client, req, day)
+        req.end_time = datetime(2028, 10, 7, 20, 30)
+        with self.assertRaises(HTTPException):
+            validate_review(self.db, self.client, req, day)
+        req.end_time = datetime(2028, 10, 7, 20, 15)
+        self.db.add(CalendarEvent(title='Аренда', google_event_id='busy',
+            start_time=datetime.fromisoformat('2028-10-07T18:00:00+03:00'), end_time=datetime.fromisoformat('2028-10-07T19:00:00+03:00')))
+        self.db.commit()
+        req.repertoire.fingerprint = load_snapshot(self.db, self.client, '2028-10', fresh=True)['fingerprint']
+        with self.assertRaises(HTTPException):
+            validate_review(self.db, self.client, req, day)
 
 
 class RepertoireTimePublicationTests(unittest.TestCase):

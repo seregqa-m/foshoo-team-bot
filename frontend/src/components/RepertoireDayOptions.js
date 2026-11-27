@@ -51,13 +51,17 @@ export default function RepertoireDayOptions({ month, day, data, entries, disabl
     {(error || (stale && !loading)) && <p role="alert">{error || 'Ответы или календарь обновились.'} {result && 'Показаны последние полученные ответы.'} <button type="button" className="btn btn-secondary" onClick={onRefresh}>Обновить план</button></p>}
     {current && <button type="button" className="btn btn-secondary repertoire-cast-button"
       disabled={!selected || loading || !!error || !!stale}
-      onClick={() => setOpened({ day, show: selected, slot: result.planning_slot })}>
+      onClick={() => setOpened({ day, show: selected, slot: result.planning_slot,
+        repertoire: !current.fixed && current.start_time && current.end_time ? {
+          key: current.key, fingerprint: data.fingerprint, revision: data.revision,
+          start_time: current.start_time, end_time: current.end_time, time_override: current.start_time.slice(11, 16),
+        } : undefined })}>
       Посмотреть голоса и состав · {selected?.name || current.name}
     </button>}
     {opened?.day === day && !castView && !castError && <p role="status">Загружаем состав…</p>}
     {castError && <p role="alert">{castError}</p>}
     {opened?.day === day && castView && <CastDialog key={`${day}:${opened.show.key}`} {...castView}
-      month={month} fingerprint={castView.plan.fingerprint} timezone={castView.plan.timezone} isAdmin
+      month={month} fingerprint={castView.plan.fingerprint} timezone={castView.plan.timezone} isAdmin repertoireContext={opened.repertoire}
       onClose={() => { setOpened(null); setCastView(null); }}
       onSaved={() => { setOpened(null); setCastView(null); onRefresh(); onCastSaved?.(); }} />}
     {current?.fixed && <p className="repertoire-note">Этот показ уже внесён в календарь. Его изменение выполняется в основном календаре.</p>}

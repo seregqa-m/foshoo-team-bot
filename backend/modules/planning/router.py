@@ -86,6 +86,7 @@ class RepertoireReview(BaseModel):
     key: str
     fingerprint: str
     revision: int = Field(ge=0)
+    time_override: str | None = Field(default=None, pattern=r'^([01][0-9]|2[0-3]):[0-5][0-9]$')
 
 
 class AssignRequest(BaseModel):
