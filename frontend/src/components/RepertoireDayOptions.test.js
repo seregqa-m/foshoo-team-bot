@@ -58,6 +58,51 @@ test('late response from a previously selected date is ignored', async () => {
   expect(container.textContent).not.toContain('Урод');
 });
 
+test('background refresh keeps vote cards and expanded details until fresh answers arrive', async () => {
+  const entries = [{ date: response.day, key: '1', name: 'Урод' }];
+  await render({ entries });
+  const card = container.querySelector('.repertoire-day-option');
+  const summary = container.querySelector('.repertoire-vote-summary');
+  const details = summary.querySelector('details');
+  details.open = true;
+  let finish;
+  client.get.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  await render({ entries, data: { ...data, fingerprint: 'updated', checked_at: 'later' } });
+  expect(container.querySelector('.repertoire-day-option')).toBe(card);
+  expect(summary.textContent).toContain('Смогут: 1');
+  expect(summary.querySelector('details')).toBe(details);
+  expect(details.open).toBe(true);
+  expect(container.textContent).not.toContain('Загружаем ответы');
+  expect(button('Заменить на «Другой»').disabled).toBe(true);
+  await act(async () => finish({ data: { ...response, fingerprint: 'updated', shows: [
+    { ...response.shows[0], votes: { yes: 2, no: 0, other: 1 } }, show('2', 'Другой'),
+  ] } }));
+  expect(container.querySelector('.repertoire-day-option')).toBe(card);
+  expect(summary.querySelector('details')).toBe(details);
+  expect(details.open).toBe(true);
+  expect(summary.textContent).toContain('Смогут: 2');
+  expect(button('Заменить на «Другой»').disabled).toBe(false);
+});
+
+test('failed background refresh retains answers for reading but blocks replacement', async () => {
+  await render();
+  expect(button('Поставить «Урод»').disabled).toBe(false);
+  client.get.mockRejectedValueOnce(new Error('offline'));
+  await render({ data: { ...data, checked_at: 'later' } });
+  expect(container.textContent).toContain('Анна — Свободен');
+  expect(container.querySelector('[role="alert"]')).not.toBeNull();
+  expect(button('Поставить «Урод»').disabled).toBe(true);
+});
+
+test('changing the date never displays answers from the previous date while loading', async () => {
+  await render();
+  client.get.mockImplementationOnce(() => new Promise(() => {}));
+  await render({ day: '2028-10-08' });
+  expect(container.textContent).toContain('Загружаем ответы');
+  expect(container.textContent).not.toContain('Анна');
+  expect(container.querySelector('.repertoire-day-option')).toBeNull();
+});
+
 test('selected show has a live answer tile without assigning people to roles', async () => {
   response.shows[0].votes = { yes: 1, no: 0, unknown: 1, unanswered: 2, other: 3 };
   response.shows[0].roles[0].actors[0].vote = 'yes';

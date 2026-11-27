@@ -9,12 +9,14 @@ function VoteCounts({ votes }) {
 }
 
 export default function RepertoireDayOptions({ month, day, data, entries, disabled, onReplace, onRefresh }) {
-  const [result, setResult] = useState(null);
+  const [lastResult, setResult] = useState(null);
+  // Keep this day's cards mounted during polling; clearing them shifts the table below.
+  const result = lastResult?.day === day ? lastResult : null;
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
   useEffect(() => {
     let active = true;
-    setLoading(true); setResult(null); setError('');
+    setLoading(true); setError('');
     client.get('/api/planning/repertoire/day', { params: { month, day } }).then(({ data: value }) => {
       if (active) { if (!Array.isArray(value.shows) || value.day !== day) throw new Error('Invalid day'); setResult(value); }
     }).catch(() => { if (active) setError('Не удалось загрузить ответы на эту дату. Обновите план.'); })
@@ -23,11 +25,11 @@ export default function RepertoireDayOptions({ month, day, data, entries, disabl
   }, [month, day, data.fingerprint, data.revision, data.checked_at]);
   const current = entries.find(e => e.date === day);
   const stale = result && (result.fingerprint !== data.fingerprint || result.revision !== data.revision);
-  const selected = !stale && result?.shows.find(s => s.key === current?.key);
+  const selected = result?.shows.find(s => s.key === current?.key);
   const actors = selected ? [...new Map(selected.roles.flatMap(r => r.actors).map(a => [a.name.trim().toLocaleLowerCase('ru'), a])).values()] : [];
-  return <section className="repertoire-day-options" aria-label="Спектакли и ответы на выбранную дату">
-    {loading && <p role="status">Загружаем ответы…</p>}
-    {(error || stale) && <p role="alert">{error || 'Ответы или календарь обновились.'} <button type="button" className="btn btn-secondary" onClick={onRefresh}>Обновить план</button></p>}
+  return <section className="repertoire-day-options" aria-label="Спектакли и ответы на выбранную дату" aria-busy={loading}>
+    {loading && !result && <p role="status">Загружаем ответы…</p>}
+    {(error || (stale && !loading)) && <p role="alert">{error || 'Ответы или календарь обновились.'} {result && 'Показаны последние полученные ответы.'} <button type="button" className="btn btn-secondary" onClick={onRefresh}>Обновить план</button></p>}
     {current && <div className="repertoire-vote-summary" aria-label={`Ответы на «${selected?.name || current.name || ''}»`}>
       <strong>Ответы на эту дату · {selected?.name || current.name}</strong>
       {selected ? <><VoteCounts votes={selected.votes} />
@@ -46,7 +48,7 @@ export default function RepertoireDayOptions({ month, day, data, entries, disabl
       <details><summary>Ответы по ролям — {show.name}</summary>{show.roles.map(role => <div key={role.name} className="repertoire-vote-role"><strong>{role.name}</strong>
         <ul>{role.actors.map(actor => <li key={actor.name} className={`planning-actor--${actor.vote || actor.status}`}>{actor.name} — {voteText(actor)}</li>)}</ul>
       </div>)}</details>
-      <button type="button" className="btn btn-secondary" disabled={disabled || loading || !!stale || !!show.reason || !!current?.fixed}
+      <button type="button" className="btn btn-secondary" disabled={disabled || loading || !!error || !!stale || !!show.reason || !!current?.fixed}
         onClick={() => onReplace(day, show.key)}>{current ? `Заменить на «${show.name}»` : `Поставить «${show.name}»`}</button>
     </div>)}
   </section>;

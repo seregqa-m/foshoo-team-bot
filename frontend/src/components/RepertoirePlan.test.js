@@ -119,6 +119,37 @@ test('refreshes answers automatically and blocks actions on stale data', async (
   expect(button('Закрепить афишу месяца').disabled).toBe(true);
 });
 
+test('polling keeps the assessment and day cards mounted while both requests are pending', async () => {
+  jest.useFakeTimers();
+  const dayResponse = {
+    day: '2028-10-07', fingerprint: response.fingerprint, revision: response.revision,
+    shows: [{ key: 'other', name: 'Другой', votes: { yes: 2, no: 0, other: 0 }, covered: 1, total: 1, roles: [] }],
+  };
+  client.get.mockImplementation(url => Promise.resolve({ data: url.endsWith('/day') ? dayResponse : response }));
+  await render();
+  const assessment = container.querySelector('.repertoire-good');
+  const card = container.querySelector('.repertoire-day-option');
+  const details = card.querySelector('details');
+  details.open = true;
+  let finishMonth, finishDay;
+  client.get.mockImplementation(url => new Promise(resolve => {
+    if (url.endsWith('/day')) finishDay = resolve; else finishMonth = resolve;
+  }));
+  await act(async () => jest.advanceTimersByTime(30_000));
+  expect(container.querySelector('.repertoire-good')).toBe(assessment);
+  expect(container.querySelector('.repertoire-day-option')).toBe(card);
+  expect(button('Закрепить афишу месяца').disabled).toBe(true);
+  await act(async () => finishMonth({ data: { ...response, checked_at: '2028-09-01T14:32:30+03:00' } }));
+  expect(container.querySelector('.repertoire-day-option')).toBe(card);
+  expect(details.open).toBe(true);
+  expect(button('Заменить на «Другой»').disabled).toBe(true);
+  await act(async () => finishDay({ data: dayResponse }));
+  expect(container.querySelector('.repertoire-good')).toBe(assessment);
+  expect(container.querySelector('.repertoire-day-option')).toBe(card);
+  expect(details.open).toBe(true);
+  expect(button('Заменить на «Другой»').disabled).toBe(false);
+});
+
 test('whole month lock opens reviewed calendar confirmation without applying it', async () => {
   client.post.mockResolvedValue({ data: { id: 'preview', status: 'preview', actions: [], existing_count: 0 } });
   await render();

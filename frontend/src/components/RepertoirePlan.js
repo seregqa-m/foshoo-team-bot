@@ -194,7 +194,8 @@ export default function RepertoirePlan({ month, dataVersion, userId, isSuperAdmi
     }
     setFocusDate(day); setShare(null); setDraftPending(true); selectedId.current = null; refreshNow();
   };
-  const stale = Boolean(error || draftError || data?.lock_error) || busy || loading || draftPending || data?.lock_pending || !!data?.publication;
+  const unverified = Boolean(error || draftError || data?.lock_error) || draftPending || data?.lock_pending || !!data?.publication;
+  const stale = unverified || busy || loading;
   const editingDisabled = Boolean(error) || busy || loading || draftPending || data?.locked || !!data?.publication;
   return <section className="repertoire-plan" aria-labelledby="repertoire-title">
     <div className="repertoire-row"><div><h2 id="repertoire-title">План афиши</h2><p className="repertoire-note">По ответам участников и составам</p></div>
@@ -230,7 +231,7 @@ export default function RepertoirePlan({ month, dataVersion, userId, isSuperAdmi
         {selected.missing.length > 0 && <div className="planning-warning">Не хватает: {selected.missing.map(s => `${s.name} — ${s.count}`).join('; ')}. Остальные показатели показаны выше.</div>}
         {selected.spread_warnings.map((w, i) => <p className="planning-warning" key={`gap-${i}`}>{w.name}: {w.dates.map(prettyDate).join(' → ')} · {w.gap} дн. между показами, желательно {w.desired}.{w.same_part && ' Одна часть месяца.'}</p>)}
         {selected.load_warnings.map((w, i) => <p className="planning-warning" key={`load-${i}`}>{w.actor}: {w.dates.length} игровых дня подряд · {w.dates.map(prettyDate).join(' → ')}</p>)}
-        {!stale && !selected.spread_score && !selected.load_warnings.length && <p className="repertoire-good">✓ Пожелания по разносу и нагрузке соблюдены для известных составов</p>}
+        {!unverified && !selected.spread_score && !selected.load_warnings.length && <p className="repertoire-good">✓ Пожелания по разносу и нагрузке соблюдены для известных составов</p>}
         <RepertoireCalendar key={`${month}:${selected.id}`} month={month} focusDate={focusDate} entries={selected.entries} pins={data.rules.pins} onSelectDay={() => { if (!selected.manual) selectedId.current = selected.id; }}
           renderDay={day => <RepertoireDayOptions key={day} month={month} day={day} data={data} entries={selected.entries} disabled={editingDisabled} onReplace={replaceShow} onRefresh={refreshNow} />} renderEntry={entry => {
           const pinned = data.rules.pins.some(p => p.day === entry.date && p.key === entry.key);
