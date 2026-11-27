@@ -8,7 +8,8 @@ jest.mock('../api/client', () => ({ __esModule: true, default: { get: jest.fn(),
 let container, root;
 const button = text => [...container.querySelectorAll('button')].find(b => b.textContent === text);
 const data = { month: '2028-10', search_id: 'search', fingerprint: 'fresh', revision: 2 };
-const preview = { id: 'preview', status: 'preview', text: 'План афиши: 7 октября — Урод', chat_title: 'Театр', delivery: 'message' };
+const preview = { id: 'preview', status: 'preview', text: 'План афиши: 7 октября — Урод', chat_title: 'Театр', delivery: 'photo',
+  image: 'data:image/png;base64,cGljdHVyZQ==', caption: 'Афиша на согласование — октябрь 2028.' };
 beforeEach(() => {
   global.IS_REACT_ACT_ENVIRONMENT = true;
   container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container);
@@ -29,10 +30,14 @@ test('opening never sends, chat selection and exact preview precede explicit sen
   await prepare();
   expect(client.post).toHaveBeenCalledWith('/api/planning/repertoire/share/preview', { month: '2028-10', search_id: 'search', variant_id: 'chosen-variant', chat_id: -100123, expected_fingerprint: 'fresh', expected_revision: 2 });
   expect(container.querySelector('pre').textContent).toBe(preview.text);
+  expect(container.querySelector('img').getAttribute('src')).toBe(preview.image);
+  expect(container.querySelector('img').alt).toBe('Календарь афиши для отправки в чат');
+  expect(container.querySelector('details').open).toBe(false);
+  expect(container.textContent).toContain(preview.caption);
   client.post.mockResolvedValue({ data: { ...preview, status: 'sent', link: 'https://t.me/c/123/17' } });
   await act(async () => button('Отправить на согласование').click());
   expect(client.post).toHaveBeenLastCalledWith('/api/planning/repertoire/share/send', { preview_id: 'preview' });
-  expect(container.querySelector('a').href).toBe('https://t.me/c/123/17');
+  expect(container.querySelector('a[href="https://t.me/c/123/17"]').textContent).toBe('Открыть сообщение');
   expect(button('Отправить на согласование')).toBeUndefined();
 });
 

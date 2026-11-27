@@ -43,7 +43,7 @@ export default function RepertoireShare({ data, variant, onClose }) {
   const uncertain = ['sending', 'unknown'].includes(preview?.status);
   return <section ref={panel} className="repertoire-share" aria-labelledby="repertoire-share-title">
     <h3 id="repertoire-share-title">План на согласование</h3>
-    <p className="repertoire-note">В чат уйдёт выбранный вариант. Это предложение для обсуждения, а не запись показов в календарь.</p>
+    <p className="repertoire-note">В чат уйдёт картинка календаря выбранного варианта со всеми ручными правками дат и времени. Отправка не назначает показы.</p>
     <label className="repertoire-field">Чат<select className="select-input" aria-label="Чат для согласования" value={chatId} disabled={busy} onChange={e => { setChatId(e.target.value); setPreview(null); setError(''); }}>
       <option value="">Выберите чат</option>{chats.map(chat => <option key={chat.id} value={chat.id}>{chat.title}</option>)}
     </select></label>
@@ -51,8 +51,12 @@ export default function RepertoireShare({ data, variant, onClose }) {
     {error && <p className="alert alert-error" role="alert">{error}</p>}
     {preview && <>
       <p><strong>{preview.chat_title}</strong></p>
-      {preview.delivery === 'document' && <p className="repertoire-note">План длинный — будет отправлен текстовым файлом.</p>}
-      <pre className="repertoire-message">{preview.text}</pre>
+      {preview.image ? <>
+        <img className="repertoire-share-image" src={preview.image} alt="Календарь афиши для отправки в чат" />
+        <a href={preview.image} download={`afisha-${data.month}.png`}>Скачать календарь</a>
+        <p className="repertoire-note">{preview.caption}</p>
+        <details><summary>Даты и замечания к плану</summary><pre className="repertoire-message">{preview.text}</pre></details>
+      </> : <pre className="repertoire-message">{preview.text}</pre>}
       {preview.status === 'sent' && <p role="status">План отправлен.{preview.link && <> <a href={preview.link} target="_blank" rel="noreferrer">Открыть сообщение</a></>}</p>}
       {uncertain && <p role="status">Telegram не подтвердил доставку. Проверьте чат: повторная отправка заблокирована, чтобы не создать дубль.</p>}
       {preview.status === 'failed' && <p role="alert">{preview.error || 'Telegram отклонил отправку. Можно повторить после устранения причины.'}</p>}

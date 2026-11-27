@@ -1,4 +1,8 @@
 import copy
+import base64
+import json
+from io import BytesIO
+from PIL import Image
 import os
 import unittest
 from datetime import datetime, timedelta
@@ -35,7 +39,8 @@ class RepertoireShareTests(unittest.IsolatedAsyncioTestCase):
         self.bot = SimpleNamespace(get_chat=AsyncMock(return_value=SimpleNamespace(type='supergroup', title='Театр')),
             get_chat_member=AsyncMock(return_value=SimpleNamespace(status='administrator')),
             send_message=AsyncMock(return_value=SimpleNamespace(message_id=17)),
-            send_document=AsyncMock(return_value=SimpleNamespace(message_id=18)))
+            send_document=AsyncMock(return_value=SimpleNamespace(message_id=18)),
+            send_photo=AsyncMock(return_value=SimpleNamespace(message_id=17)))
         self.source = {'month': '2032-06', 'fingerprint': 'share-test', 'warnings': [], 'fixed': [],
             'shows': [{'key': '1', 'name': 'Урод'}], 'slots': [
                 {'date': day, 'blocked': '', 'shows': [{'key': '1', 'show': 'Урод', 'incomplete': False,
@@ -63,20 +68,34 @@ class RepertoireShareTests(unittest.IsolatedAsyncioTestCase):
     async def send(self, preview):
         return await sharing.send_share(sharing.SendRequest(preview_id=preview['id']), self.request, self.db)
 
+    def assert_photo(self, preview, chat):
+        self.bot.send_photo.assert_awaited_once()
+        kwargs = self.bot.send_photo.call_args.kwargs
+        self.assertEqual(kwargs['chat_id'], chat)
+        self.assertEqual(kwargs['caption'], preview['caption'])
+        raw = base64.b64decode(preview['image'].split(',', 1)[1])
+        self.assertEqual(kwargs['photo'].data, raw)
+        image = Image.open(BytesIO(raw))
+        self.assertEqual(image.format, 'PNG')
+        self.assertEqual(image.width, 1400)
+        self.assertLessEqual(image.width + image.height, 10000)
+        self.bot.send_message.assert_not_awaited()
+        self.bot.send_document.assert_not_awaited()
+
     async def test_preview_uses_selected_server_variant_and_sends_only_on_explicit_action(self):
         preview = await self.preview()
-        self.bot.send_message.assert_not_awaited()
+        self.bot.send_photo.assert_not_awaited()
         self.assertEqual(preview['status'], 'preview')
         self.assertIn(str(int(self.variant['entries'][0]['date'][-2:])) + ' июн', preview['text'])
         self.assertIn('Урод', preview['text'])
         self.assertIn('в 19:00', preview['text'])
         sent = await self.send(preview)
         self.assertEqual(sent['status'], 'sent')
-        self.bot.send_message.assert_awaited_once_with(chat_id=self.chat, text=preview['text'], parse_mode=None)
+        self.assert_photo(preview, self.chat)
         self.assertEqual(sent['link'], 'https://t.me/c/1234567890/17')
         self.assertEqual((await self.send(preview))['status'], 'sent')
         self.assertEqual((await self.preview())['status'], 'sent')
-        self.assertEqual(self.bot.send_message.await_count, 1)
+        self.assertEqual(self.bot.send_photo.await_count, 1)
 
     async def test_changed_answers_rules_and_expiry_block_send(self):
         preview = await self.preview()
@@ -93,7 +112,7 @@ class RepertoireShareTests(unittest.IsolatedAsyncioTestCase):
         row.expires_at = datetime.utcnow() - timedelta(seconds=1); self.db.commit()
         with self.assertRaises(HTTPException):
             await self.send(preview)
-        self.bot.send_message.assert_not_awaited()
+        self.bot.send_photo.assert_not_awaited()
 
     async def test_forged_variant_and_outdated_search_cannot_be_previewed(self):
         self.req.variant_id = '0' * 64
@@ -118,16 +137,16 @@ class RepertoireShareTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(HTTPException) as error:
             await self.send(preview)
         self.assertEqual(error.exception.status_code, 404)
-        self.bot.send_message.assert_not_awaited()
+        self.bot.send_photo.assert_not_awaited()
 
     async def test_uncertain_delivery_persists_and_never_replays(self):
         preview = await self.preview()
-        self.bot.send_message.side_effect = TimeoutError()
+        self.bot.send_photo.side_effect = TimeoutError()
         self.assertEqual((await self.send(preview))['status'], 'unknown')
         self.db.close(); self.db = sessionmaker(bind=self.engine)()
         self.assertEqual((await self.send(preview))['status'], 'unknown')
         self.assertEqual((await self.preview())['status'], 'unknown')
-        self.assertEqual(self.bot.send_message.await_count, 1)
+        self.assertEqual(self.bot.send_photo.await_count, 1)
 
     async def test_delivery_claim_precedes_telegram_and_blocks_second_request(self):
         preview = await self.preview()
@@ -135,32 +154,53 @@ class RepertoireShareTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(self.db.get(RepertoireShare, preview['id']).status, 'sending')
             self.assertEqual((await self.send(preview))['status'], 'sending')
             return SimpleNamespace(message_id=17)
-        self.bot.send_message.side_effect = in_flight
+        self.bot.send_photo.side_effect = in_flight
         self.assertEqual((await self.send(preview))['status'], 'sent')
-        self.assertEqual(self.bot.send_message.await_count, 1)
+        self.assertEqual(self.bot.send_photo.await_count, 1)
 
     async def test_confirmed_failure_can_retry_but_rate_limit_cannot_be_bypassed_by_preview(self):
         preview = await self.preview()
         method = SendMessage(chat_id=self.chat, text='test')
-        self.bot.send_message.side_effect = TelegramRetryAfter(method=method, message='wait', retry_after=60)
+        self.bot.send_photo.side_effect = TelegramRetryAfter(method=method, message='wait', retry_after=60)
         self.assertEqual((await self.send(preview))['status'], 'failed')
         await self.preview()
         with self.assertRaises(HTTPException) as error:
             await self.send(preview)
         self.assertEqual(error.exception.status_code, 429)
         row = self.db.get(RepertoireShare, preview['id']); row.retry_after = None; self.db.commit()
-        self.bot.send_message.side_effect = TelegramBadRequest(method=method, message='blocked')
+        self.bot.send_photo.side_effect = TelegramBadRequest(method=method, message='blocked')
         self.assertEqual((await self.send(preview))['status'], 'failed')
-        self.bot.send_message.side_effect = None
+        self.bot.send_photo.side_effect = None
         self.assertEqual((await self.send(preview))['status'], 'sent')
 
-    async def test_long_plan_is_one_document_with_exact_preview_text(self):
+    async def test_long_plan_is_still_one_calendar_photo(self):
         self.source['warnings'] = ['Проверить ' * 500]
         preview = await self.preview()
-        self.assertEqual(preview['delivery'], 'document')
+        self.assertEqual(preview['delivery'], 'photo')
         self.assertEqual((await self.send(preview))['status'], 'sent')
+        self.assert_photo(preview, self.chat)
+
+    async def test_pending_legacy_text_requires_a_new_calendar_preview(self):
+        preview = await self.preview()
+        row = self.db.get(RepertoireShare, preview['id'])
+        payload = json.loads(row.payload)
+        payload['delivery'] = 'message'
+        payload.pop('image')
+        row.payload = json.dumps(payload)
+        self.db.commit()
+        with self.assertRaises(HTTPException) as error:
+            await self.send(preview)
+        self.assertEqual(error.exception.status_code, 409)
         self.bot.send_message.assert_not_awaited()
-        self.assertEqual(self.bot.send_document.call_args.kwargs['document'].data.decode(), preview['text'])
+        self.bot.send_photo.assert_not_awaited()
+
+    async def test_stored_image_survives_restart_without_rerendering(self):
+        preview = await self.preview()
+        self.db.close()
+        self.db = sessionmaker(bind=self.engine)()
+        with patch.object(sharing, 'calendar_image', side_effect=AssertionError('must send frozen image')):
+            self.assertEqual((await self.send(preview))['status'], 'sent')
+        self.assert_photo(preview, self.chat)
 
     async def test_chat_list_excludes_non_admin_and_failed_checks(self):
         self.assertEqual((await sharing.share_chats(self.request, self.db))['chats'], [{'id': self.chat, 'title': 'Театр'}])
@@ -178,10 +218,10 @@ class RepertoireShareTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn(coordination_chat, {chat['id'] for chat in chats['chats']})
         self.req.chat_id = coordination_chat
         preview = await self.preview()
-        self.bot.send_message.assert_not_awaited()
+        self.bot.send_photo.assert_not_awaited()
         sent = await self.send(preview)
         self.assertEqual(sent['status'], 'sent')
-        self.bot.send_message.assert_awaited_once_with(chat_id=coordination_chat, text=preview['text'], parse_mode=None)
+        self.assert_photo(preview, coordination_chat)
         self.assertEqual(self.db.query(TheaterShow).one().telegram_chat_id, self.chat)
 
     async def test_standalone_group_still_checks_admin_and_chat_type(self):
@@ -198,7 +238,7 @@ class RepertoireShareTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(HTTPException) as error:
             await self.preview()
         self.assertEqual(error.exception.status_code, 403)
-        self.bot.send_message.assert_not_awaited()
+        self.bot.send_photo.assert_not_awaited()
 
     def test_partial_plan_and_soft_warnings_are_in_message(self):
         variant = copy.deepcopy(self.variant)
@@ -215,4 +255,4 @@ class RepertoireShareTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(client.get('/api/planning/repertoire/chats').status_code, 403)
             for path, payload in [('preview', self.req.model_dump()), ('send', {'preview_id': '0' * 64})]:
                 self.assertEqual(client.post('/api/planning/repertoire/share/' + path, json=payload).status_code, 403)
-        self.bot.send_message.assert_not_awaited()
+        self.bot.send_photo.assert_not_awaited()

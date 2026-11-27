@@ -64,6 +64,7 @@
 .repertoire-differences p { margin-bottom: 4px; }
 .repertoire-differences ul { margin-top: 0; padding-left: 20px; }
 .repertoire-share h3 { font-size: 17px; }
+.repertoire-share-image { display: block; width: 100%; height: auto; border: 1px solid #e9e2e6; border-radius: 10px; }
 .repertoire-message { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; font-size: 13px; line-height: 1.6; background: #f4f1f3; padding: 12px; border-radius: 8px; margin: 12px 0; }
 @media (max-width: 380px) { .repertoire-plan { padding: 12px; } .repertoire-plan .repertoire-row { gap: 8px; } }
 .repertoire-affiche { margin: 16px 0; }

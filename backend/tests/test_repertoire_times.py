@@ -1,4 +1,5 @@
 import json
+import base64
 import unittest
 from datetime import date, datetime
 
@@ -10,6 +11,7 @@ from modules.planning.repertoire import DraftEntry
 from modules.planning.repertoire_editing import review_draft
 from modules.planning.repertoire_source import load_snapshot
 from modules.planning.repertoire_sharing import prepare_preview, PreviewRequest
+from modules.planning.repertoire_image import calendar_image
 from modules.planning.repertoire_affiche import LockRequest, locked_result
 from modules.planning.repertoire_publication import preview_publication
 from modules.planning.repertoire_router import get_repertoire, validate_review
@@ -50,6 +52,10 @@ class RepertoireTimeTests(unittest.TestCase):
             chat_id=-1001234567890, expected_fingerprint=changed['fingerprint'], expected_revision=changed['revision']), 42, 'Театр', self.db)
         self.assertIn('в 18:45 — Урод', preview['text'])
         self.assertIn('в 19:00 — Урод', preview['text'])
+        self.assertEqual(preview['delivery'], 'photo')
+        source = load_snapshot(self.db, self.client, '2028-10', fresh=True)
+        self.assertEqual(base64.b64decode(preview['image'].split(',', 1)[1]),
+                         calendar_image('2028-10', changed['variant'], automatic['target'], source['warnings']))
 
     def test_custom_time_rechecks_conflicts_and_can_free_a_default_time_conflict(self):
         self.db.add(CalendarEvent(title='Аренда', google_event_id='busy',

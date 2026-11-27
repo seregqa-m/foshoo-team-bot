@@ -1,5 +1,6 @@
 """Explicit preview → send of one selected schedule to a verified Telegram group."""
 import asyncio
+import base64
 import json
 from datetime import date, datetime, timedelta
 from threading import RLock
@@ -22,6 +23,7 @@ from .models import RepertoireShare
 from .repertoire import RepertoireProblem, digest
 from .repertoire_source import get_rules
 from .repertoire_search import search_key, cached_variant
+from .repertoire_image import calendar_image
 
 router = APIRouter()
 _preview_lock = RLock()
@@ -105,6 +107,8 @@ def share_data(row):
     payload = json.loads(row.payload)
     return {'id': row.id, 'status': row.status, 'chat_id': row.chat_id, 'chat_title': payload['chat_title'],
             'text': payload['text'], 'delivery': payload['delivery'], 'error': row.error,
+            'image': 'data:image/png;base64,' + payload['image'] if payload.get('image') else None,
+            'caption': payload.get('caption'),
             'link': poll_link(row.chat_id, row.message_id), 'expires_at': row.expires_at.isoformat() + 'Z'}
 
 
@@ -134,10 +138,16 @@ def prepare_preview(req, actor_id, title, db):
     if locked and pair_set(json.loads(locked.payload)['entries']) != pair_set(variant['entries']):
         raise HTTPException(409, 'Афиша закреплена. Обновите план для отправки сохранённого варианта.')
     text = message_text(req.month, variant, problem.target, source['warnings'])
-    key = digest([actor_id, req.chat_id, text])
+    try:
+        image = base64.b64encode(calendar_image(req.month, variant, problem.target, source['warnings'])).decode('ascii')
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    key = digest(['calendar-v1', actor_id, req.chat_id, text, image])
+    label = format_date(date.fromisoformat(req.month + '-01'), 'LLLL yyyy', locale='ru_RU')
     payload = {'text': text, 'chat_title': title, 'fingerprint': source['fingerprint'],
                'rules_signature': rules_signature(rules, revision), 'day': local_now().date().isoformat(),
-               'delivery': 'document' if len(text.encode('utf-16-le')) // 2 > 3500 else 'message'}
+               'delivery': 'photo', 'image': image,
+               'caption': f'Афиша на согласование — {label}.\nПодтвердите даты или напишите замечания в чат.'}
     with _preview_lock:
         row = db.get(RepertoireShare, key, populate_existing=True)
         if row and row.status in ('sending', 'unknown', 'sent'):
@@ -181,6 +191,8 @@ async def send_share(req: SendRequest, request: Request, db: Session = Depends(g
     await checked_chat(bot, db, row.chat_id, request)
     if row.status in ('sent', 'sending', 'unknown'):
         return share_data(row)
+    if json.loads(row.payload).get('delivery') != 'photo':
+        raise HTTPException(409, 'Откройте предпросмотр заново: теперь афиша отправляется календарём.')
     if row.retry_after and row.retry_after > datetime.utcnow():
         raise HTTPException(429, 'Telegram просит подождать перед повторной отправкой.')
     await run_in_threadpool(check_fresh, row, db)
@@ -192,12 +204,9 @@ async def send_share(req: SendRequest, request: Request, db: Session = Depends(g
         return share_data(row)
     payload = json.loads(row.payload)
     try:
-        if payload['delivery'] == 'document':
-            result = await bot.send_document(chat_id=row.chat_id,
-                document=BufferedInputFile(payload['text'].encode('utf-8'), filename=f'plan-{row.month}.txt'),
-                caption='План афиши на финальное согласование', parse_mode=None)
-        else:
-            result = await bot.send_message(chat_id=row.chat_id, text=payload['text'], parse_mode=None)
+        result = await bot.send_photo(chat_id=row.chat_id,
+            photo=BufferedInputFile(base64.b64decode(payload['image']), filename=f'afisha-{row.month}.png'),
+            caption=payload['caption'], parse_mode=None)
     except TelegramRetryAfter as exc:
         row.status = 'failed'
         row.retry_after = datetime.utcnow() + timedelta(seconds=exc.retry_after)
