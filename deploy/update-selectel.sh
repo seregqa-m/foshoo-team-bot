@@ -25,8 +25,9 @@ test -f "$stage/REVISION"
 revision=$(cat "$stage/REVISION")
 [[ "$revision" =~ ^[0-9a-f]{40}$ ]]
 if ! cmp -s "$stage/backend/requirements.txt" /opt/foshoo/backend/requirements.txt; then
-    echo 'Dependencies changed. Prepare and verify the server virtualenv before applying this release.' >&2
-    exit 1
+    # Never install/upgrade dependencies implicitly or falsify the old release's requirements.
+    # Changed requirements are accepted only after the operator prepares the virtualenv.
+    /opt/foshoo/.venv/bin/python "$stage/deploy/verify_requirements.py" "$stage/backend/requirements.txt"
 fi
 /opt/foshoo/.venv/bin/python -m pip check
 
