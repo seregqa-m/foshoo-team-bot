@@ -27,6 +27,17 @@ function ChatPoll({ campaignId, group }) {
   const [error, setError] = useState(null);
   const first = group.polls[0];
   const label = first.chat_title || [...group.names].join(', ') || 'Чат';
+  const openPoll = event => {
+    const webApp = window.Telegram?.WebApp;
+    if (!webApp?.openTelegramLink) return;
+    event.preventDefault();
+    setError(null);
+    try {
+      webApp.openTelegramLink(first.tg_link);
+    } catch (e) {
+      setError('Не удалось открыть опрос в Telegram. Попробуйте ещё раз.');
+    }
+  };
   const ping = async () => {
     if (sending) return;
     setSending(true);
@@ -44,7 +55,8 @@ function ChatPoll({ campaignId, group }) {
   };
   return <div className="poll-summary-chat">
     <div className="poll-summary-chat__row">
-      {first.tg_link ? <a href={first.tg_link} target="_blank" rel="noreferrer">{label}</a> : <span>{label}</span>}
+      {first.tg_link ? <a href={first.tg_link} target="_blank" rel="noreferrer" onClick={openPoll}
+        aria-label={`Открыть опрос в чате: ${label}`}>{label}</a> : <span>{label}</span>}
       <button className="btn btn-secondary" onClick={ping} disabled={sending || !group.chat}
         aria-label={`Пинг неответивших: ${label}`}>{sending ? 'Отправка…' : 'Пинг неответивших'}</button>
     </div>

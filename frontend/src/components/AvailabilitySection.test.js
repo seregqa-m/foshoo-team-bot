@@ -26,7 +26,7 @@ beforeEach(() => {
   }[url] }));
   client.post.mockResolvedValue({ data: {} });
 });
-afterEach(() => { act(() => root.unmount()); container.remove(); jest.clearAllMocks(); });
+afterEach(() => { act(() => root.unmount()); container.remove(); delete window.Telegram; jest.clearAllMocks(); });
 
 const savedPoll = (id, month = '2027-01') => ({
   id, month, created_at: '2026-11-23T12:00:00', show_names: ['Урод', 'Калий'],
@@ -74,6 +74,46 @@ test('pings only the selected chat of the selected old poll and blocks repeat cl
   expect(article(1).textContent).toContain('Напоминание отправлено');
   expect(article(0).textContent).not.toContain('Напоминание отправлено');
   expect(client.get).toHaveBeenCalledTimes(1);
+});
+
+test('opens the selected campaign chat poll through Telegram without browser navigation', async () => {
+  window.Telegram = { WebApp: { openTelegramLink: jest.fn() } };
+  const older = savedPoll(1, '2026-12');
+  older.polls[3].tg_link = 'https://t.me/c/123456/42';
+  await showPolls([savedPoll(2), older]);
+  const link = article(1).querySelector('[aria-label="Открыть опрос в чате: Цианистый Калий"]');
+  const event = new MouseEvent('click', { bubbles: true, cancelable: true });
+  await act(async () => link.dispatchEvent(event));
+  expect(event.defaultPrevented).toBe(true);
+  expect(window.Telegram.WebApp.openTelegramLink).toHaveBeenCalledTimes(1);
+  expect(window.Telegram.WebApp.openTelegramLink).toHaveBeenCalledWith('https://t.me/c/123456/42');
+  expect(client.post).not.toHaveBeenCalled();
+});
+
+test('keeps a normal browser link when the Telegram SDK is unavailable', async () => {
+  await showPolls([savedPoll(1)]);
+  const link = article(0).querySelector('a');
+  let prevented;
+  const stopNavigation = event => { prevented = event.defaultPrevented; event.preventDefault(); };
+  document.addEventListener('click', stopNavigation);
+  try {
+    await act(async () => link.click());
+    expect(prevented).toBe(false);
+    expect(link.target).toBe('_blank');
+    expect(link.href).toBe('https://t.me/c/1001/100');
+  } finally { document.removeEventListener('click', stopNavigation); }
+});
+
+test('failed Telegram navigation shows an error and can be retried', async () => {
+  window.Telegram = { WebApp: { openTelegramLink: jest.fn()
+    .mockImplementationOnce(() => { throw new Error('unavailable'); }) } };
+  await showPolls([savedPoll(1)]);
+  const link = article(0).querySelector('a');
+  await act(async () => link.click());
+  expect(article(0).querySelector('[role="alert"]').textContent).toContain('Не удалось открыть опрос');
+  await act(async () => link.click());
+  expect(article(0).querySelector('[role="alert"]')).toBeNull();
+  expect(window.Telegram.WebApp.openTelegramLink).toHaveBeenCalledTimes(2);
 });
 
 test('shows short feedback in the affected chat and does not claim success on error', async () => {
