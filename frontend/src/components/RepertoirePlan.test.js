@@ -107,6 +107,79 @@ test('reading votes pins the viewed variant even when a newer recommendation arr
   expect(container.querySelector('[data-date="2028-10-20"]').getAttribute('aria-pressed')).toBe('true');
 });
 
+test.each([false, true])('background refresh keeps actions available (complete=%s) and preserves a choice made in flight', async complete => {
+  jest.useFakeTimers();
+  response.complete = complete;
+  await render();
+  const originalGet = client.get.getMockImplementation();
+  const pending = [];
+  client.get.mockImplementation((url, options) => url === '/api/planning/repertoire'
+    ? new Promise(resolve => pending.push(resolve)) : originalGet(url, options));
+  await act(async () => jest.advanceTimersByTime(complete ? 30_000 : 1000));
+  expect(button('Закрепить афишу месяца').disabled).toBe(false);
+  expect(button('Отправить в чат').disabled).toBe(false);
+  expect(button('Удалить из афиши').disabled).toBe(false);
+  expect(container.querySelector('[aria-label="Следующий вариант"]').disabled).toBe(false);
+  await act(async () => container.querySelector('[aria-label="Следующий вариант"]').click());
+  expect(container.textContent).toContain('Вариант 2 из 2');
+  await act(async () => pending.shift()({ data: { ...response, selected_variant: response.variants[0] } }));
+  expect(container.textContent).toContain('Вариант 2 из 2');
+  expect(button('Закрепить афишу месяца').disabled).toBe(false);
+  expect(container.querySelector('[aria-label="Предыдущий вариант"]').disabled).toBe(false);
+  expect(client.get.mock.calls.filter(([url]) => url === '/api/planning/repertoire').at(-1)[1].params.selected).toBe('second');
+  await act(async () => pending.shift()({ data: { ...response, selected_variant: response.variants[1] } }));
+  expect(container.textContent).toContain('Вариант 2 из 2');
+  expect(container.querySelector('[aria-label="Удалить Урод, 2028-10-08"]')).not.toBeNull();
+});
+
+test('explicit refresh blocks actions until the current plan is checked', async () => {
+  response.complete = false;
+  await render();
+  let finish;
+  client.get.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  await act(async () => button('Обновить подбор').click());
+  expect(button('Закрепить афишу месяца').disabled).toBe(true);
+  expect(container.querySelector('[aria-label="Следующий вариант"]').disabled).toBe(true);
+  await act(async () => finish({ data: response }));
+  expect(button('Закрепить афишу месяца').disabled).toBe(false);
+});
+
+test('manual draft stays blocked while it is revalidated against refreshed answers', async () => {
+  jest.useFakeTimers();
+  localStorage.setItem('foshoo:repertoire-draft:42:2028-10', JSON.stringify([{ day: '2028-10-07', key: 'catalog:1' }]));
+  const manual = { ...response.variants[0], id: 'manual', manual: true };
+  client.post.mockResolvedValue({ data: { status: 'ready', variant: manual } });
+  await render({ userId: 42 });
+  expect(button('Закрепить афишу месяца').disabled).toBe(false);
+  response = { ...response, fingerprint: 'new-answers' };
+  let finish;
+  client.post.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  await act(async () => jest.advanceTimersByTime(30_000));
+  expect(client.post).toHaveBeenLastCalledWith('/api/planning/repertoire/draft', expect.objectContaining({ expected_fingerprint: 'new-answers' }));
+  expect(button('Закрепить афишу месяца').disabled).toBe(true);
+  expect(button('Отправить в чат').disabled).toBe(true);
+  await act(async () => finish({ data: { status: 'ready', variant: manual } }));
+  expect(button('Закрепить афишу месяца').disabled).toBe(false);
+});
+
+test('locking during background refresh still requires server validation of the displayed snapshot', async () => {
+  jest.useFakeTimers();
+  response.complete = false;
+  await render();
+  let finish;
+  client.get.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  await act(async () => jest.advanceTimersByTime(1000));
+  client.post.mockRejectedValue({ response: { status: 409, data: { detail: 'Ответы изменились' } } });
+  await act(async () => button('Закрепить афишу месяца').click());
+  expect(client.post).toHaveBeenCalledWith('/api/planning/repertoire/lock/preview', expect.objectContaining({
+    variant_id: 'first', expected_fingerprint: 'fresh', expected_revision: 2,
+  }));
+  await act(async () => finish({ data: { ...response, fingerprint: 'new-answers' } }));
+  expect(container.querySelector('[role="dialog"]').textContent).toContain('Ответы изменились');
+  expect(button('Подтвердить и обновить календарь').disabled).toBe(true);
+  expect(client.post.mock.calls.some(([url]) => url === '/api/planning/repertoire/lock')).toBe(false);
+});
+
 test('refreshes answers automatically and blocks actions on stale data', async () => {
   jest.useFakeTimers();
   await render();
@@ -138,7 +211,7 @@ test('polling keeps the assessment and day cards mounted while both requests are
   await act(async () => jest.advanceTimersByTime(30_000));
   expect(container.querySelector('.repertoire-good')).toBe(assessment);
   expect(container.querySelector('.repertoire-day-option')).toBe(card);
-  expect(button('Закрепить афишу месяца').disabled).toBe(true);
+  expect(button('Закрепить афишу месяца').disabled).toBe(false);
   await act(async () => finishMonth({ data: { ...response, checked_at: '2028-09-01T14:32:30+03:00' } }));
   expect(container.querySelector('.repertoire-day-option')).toBe(card);
   expect(details.open).toBe(true);

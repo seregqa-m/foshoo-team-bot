@@ -114,17 +114,18 @@ export default function RepertoirePlan({ month, dataVersion, userId, isSuperAdmi
     const load = async () => {
       if (inFlight || document.hidden) return;
       inFlight = true;
-      setLoading(true);
+      let selectionChanged = false;
       try {
         const requestedSelected = selectedId.current;
         const { data: result } = await client.get('/api/planning/repertoire', { params: { month, ...(requestedSelected ? { selected: requestedSelected } : {}) } });
         if (!active) return;
-        if (!draft.current && requestedSelected !== selectedId.current) { refreshNow(); return; }
+        if (!draft.current && requestedSelected !== selectedId.current) { selectionChanged = true; return; }
         if (result.month !== month || !Array.isArray(result.variants)) throw new Error('Invalid planning response');
         if (result.locked) { draft.current = null; forgetDraft(); }
         searching = !result.complete && !draft.current;
         let next = result.selected_variant || result.variants.find(v => v.id === selectedId.current) || result.variants[0] || null;
         if (draft.current) {
+          setDraftPending(true);
           setData(result);
           let reviewed;
           try {
@@ -148,10 +149,17 @@ export default function RepertoirePlan({ month, dataVersion, userId, isSuperAdmi
       } catch (e) { if (active) { calculating = false; searching = false; setDraftPending(false); setError(message(e)); } }
       finally {
         inFlight = false;
-        if (active) { setLoading(false); timer = setTimeout(load, calculating || searching ? 1000 : 30_000); }
+        if (active) {
+          setLoading(false);
+          // Recheck a choice made during the request without blocking the displayed plan.
+          if (selectionChanged) load();
+          else timer = setTimeout(load, calculating || searching ? 1000 : 30_000);
+        }
       }
     };
     const focus = () => { clearTimeout(timer); load(); };
+    // Only initial/explicit refreshes invalidate the current plan; polling stays in the background.
+    setLoading(true);
     load(); window.addEventListener('focus', focus); document.addEventListener('visibilitychange', focus);
     return () => { active = false; clearTimeout(timer); window.removeEventListener('focus', focus); document.removeEventListener('visibilitychange', focus); };
   }, [month, refresh, dataVersion, storageKey, forgetDraft]);
